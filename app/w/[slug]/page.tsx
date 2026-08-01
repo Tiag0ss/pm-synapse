@@ -1,22 +1,42 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { resolveNoteId, type NoteIndexEntry } from '@/lib/renderMarkdown';
 import NotesFolderTree from '@/components/NotesFolderTree';
+import NoteGraphMindmap from '@/components/NoteGraphMindmap';
+import QuickSwitcher from '@/components/QuickSwitcher';
 import { noteLeafName } from '@/lib/notePaths';
 import ImageLightbox from '@/components/ImageLightbox';
+
+interface WikiLinkRow {
+  Id: number;
+  Title: string;
+  Path: string;
+  Kind: string;
+}
 
 export default function PublicWikiPage() {
   const params = useParams();
   const slug = String(params.slug);
   const [notes, setNotes] = useState<Array<{ Id: number; Title: string; Path: string }>>([]);
   const [vaultName, setVaultName] = useState('');
+  const [vaultId, setVaultId] = useState<number | null>(null);
+  const [canOpenVault, setCanOpenVault] = useState(false);
   const [error, setError] = useState('');
   const [html, setHtml] = useState('');
   const [title, setTitle] = useState('');
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [q, setQ] = useState('');
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [backlinks, setBacklinks] = useState<WikiLinkRow[]>([]);
+  const [references, setReferences] = useState<WikiLinkRow[]>([]);
+  const [graph, setGraph] = useState<{
+    nodes: Array<{ Id: number; Title: string }>;
+    edges: Array<{ FromNoteId: number; ToNoteId: number; Kind: string }>;
+  } | null>(null);
+  const [graphToken, setGraphToken] = useState(0);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const articleRef = useRef<HTMLDivElement>(null);
 
@@ -25,6 +45,26 @@ export default function PublicWikiPage() {
     title: n.Title,
     path: n.Path,
   }));
+
+  const filteredNotes = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return notes;
+    return notes.filter(
+      (n) =>
+        n.Title.toLowerCase().includes(needle) ||
+        n.Path.toLowerCase().includes(needle) ||
+        noteLeafName(n.Title).toLowerCase().includes(needle)
+    );
+  }, [notes, q]);
+
+  const loadGraph = useCallback(async () => {
+    const res = await fetch(`/api/public/${slug}/graph`, { credentials: 'include' });
+    const data = await res.json();
+    if (res.ok) {
+      setGraph(data.data || { nodes: [], edges: [] });
+      setGraphToken((t) => t + 1);
+    }
+  }, [slug]);
 
   const openNote = useCallback(
     async (id: number) => {
@@ -42,6 +82,8 @@ export default function PublicWikiPage() {
       setActiveId(id);
       setTitle(data.data.title);
       setHtml(data.data.html);
+      setBacklinks(data.data.backlinks || []);
+      setReferences(data.data.references || []);
       const url = new URL(window.location.href);
       url.searchParams.set('n', String(id));
       window.history.replaceState({}, '', url.toString());
@@ -58,6 +100,8 @@ export default function PublicWikiPage() {
         return;
       }
       setVaultName(data.data.vault.name);
+      setVaultId(Number(data.data.vault.id) || null);
+      setCanOpenVault(Boolean(data.data.authenticated && data.data.canOpenVault));
       const list = data.data.notes || [];
       setNotes(list);
       if (data.data.robots) {
@@ -66,17 +110,33 @@ export default function PublicWikiPage() {
         meta.content = data.data.robots;
         document.head.appendChild(meta);
       }
+      void loadGraph();
       const fromQuery = Number(new URL(window.location.href).searchParams.get('n') || 0);
       if (fromQuery && list.some((n: { Id: number }) => n.Id === fromQuery)) {
         await openNote(fromQuery);
       } else if (fromQuery && !list.some((n: { Id: number }) => n.Id === fromQuery)) {
-        // May be authenticated-only note — try open (shows sign-in hint on 401)
         await openNote(fromQuery);
       } else if (list[0]) {
         await openNote(list[0].Id);
       }
     })();
-  }, [slug, openNote]);
+  }, [slug, openNote, loadGraph]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && quickOpen) {
+        setQuickOpen(false);
+        return;
+      }
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        setQuickOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [quickOpen]);
 
   useEffect(() => {
     const root = articleRef.current;
@@ -89,7 +149,9 @@ export default function PublicWikiPage() {
         setLightbox({ src: img.currentSrc || img.src, alt: img.alt || '' });
         return;
       }
-      const target = (e.target as HTMLElement).closest('a.synapse-wikilink') as HTMLAnchorElement | null;
+      const target = (e.target as HTMLElement).closest(
+        'a.synapse-wikilink, a.synapse-mention'
+      ) as HTMLAnchorElement | null;
       if (!target) return;
       e.preventDefault();
       e.stopPropagation();
@@ -118,51 +180,171 @@ export default function PublicWikiPage() {
   }
 
   return (
-    <main className="mx-auto grid min-h-screen max-w-5xl grid-cols-[240px_1fr] gap-8 px-6 py-10">
-      <aside className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/60 p-4 backdrop-blur">
-        <Link href="/" className="text-xs font-semibold uppercase tracking-wider text-[var(--muted)] no-underline">
-          PM Synapse
-        </Link>
-        <h1 className="mt-2 text-xl font-semibold tracking-tight">{vaultName || slug}</h1>
-        <div className="mt-4">
+    <main className="flex h-screen flex-col overflow-hidden">
+      <header className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-2.5 backdrop-blur-md">
+        <div className="min-w-0">
+          {canOpenVault && vaultId != null ? (
+            <Link
+              href={activeId ? `/vaults/${vaultId}?note=${activeId}` : `/vaults/${vaultId}`}
+              className="text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-soft)] no-underline hover:underline"
+              title="Open this vault in Synapse"
+            >
+              PM Synapse
+            </Link>
+          ) : (
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              Public wiki
+            </span>
+          )}
+          <h1 className="truncate text-sm font-semibold tracking-tight">{vaultName || slug}</h1>
+        </div>
+        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+          <Link href="/w" className="text-[var(--muted)] no-underline hover:text-[var(--accent-soft)] hover:underline">
+            All wikis
+          </Link>
+          <input
+            className="input w-44 py-1.5"
+            placeholder="Filter notes…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            title="Filters the note list by title or path"
+          />
+          <button
+            type="button"
+            className="btn-ghost py-1.5"
+            onClick={() => setQuickOpen(true)}
+            title="Search notes including body (Ctrl/Cmd+O)"
+          >
+            Jump…
+          </button>
+          <Link href={`/w/${slug}/map`} className="text-[var(--accent-soft)] no-underline hover:underline">
+            Full mindmap
+          </Link>
+          <span>{notes.length} notes</span>
+        </div>
+      </header>
+
+      <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_300px]">
+        <aside className="min-h-0 overflow-auto border-r border-[var(--border)] bg-[var(--panel)]/40 p-3">
+          <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            Notes · {filteredNotes.length}
+            {q.trim() ? ` / ${notes.length}` : ''}
+          </p>
           <NotesFolderTree
-            notes={notes}
+            notes={filteredNotes}
             selectedId={activeId}
             onOpenNote={(id) => void openNote(id)}
-            emptyLabel="No public notes"
+            emptyLabel={q.trim() ? 'No matching notes' : 'No public notes'}
           />
-        </div>
-        <Link href={`/w/${slug}/map`} className="mt-4 inline-block text-xs text-[var(--muted)]">
-          Mindmap →
-        </Link>
-      </aside>
-      <article className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/40 p-8 backdrop-blur">
-        {error && (
-          <p className="mb-3 text-sm text-[var(--danger)]">
-            {error}{' '}
-            {error.toLowerCase().includes('sign-in') && (
-              <a href="/api/auth/sso/start" className="text-[var(--accent-soft)] underline">
-                Sign in
-              </a>
-            )}
-          </p>
-        )}
-        {title ? (
-          <h2 className="mb-5 text-2xl font-semibold tracking-tight">
-            {noteLeafName(title)}
-            {title.includes('/') && (
-              <span className="mt-1 block text-sm font-normal text-[var(--muted)]">{title}</span>
-            )}
-          </h2>
-        ) : (
-          <p className="text-[var(--muted)]">Select a public note</p>
-        )}
-        <div
-          ref={articleRef}
-          className="synapse-md-preview"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      </article>
+        </aside>
+
+        <section className="min-h-0 overflow-auto px-5 py-5 lg:px-8 lg:py-6">
+          {error && (
+            <p className="mb-3 text-sm text-[var(--danger)]">
+              {error}{' '}
+              {error.toLowerCase().includes('sign-in') && (
+                <a href="/api/auth/sso/start" className="text-[var(--accent-soft)] underline">
+                  Sign in
+                </a>
+              )}
+            </p>
+          )}
+          {title ? (
+            <h2 className="mb-5 text-2xl font-semibold tracking-tight lg:text-3xl">
+              {noteLeafName(title)}
+              {title.includes('/') && (
+                <span className="mt-1 block text-sm font-normal text-[var(--muted)]">{title}</span>
+              )}
+            </h2>
+          ) : (
+            <p className="text-[var(--muted)]">Select a public note</p>
+          )}
+          <div
+            ref={articleRef}
+            className="synapse-md-preview"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </section>
+
+        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--panel)]/40">
+          <div className="shrink-0 border-b border-[var(--border)] p-3">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              Focused mindmap
+            </h2>
+            <p className="mt-0.5 text-[11px] text-[var(--muted)]">Current note + links</p>
+            <div className="mt-2">
+              {graph ? (
+                <NoteGraphMindmap
+                  nodes={graph.nodes}
+                  edges={graph.edges}
+                  height={200}
+                  focusId={activeId}
+                  variant="focus"
+                  reloadToken={`${graphToken}-${activeId ?? 'none'}`}
+                  compactLegend
+                  onNodeClick={(id) => void openNote(id)}
+                />
+              ) : (
+                <div className="flex h-[200px] items-center justify-center rounded-xl border border-dashed border-[var(--border)] text-xs text-[var(--muted)]">
+                  Loading…
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 space-y-5 overflow-auto p-4 text-sm">
+            <div>
+              <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                References
+              </h2>
+              <p className="mt-0.5 text-[11px] text-[var(--muted)]">Links from this note</p>
+              <div className="mt-2 space-y-1">
+                {references.length === 0 && <p className="text-[var(--muted)]">None</p>}
+                {references.map((b) => (
+                  <button
+                    key={`ref-${b.Id}-${b.Kind}`}
+                    type="button"
+                    className="block w-full rounded-lg px-2 py-1.5 text-left text-[var(--accent-soft)] transition hover:bg-[var(--surface-2)]"
+                    onClick={() => void openNote(b.Id)}
+                  >
+                    → {b.Title}{' '}
+                    <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                Backlinks
+              </h2>
+              <p className="mt-0.5 text-[11px] text-[var(--muted)]">Notes that link here</p>
+              <div className="mt-2 space-y-1">
+                {backlinks.length === 0 && <p className="text-[var(--muted)]">None</p>}
+                {backlinks.map((b) => (
+                  <button
+                    key={`bl-${b.Id}-${b.Kind}`}
+                    type="button"
+                    className="block w-full rounded-lg px-2 py-1.5 text-left text-[var(--accent-soft)] transition hover:bg-[var(--surface-2)]"
+                    onClick={() => void openNote(b.Id)}
+                  >
+                    ← {b.Title}{' '}
+                    <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <QuickSwitcher
+        open={quickOpen}
+        searchUrl={`/api/public/${slug}/search`}
+        notes={noteIndex}
+        onClose={() => setQuickOpen(false)}
+        onOpenNote={(id) => void openNote(id)}
+      />
 
       <ImageLightbox
         src={lightbox?.src ?? null}

@@ -68,10 +68,11 @@ const LEGEND: Array<{ syntax: string; meaning: string }> = [
   { syntax: '[label](url)', meaning: 'External link' },
   { syntax: '![alt](url)', meaning: 'Image (paste or drop into the editor)' },
   { syntax: '--- yaml ---', meaning: 'YAML frontmatter at top (shown as Properties)' },
-  { syntax: '[[Note title]]', meaning: 'Link to another note (blue when found)' },
+  { syntax: '[[Note title]]', meaning: 'Link to another note (solid underline)' },
   { syntax: '[[meta/risks]]', meaning: 'Link by folder path' },
   { syntax: '[[risks]]', meaning: 'Link by unique leaf name' },
   { syntax: '[[Note|label]]', meaning: 'Wikilink with custom label' },
+  { syntax: 'plain Title', meaning: 'Unlinked mention (dashed, auto-detected)' },
   { syntax: '#tag', meaning: 'Tag for filtering / graph' },
   { syntax: '---', meaning: 'Horizontal line' },
 ];
@@ -244,7 +245,9 @@ export default function MarkdownNoteEditor({
         return;
       }
       if (!onOpenNote && !onCreateNoteFromWikilink) return;
-      const target = (e.target as HTMLElement).closest('a.synapse-wikilink') as HTMLAnchorElement | null;
+      const target = (e.target as HTMLElement).closest(
+        'a.synapse-wikilink, a.synapse-mention'
+      ) as HTMLAnchorElement | null;
       if (!target) return;
       e.preventDefault();
       const id = Number(target.dataset.noteId || 0);
@@ -252,9 +255,11 @@ export default function MarkdownNoteEditor({
         onOpenNote(id);
         return;
       }
-      const missingTitle = String(target.dataset.noteTitle || '').trim();
-      if (missingTitle && onCreateNoteFromWikilink) {
-        onCreateNoteFromWikilink(missingTitle);
+      if (target.classList.contains('synapse-wikilink')) {
+        const missingTitle = String(target.dataset.noteTitle || '').trim();
+        if (missingTitle && onCreateNoteFromWikilink) {
+          onCreateNoteFromWikilink(missingTitle);
+        }
       }
     };
     root.addEventListener('click', onClick);

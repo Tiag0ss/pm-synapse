@@ -22,6 +22,7 @@ export default function HomePage() {
   const [me, setMe] = useState<Me | null>(null);
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [name, setName] = useState('');
+  const [defaultVisibility, setDefaultVisibility] = useState('private');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -56,7 +57,7 @@ export default function HomePage() {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, defaultVisibility }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -64,6 +65,7 @@ export default function HomePage() {
       return;
     }
     setName('');
+    setDefaultVisibility('private');
     await load();
   };
 
@@ -97,6 +99,12 @@ export default function HomePage() {
           >
             Sign in with Project Management
           </a>
+          <Link
+            href="/w"
+            className="mt-4 block text-center text-sm text-[var(--accent-soft)] no-underline hover:underline"
+          >
+            Browse public wikis →
+          </Link>
         </div>
       </main>
     );
@@ -114,16 +122,21 @@ export default function HomePage() {
             Signed in as <span className="text-[var(--text)]">{me.username}</span> · {me.email}
           </p>
         </div>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={async () => {
-            await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-            window.location.href = '/';
-          }}
-        >
-          Log out
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/w" className="btn-ghost no-underline hover:no-underline">
+            Public wikis
+          </Link>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={async () => {
+              await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+              window.location.href = '/';
+            }}
+          >
+            Log out
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -135,9 +148,9 @@ export default function HomePage() {
       <section className="mb-8 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5 shadow-lg shadow-black/20 backdrop-blur">
         <h2 className="text-sm font-semibold tracking-tight">Create vault</h2>
         <p className="mt-1 text-xs text-[var(--muted)]">A vault is a collection of Markdown notes.</p>
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <input
-            className="input flex-1"
+            className="input min-w-[12rem] flex-1"
             placeholder="Vault name"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -145,6 +158,18 @@ export default function HomePage() {
               if (e.key === 'Enter') void createVault();
             }}
           />
+          <select
+            className="input w-auto"
+            value={defaultVisibility}
+            onChange={(e) => setDefaultVisibility(e.target.value)}
+            title="Default visibility for notes that inherit the vault setting"
+            aria-label="Default visibility"
+          >
+            <option value="private">Default: Private</option>
+            <option value="authenticated">Default: Authenticated</option>
+            <option value="unlisted">Default: Unlisted</option>
+            <option value="public">Default: Public</option>
+          </select>
           <button type="button" onClick={() => void createVault()} className="btn-primary">
             Create
           </button>

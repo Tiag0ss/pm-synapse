@@ -38,11 +38,13 @@ const STATEMENTS = [
     PmTaskId INT NULL,
     PmProjectId INT NULL,
     PmTaskLinkedAt DATETIME NULL,
+    DeletedAt DATETIME NULL,
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uq_note_vault_path (VaultId, Path(255)),
     KEY idx_note_vault (VaultId),
     KEY idx_note_title (VaultId, Title(191)),
+    KEY idx_note_deleted (VaultId, DeletedAt),
     CONSTRAINT fk_notes_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS NoteRevisions (
@@ -129,9 +131,25 @@ const STATEMENTS = [
   )`,
 ];
 
+const ALTERS = [
+  'ALTER TABLE Notes ADD COLUMN DeletedAt DATETIME NULL',
+  'ALTER TABLE Notes ADD KEY idx_note_deleted (VaultId, DeletedAt)',
+];
+
 export async function ensureSchema(): Promise<void> {
   for (const sql of STATEMENTS) {
     await pool.execute(sql);
+  }
+  for (const sql of ALTERS) {
+    try {
+      await pool.execute(sql);
+    } catch (error) {
+      const code = (error as { code?: string })?.code;
+      // Duplicate column / key name — already migrated
+      if (code !== 'ER_DUP_FIELDNAME' && code !== 'ER_DUP_KEYNAME') {
+        logger.warn('Schema alter skipped or failed', { sql, error });
+      }
+    }
   }
   logger.info('PM Synapse schema ready');
 }

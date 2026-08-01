@@ -133,7 +133,7 @@ export async function pushMissingCheckboxTasks(params: {
   }
 
   const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path, BodyMarkdown, Visibility FROM Notes WHERE VaultId = ? ORDER BY Path ASC',
+    'SELECT Id, Title, Path, BodyMarkdown, Visibility FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL ORDER BY Path ASC',
     [params.vaultId]
   );
   const [links] = await pool.execute<RowDataPacket[]>(

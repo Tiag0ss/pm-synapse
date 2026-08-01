@@ -100,7 +100,11 @@ export default function VaultShareModal({
       }
       setQuery('');
       setHits([]);
-      setStatus(`Granted ${role} to ${user.username}`);
+      setStatus(
+        data.data?.pendingFirstLogin
+          ? `Invited user#${user.pmUserId} (${role}) — they get access on first Synapse sign-in`
+          : `Granted ${role} to ${user.username}`
+      );
       await load();
     } finally {
       setBusy(false);
@@ -231,12 +235,13 @@ export default function VaultShareModal({
             <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 p-3">
               <p className="text-sm font-semibold">Add people</p>
               <p className="mt-1 text-xs text-[var(--muted)]">
-                They must have signed into Synapse at least once.
+                Search users who already signed in, or invite by Project Management user id before their
+                first Synapse login.
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <input
                   className="input min-w-[12rem] flex-1"
-                  placeholder="Search username or email…"
+                  placeholder="Username, email, or PM user id…"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -248,6 +253,22 @@ export default function VaultShareModal({
                   <option value="read">Read</option>
                   <option value="edit">Edit</option>
                 </select>
+                {/^\d+$/.test(query.trim()) && !memberIds.has(Number(query.trim())) && (
+                  <button
+                    type="button"
+                    className="btn-primary py-1.5 text-xs"
+                    disabled={busy}
+                    onClick={() =>
+                      void addMember({
+                        pmUserId: Number(query.trim()),
+                        username: `user#${query.trim()}`,
+                        email: '',
+                      })
+                    }
+                  >
+                    Invite id {query.trim()}
+                  </button>
+                )}
               </div>
               {hits.length > 0 && (
                 <ul className="mt-2 max-h-40 overflow-auto rounded-lg border border-[var(--border)]">

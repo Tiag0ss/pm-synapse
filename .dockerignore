@@ -1,0 +1,20 @@
+# PM Synapse — Docker build context
+.git
+.cursor
+.github
+.next
+dist
+node_modules
+data
+logs
+*.log
+*.tsbuildinfo
+.env
+.env.local
+.env.docker
+.env.production
+.env.*.local
+README.md
+DEPLOYMENT.md
+AGENTS.md
+docs

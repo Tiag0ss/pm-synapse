@@ -201,7 +201,7 @@ export async function importVaultZip(params: {
       const fmJson = frontmatterJsonString(parseFrontmatter(body).data);
 
       const [existing] = await pool.execute<RowDataPacket[]>(
-        'SELECT Id, Path, Title FROM Notes WHERE VaultId = ? AND Path = ?',
+        'SELECT Id, Path, Title FROM Notes WHERE VaultId = ? AND Path = ? AND DeletedAt IS NULL',
         [params.vaultId, notePath]
       );
 

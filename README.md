@@ -7,13 +7,17 @@ This project is a work in progress — bugs may still be found; please report th
 ## Features
 
 - 📔 **Markdown vaults** — Folder paths (`meta/risks`), note tree (folders first), vault switcher
-- ✍️ **Editor** — Split/edit/preview, toolbar, paste/drop images + lightbox
+- ✍️ **Editor** — Split/edit/preview, toolbar, paste/drop images + lightbox; **autosave** + unsaved warnings; Ctrl/Cmd+S
+- 🔎 **Search** — Filter by title/path/body; **Jump to note** palette (Ctrl/Cmd+O)
 - 🔗 **Wikilinks & graph** — `[[links]]` (path + unique leaf), tags, backlinks, focused + full mindmap
-- 🕘 **Revisions** — Autosave history with side-by-side restore
-- 📦 **ZIP import** — Nested folders → note paths; images uploaded into vault media
+- 🕘 **Revisions** — History with side-by-side restore
+- 📦 **ZIP import / export** — Nested folders ↔ note paths; images included
+- 📋 **Templates** — Blank, meeting, risk, decision when creating notes
+- 🗑️ **Trash** — Soft-delete notes with restore; leave shared vaults / delete owned vaults
 - ✅ **Checkbox → PM tasks** — Manual create (single or bulk with progress); Synapse pulls PM closed/cancelled status
-- 👁️ **Visibility** — Private, authenticated users, unlisted, public + `/w/:slug` wiki
-- 👥 **Vault sharing** — Owner-only by default; grant read or edit to other Synapse users
+- 👁️ **Visibility** — Private, authenticated users, unlisted, public + `/w/:slug` wiki; vault members see full wiki contents
+- 🌐 **Wiki directory** — `/w` lists public wikis visible to you (public / signed-in / your access)
+- 👥 **Vault sharing** — Invite by search or PM user id (before first Synapse login)
 - 🔐 **SSO** — Sign in with Project Management; resume last opened vault after login
 - 🔌 **PM bridge** — Manual vault→project link; Synapse refs stored on PM tasks
 
@@ -84,6 +88,21 @@ pnpm run dev
 Open [http://localhost:3010](http://localhost:3010) — Sign in with Project Management (SSO). After login you land on the last vault you opened (if still accessible).
 
 **Note:** TypeScript must stay on 5.x (`typescript@5.9.3`) — Next.js 15 does not support TypeScript 7.
+
+## Docker
+
+Build and push (same pattern as Project Management):
+
+```bash
+cp .env.docker.example .env.docker
+# edit secrets + PM_BASE_URL / SSO / NEXT_PUBLIC_APP_URL
+
+sg docker -c "./docker-build.sh"          # or: ./docker-build.sh 0.1.0
+DOCKER_USERNAME=youruser docker compose up -d
+curl -s http://localhost:3010/health
+```
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for compose ports, volumes, and SSO checklist.
 
 ## Environment Variables
 

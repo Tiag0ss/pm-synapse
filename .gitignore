@@ -11,6 +11,8 @@ out
 .env
 .env.local
 .env.*.local
+.env.docker
+.env.production
 
 # logs & OS
 *.log
@@ -18,3 +20,4 @@ out
 
 # local runtime data (uploaded media, etc.)
 /data
+/logs

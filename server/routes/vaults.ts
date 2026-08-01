@@ -35,6 +35,7 @@ import {
 } from '../services/pmCheckboxSync';
 import { readVaultMedia, saveVaultImage } from '../services/vaultMedia';
 import { importVaultZip } from '../services/vaultZipImport';
+import { exportVaultZip } from '../services/vaultZipExport';
 import { frontmatterJsonString, parseFrontmatter } from '../services/frontmatter';
 import { checkboxTextKey, pushMissingCheckboxTasks } from '../services/pushCheckboxTasks';
 import {
@@ -44,6 +45,8 @@ import {
   NOTE_VISIBILITY_VALUES,
 } from '../services/vaultAccess';
 import logger from '../utils/logger';
+
+const ACTIVE_NOTE = 'DeletedAt IS NULL';
 
 const visibilityEnum = z.enum(NOTE_VISIBILITY_VALUES);
 
@@ -297,11 +300,14 @@ router.post('/:vaultId/members', async (req: AuthRequest, res: Response) => {
     'SELECT PmUserId FROM UserProfiles WHERE PmUserId = ?',
     [parsed.data.pmUserId]
   );
+  // Allow invite before first Synapse login — stub profile if needed
   if (!profiles.length) {
-    return res.status(404).json({
-      success: false,
-      message: 'User not found in Synapse — they must sign in once first',
-    });
+    await pool.execute(
+      `INSERT INTO UserProfiles (PmUserId, Username, Email, LastLoginAt)
+       VALUES (?, ?, '', NULL)
+       ON DUPLICATE KEY UPDATE PmUserId = PmUserId`,
+      [parsed.data.pmUserId, `user#${parsed.data.pmUserId}`]
+    );
   }
   await pool.execute(
     `INSERT INTO VaultMembers (VaultId, PmUserId, Role, InvitedByPmUserId)
@@ -309,7 +315,14 @@ router.post('/:vaultId/members', async (req: AuthRequest, res: Response) => {
      ON DUPLICATE KEY UPDATE Role = VALUES(Role), InvitedByPmUserId = VALUES(InvitedByPmUserId)`,
     [vault.Id, parsed.data.pmUserId, parsed.data.role, req.user!.pmUserId]
   );
-  res.status(201).json({ success: true, data: { pmUserId: parsed.data.pmUserId, role: parsed.data.role } });
+  res.status(201).json({
+    success: true,
+    data: {
+      pmUserId: parsed.data.pmUserId,
+      role: parsed.data.role,
+      pendingFirstLogin: !profiles.length,
+    },
+  });
 });
 
 router.patch('/:vaultId/members/:memberPmUserId', async (req: AuthRequest, res: Response) => {
@@ -342,6 +355,60 @@ router.delete('/:vaultId/members/:memberPmUserId', async (req: AuthRequest, res:
     return res.status(404).json({ success: false, message: 'Member not found' });
   }
   res.json({ success: true });
+});
+
+/** Member leaves a shared vault (not available to the owner). */
+router.post('/:vaultId/leave', async (req: AuthRequest, res: Response) => {
+  const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  if (vault.AccessRole === 'owner') {
+    return res.status(400).json({
+      success: false,
+      message: 'Owners cannot leave — delete the vault or transfer ownership first',
+    });
+  }
+  const [result] = await pool.execute<ResultSetHeader>(
+    'DELETE FROM VaultMembers WHERE VaultId = ? AND PmUserId = ?',
+    [vault.Id, req.user!.pmUserId]
+  );
+  if (!result.affectedRows) {
+    return res.status(404).json({ success: false, message: 'Membership not found' });
+  }
+  res.json({ success: true, message: 'Left vault' });
+});
+
+router.post('/:vaultId/delete', async (req: AuthRequest, res: Response) => {
+  const vault = await ownedVault(Number(req.params.vaultId), req.user!.pmUserId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const confirm = String(req.body?.confirmName || '').trim();
+  if (!confirm || confirm !== String(vault.Name)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Type the vault name exactly to confirm deletion',
+    });
+  }
+  await pool.execute('DELETE FROM Vaults WHERE Id = ? AND OwnerPmUserId = ?', [
+    vault.Id,
+    req.user!.pmUserId,
+  ]);
+  logger.info('Vault deleted', { vaultId: vault.Id, name: vault.Name, by: req.user!.pmUserId });
+  res.json({ success: true, message: 'Vault deleted' });
+});
+
+router.get('/:vaultId/export-zip', async (req: AuthRequest, res: Response) => {
+  const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  try {
+    const result = await exportVaultZip(Number(vault.Id), String(vault.Name || `vault-${vault.Id}`));
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${result.fileName}"`);
+    res.setHeader('X-Synapse-Note-Count', String(result.noteCount));
+    res.setHeader('X-Synapse-Image-Count', String(result.imageCount));
+    res.send(result.buffer);
+  } catch (error) {
+    logger.error('Vault ZIP export failed', { error, vaultId: vault.Id });
+    res.status(500).json({ success: false, message: 'Export failed' });
+  }
 });
 
 router.patch('/:vaultId', async (req: AuthRequest, res: Response) => {
@@ -418,24 +485,90 @@ router.get('/:vaultId', async (req: AuthRequest, res: Response) => {
 router.get('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const trash = String(req.query.trash || '') === '1';
   const q = String(req.query.q || '').trim();
+  const deletedClause = trash ? 'DeletedAt IS NOT NULL' : ACTIVE_NOTE;
   let rows: RowDataPacket[];
   if (q) {
     const like = `%${q}%`;
     [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId
-       FROM Notes WHERE VaultId = ? AND (Title LIKE ? OR Path LIKE ?)
-       ORDER BY Path ASC`,
-      [vault.Id, like, like]
+      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt
+       FROM Notes
+       WHERE VaultId = ? AND ${deletedClause}
+         AND (Title LIKE ? OR Path LIKE ? OR BodyMarkdown LIKE ?)
+       ORDER BY Path ASC
+       LIMIT 500`,
+      [vault.Id, like, like, like]
     );
   } else {
     [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId
-       FROM Notes WHERE VaultId = ? ORDER BY Path ASC`,
+      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt
+       FROM Notes WHERE VaultId = ? AND ${deletedClause} ORDER BY Path ASC`,
       [vault.Id]
     );
   }
   res.json({ success: true, data: rows });
+});
+
+/** Full-text-ish search with snippets for quick switcher. */
+router.get('/:vaultId/search', async (req: AuthRequest, res: Response) => {
+  const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const q = String(req.query.q || '').trim();
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 30));
+  if (q.length < 1) {
+    return res.json({ success: true, data: [] });
+  }
+  const like = `%${q}%`;
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    `SELECT n.Id, n.Path, n.Title, n.BodyMarkdown,
+       CASE
+         WHEN n.Title LIKE ? THEN 'title'
+         WHEN n.Path LIKE ? THEN 'path'
+         WHEN EXISTS (
+           SELECT 1 FROM NoteTags t WHERE t.NoteId = n.Id AND t.Tag LIKE ?
+         ) THEN 'tag'
+         ELSE 'body'
+       END AS MatchIn
+     FROM Notes n
+     WHERE n.VaultId = ? AND n.DeletedAt IS NULL
+       AND (
+         n.Title LIKE ? OR n.Path LIKE ? OR n.BodyMarkdown LIKE ?
+         OR EXISTS (SELECT 1 FROM NoteTags t WHERE t.NoteId = n.Id AND t.Tag LIKE ?)
+       )
+     ORDER BY
+       CASE
+         WHEN n.Title LIKE ? THEN 0
+         WHEN n.Path LIKE ? THEN 1
+         WHEN EXISTS (SELECT 1 FROM NoteTags t WHERE t.NoteId = n.Id AND t.Tag LIKE ?) THEN 2
+         ELSE 3
+       END,
+       n.Path ASC
+     LIMIT ${limit}`,
+    [like, like, like, vault.Id, like, like, like, like, like, like, like]
+  );
+
+  const qLower = q.toLowerCase();
+  const data = rows.map((r) => {
+    const body = String(r.BodyMarkdown || '');
+    let snippet: string | undefined;
+    if (String(r.MatchIn) === 'body') {
+      const idx = body.toLowerCase().indexOf(qLower);
+      if (idx >= 0) {
+        const start = Math.max(0, idx - 40);
+        const end = Math.min(body.length, idx + q.length + 60);
+        snippet = `${start > 0 ? '…' : ''}${body.slice(start, end).replace(/\s+/g, ' ')}${end < body.length ? '…' : ''}`;
+      }
+    }
+    return {
+      id: Number(r.Id),
+      title: String(r.Title),
+      path: String(r.Path),
+      matchIn: String(r.MatchIn) as 'title' | 'path' | 'body' | 'tag',
+      snippet,
+    };
+  });
+  res.json({ success: true, data });
 });
 
 router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
@@ -460,7 +593,7 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   const fmJson = frontmatterJsonString(parseFrontmatter(parsed.data.bodyMarkdown).data);
 
   const [pathHits] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id FROM Notes WHERE VaultId = ? AND Path = ? LIMIT 1',
+    `SELECT Id FROM Notes WHERE VaultId = ? AND Path = ? AND ${ACTIVE_NOTE} LIMIT 1`,
     [vault.Id, path]
   );
   if (pathHits.length) {
@@ -529,7 +662,7 @@ router.get('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
   const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const [rows] = await pool.execute<RowDataPacket[]>(
-    'SELECT * FROM Notes WHERE Id = ? AND VaultId = ?',
+    `SELECT * FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE}`,
     [req.params.noteId, vault.Id]
   );
   if (!rows.length) return res.status(404).json({ success: false, message: 'Note not found' });
@@ -540,7 +673,7 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
   const vault = await editableVault(Number(req.params.vaultId), req.user!.pmUserId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const [existingRows] = await pool.execute<RowDataPacket[]>(
-    'SELECT * FROM Notes WHERE Id = ? AND VaultId = ?',
+    `SELECT * FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE}`,
     [req.params.noteId, vault.Id]
   );
   if (!existingRows.length) return res.status(404).json({ success: false, message: 'Note not found' });
@@ -604,16 +737,62 @@ router.delete('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response)
   const vault = await editableVault(Number(req.params.vaultId), req.user!.pmUserId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const noteId = Number(req.params.noteId);
+  const hard = String(req.query.hard || '') === '1';
   const [existingRows] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title FROM Notes WHERE Id = ? AND VaultId = ?',
+    'SELECT Id, Title, Path, DeletedAt FROM Notes WHERE Id = ? AND VaultId = ?',
     [noteId, vault.Id]
   );
   if (!existingRows.length) {
     return res.status(404).json({ success: false, message: 'Note not found' });
   }
-  await pool.execute('DELETE FROM Notes WHERE Id = ? AND VaultId = ?', [noteId, vault.Id]);
-  logger.info('Note deleted', { vaultId: vault.Id, noteId, title: existingRows[0].Title });
-  res.json({ success: true, message: 'Note deleted' });
+  const existing = existingRows[0];
+  if (hard || existing.DeletedAt) {
+    await pool.execute('DELETE FROM Notes WHERE Id = ? AND VaultId = ?', [noteId, vault.Id]);
+    logger.info('Note permanently deleted', { vaultId: vault.Id, noteId, title: existing.Title });
+    return res.json({ success: true, message: 'Note permanently deleted' });
+  }
+  const trashPath = `__trash__/${noteId}/${String(existing.Path)}`.slice(0, 1024);
+  await pool.execute(
+    `UPDATE Notes SET DeletedAt = CURRENT_TIMESTAMP, Path = ? WHERE Id = ? AND VaultId = ?`,
+    [trashPath, noteId, vault.Id]
+  );
+  await pool.execute('DELETE FROM NoteLinks WHERE FromNoteId = ? OR ToNoteId = ?', [noteId, noteId]);
+  logger.info('Note moved to trash', { vaultId: vault.Id, noteId, title: existing.Title });
+  res.json({ success: true, message: 'Note moved to trash' });
+});
+
+router.post('/:vaultId/notes/:noteId/restore', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.pmUserId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const noteId = Number(req.params.noteId);
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT Id, Path, Title FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NOT NULL',
+    [noteId, vault.Id]
+  );
+  if (!rows.length) return res.status(404).json({ success: false, message: 'Trash note not found' });
+  const row = rows[0];
+  let path = String(row.Path || '');
+  const prefix = `__trash__/${noteId}/`;
+  if (path.startsWith(prefix)) path = path.slice(prefix.length);
+  if (!path.endsWith('.md')) path = `${path}.md`;
+
+  const [clash] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id FROM Notes WHERE VaultId = ? AND Path = ? AND ${ACTIVE_NOTE} LIMIT 1`,
+    [vault.Id, path]
+  );
+  if (clash.length) {
+    return res.status(409).json({
+      success: false,
+      message: `Cannot restore — an active note already uses path ${path}`,
+    });
+  }
+
+  await pool.execute(
+    `UPDATE Notes SET DeletedAt = NULL, Path = ? WHERE Id = ? AND VaultId = ?`,
+    [path, noteId, vault.Id]
+  );
+  await rebuildNoteGraph(noteId, Number(vault.Id));
+  res.json({ success: true, data: { id: noteId, path, title: row.Title } });
 });
 
 router.post('/:vaultId/notes/:noteId/rebuild-graph', async (req: AuthRequest, res: Response) => {
@@ -621,7 +800,7 @@ router.post('/:vaultId/notes/:noteId/rebuild-graph', async (req: AuthRequest, re
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const noteId = Number(req.params.noteId);
   const [rows] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id FROM Notes WHERE Id = ? AND VaultId = ?',
+    `SELECT Id FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE}`,
     [noteId, vault.Id]
   );
   if (!rows.length) return res.status(404).json({ success: false, message: 'Note not found' });
@@ -683,6 +862,41 @@ router.post('/:vaultId/notes/:noteId/revisions/:rev/restore', async (req: AuthRe
   res.json({ success: true, message: `Restored revision #${rev.RevisionNumber}` });
 });
 
+function preferWikilinkRows(rows: RowDataPacket[]): RowDataPacket[] {
+  const byId = new Map<number, RowDataPacket>();
+  for (const row of rows) {
+    const id = Number(row.Id);
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, row);
+      continue;
+    }
+    if (String(row.Kind) === 'wikilink' && String(existing.Kind) !== 'wikilink') {
+      byId.set(id, row);
+    }
+  }
+  return [...byId.values()].sort((a, b) =>
+    String(a.Title).localeCompare(String(b.Title), undefined, { sensitivity: 'base' })
+  );
+}
+
+/** One edge per note pair — prefer wikilink over mention. */
+function dedupeGraphEdges(rows: RowDataPacket[]): RowDataPacket[] {
+  const map = new Map<string, RowDataPacket>();
+  for (const row of rows) {
+    const key = `${row.FromNoteId}->${row.ToNoteId}`;
+    const existing = map.get(key);
+    if (!existing) {
+      map.set(key, row);
+      continue;
+    }
+    if (String(row.Kind) === 'wikilink' && String(existing.Kind) !== 'wikilink') {
+      map.set(key, row);
+    }
+  }
+  return [...map.values()];
+}
+
 router.get('/:vaultId/notes/:noteId/backlinks', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
@@ -691,7 +905,7 @@ router.get('/:vaultId/notes/:noteId/backlinks', async (req: AuthRequest, res: Re
     `SELECT n.Id, n.Title, n.Path, l.Kind
      FROM NoteLinks l
      INNER JOIN Notes n ON n.Id = l.FromNoteId
-     WHERE l.ToNoteId = ? AND n.VaultId = ?
+     WHERE l.ToNoteId = ? AND n.VaultId = ? AND n.DeletedAt IS NULL
      ORDER BY n.Title ASC`,
     [noteId, vault.Id]
   );
@@ -699,15 +913,15 @@ router.get('/:vaultId/notes/:noteId/backlinks', async (req: AuthRequest, res: Re
     `SELECT n.Id, n.Title, n.Path, l.Kind
      FROM NoteLinks l
      INNER JOIN Notes n ON n.Id = l.ToNoteId
-     WHERE l.FromNoteId = ? AND n.VaultId = ?
+     WHERE l.FromNoteId = ? AND n.VaultId = ? AND n.DeletedAt IS NULL
      ORDER BY n.Title ASC`,
     [noteId, vault.Id]
   );
   res.json({
     success: true,
     data: {
-      backlinks: incoming,
-      references: outgoing,
+      backlinks: preferWikilinkRows(incoming),
+      references: preferWikilinkRows(outgoing),
     },
   });
 });
@@ -716,7 +930,7 @@ router.get('/:vaultId/graph', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const [nodes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path FROM Notes WHERE VaultId = ?',
+    'SELECT Id, Title, Path FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
     [vault.Id]
   );
   const [edges] = await pool.execute<RowDataPacket[]>(
@@ -726,7 +940,7 @@ router.get('/:vaultId/graph', async (req: AuthRequest, res: Response) => {
      WHERE n.VaultId = ?`,
     [vault.Id]
   );
-  res.json({ success: true, data: { nodes, edges } });
+  res.json({ success: true, data: { nodes, edges: dedupeGraphEdges(edges) } });
 });
 
 /** Unresolved [[wikilinks]] across the vault. */
@@ -734,7 +948,7 @@ router.get('/:vaultId/broken-links', async (req: AuthRequest, res: Response) => 
   const vault = await readableVault(Number(req.params.vaultId), req.user!.pmUserId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE VaultId = ? ORDER BY Path ASC',
+    'SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL ORDER BY Path ASC',
     [vault.Id]
   );
   const resolveIndex = notes.map((n) => ({
@@ -889,7 +1103,7 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
     String(req.query.sync || '') === '1' || String(req.query.sync || '').toLowerCase() === 'true';
 
   const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE VaultId = ? ORDER BY Title ASC',
+    'SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL ORDER BY Title ASC',
     [vault.Id]
   );
   const [linkRows] = await pool.execute<RowDataPacket[]>(

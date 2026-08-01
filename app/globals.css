@@ -256,7 +256,7 @@ a:hover { text-decoration: underline; }
   margin: 0.85rem 0;
 }
 .synapse-md-preview pre code { background: transparent; padding: 0; }
-.synapse-md-preview a:not(.synapse-wikilink) {
+.synapse-md-preview a:not(.synapse-wikilink):not(.synapse-mention) {
   color: var(--accent-soft);
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -292,6 +292,20 @@ a:hover { text-decoration: underline; }
   border-bottom-style: dashed;
   border-bottom-color: color-mix(in srgb, var(--danger) 55%, transparent);
   cursor: pointer;
+}
+
+/* Unlinked mention — clickable but visually distinct from [[wikilink]] */
+.synapse-mention {
+  color: #7dd3fc !important;
+  text-decoration: none !important;
+  border-bottom: 1px dashed color-mix(in srgb, #7dd3fc 55%, transparent);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+}
+.synapse-mention:hover {
+  background: color-mix(in srgb, #38bdf8 12%, transparent);
+  border-radius: 2px;
 }
 
 .synapse-tag {

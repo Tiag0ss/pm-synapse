@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import VaultShareModal from '@/components/VaultShareModal';
 import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
+import ConfirmModal from '@/components/ConfirmModal';
 
-type OptionsTab = 'links' | 'share' | 'pm';
+type OptionsTab = 'links' | 'share' | 'pm' | 'vault' | 'trash';
 
 interface BrokenLinkItem {
   noteId: number;
@@ -14,12 +16,20 @@ interface BrokenLinkItem {
   occurrence: number;
 }
 
+interface TrashNote {
+  Id: number;
+  Title: string;
+  Path: string;
+  DeletedAt?: string;
+}
+
 interface VaultOptionsModalProps {
   open: boolean;
   vaultId: string;
   vaultName: string;
   isOwner: boolean;
   canEdit: boolean;
+  defaultVisibility?: string;
   pmProjectId?: number | null;
   pmOrganizationId?: number | null;
   initialTab?: OptionsTab;
@@ -35,6 +45,7 @@ export default function VaultOptionsModal({
   vaultName,
   isOwner,
   canEdit,
+  defaultVisibility = 'private',
   pmProjectId,
   pmOrganizationId,
   initialTab = 'links',
@@ -43,6 +54,7 @@ export default function VaultOptionsModal({
   onOpenNote,
   onCreateMissingNote,
 }: VaultOptionsModalProps) {
+  const router = useRouter();
   const [tab, setTab] = useState<OptionsTab>(initialTab);
   const [broken, setBroken] = useState<BrokenLinkItem[]>([]);
   const [uniqueTargets, setUniqueTargets] = useState(0);
@@ -50,11 +62,25 @@ export default function VaultOptionsModal({
   const [linksError, setLinksError] = useState('');
   const [busyTarget, setBusyTarget] = useState<string | null>(null);
   const [linksStatus, setLinksStatus] = useState('');
+  const [vaultStatus, setVaultStatus] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [deletingVault, setDeletingVault] = useState(false);
+  const [trash, setTrash] = useState<TrashNote[]>([]);
+  const [loadingTrash, setLoadingTrash] = useState(false);
+  const [trashBusy, setTrashBusy] = useState<number | null>(null);
+  const [vaultDefaultVis, setVaultDefaultVis] = useState(defaultVisibility || 'private');
+  const [savingVis, setSavingVis] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setTab(initialTab);
-  }, [open, initialTab]);
+    setVaultStatus('');
+    setDeleteConfirm('');
+    setVaultDefaultVis((defaultVisibility || 'private').toLowerCase());
+  }, [open, initialTab, defaultVisibility]);
 
   const loadBroken = async () => {
     setLoadingLinks(true);
@@ -76,9 +102,27 @@ export default function VaultOptionsModal({
     }
   };
 
+  const loadTrash = async () => {
+    setLoadingTrash(true);
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/notes?trash=1`, { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok) setTrash(data.data || []);
+      else setTrash([]);
+    } finally {
+      setLoadingTrash(false);
+    }
+  };
+
   useEffect(() => {
     if (!open || tab !== 'links') return;
     void loadBroken();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tab, vaultId]);
+
+  useEffect(() => {
+    if (!open || tab !== 'trash') return;
+    void loadTrash();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tab, vaultId]);
 
@@ -102,7 +146,9 @@ export default function VaultOptionsModal({
   const tabs: Array<{ id: OptionsTab; label: string; hidden?: boolean }> = [
     { id: 'links', label: 'Broken links' },
     { id: 'share', label: 'Share' },
+    { id: 'trash', label: 'Trash', hidden: !canEdit },
     { id: 'pm', label: 'Project Management', hidden: !canEdit },
+    { id: 'vault', label: 'Vault' },
   ];
 
   const createMissing = async (item: BrokenLinkItem) => {
@@ -121,6 +167,147 @@ export default function VaultOptionsModal({
     }
   };
 
+  const saveDefaultVisibility = async (next: string) => {
+    if (!isOwner) return;
+    const value = next.toLowerCase();
+    setVaultDefaultVis(value);
+    setSavingVis(true);
+    setVaultStatus('Saving default visibility…');
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultVisibility: value }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVaultStatus(data.message || 'Failed to update default visibility');
+        setVaultDefaultVis((defaultVisibility || 'private').toLowerCase());
+        return;
+      }
+      setVaultStatus(`Default visibility set to ${value}`);
+      onChanged();
+    } catch {
+      setVaultStatus('Failed to update default visibility');
+      setVaultDefaultVis((defaultVisibility || 'private').toLowerCase());
+    } finally {
+      setSavingVis(false);
+    }
+  };
+
+  const exportZip = async () => {
+    setExporting(true);
+    setVaultStatus('Exporting ZIP…');
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/export-zip`, { credentials: 'include' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setVaultStatus((data as { message?: string }).message || 'Export failed');
+        return;
+      }
+      const blob = await res.blob();
+      const disp = res.headers.get('Content-Disposition') || '';
+      const match = /filename="([^"]+)"/.exec(disp);
+      const fileName = match?.[1] || `${vaultName || 'vault'}.zip`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+      const notes = res.headers.get('X-Synapse-Note-Count') || '?';
+      const images = res.headers.get('X-Synapse-Image-Count') || '?';
+      setVaultStatus(`Exported ${notes} notes · ${images} images`);
+    } catch {
+      setVaultStatus('Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const leaveVault = async () => {
+    const res = await fetch(`/api/vaults/${vaultId}/leave`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setVaultStatus(data.message || 'Could not leave vault');
+      setLeaveOpen(false);
+      return;
+    }
+    setLeaveOpen(false);
+    onClose();
+    router.push('/');
+  };
+
+  const deleteVault = async () => {
+    setDeletingVault(true);
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/delete`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmName: deleteConfirm }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVaultStatus(data.message || 'Delete failed');
+        return;
+      }
+      setDeleteOpen(false);
+      onClose();
+      router.push('/');
+    } finally {
+      setDeletingVault(false);
+    }
+  };
+
+  const restoreNote = async (id: number) => {
+    setTrashBusy(id);
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/notes/${id}/restore`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVaultStatus(data.message || 'Restore failed');
+        return;
+      }
+      await loadTrash();
+      onChanged();
+      setVaultStatus('Note restored');
+    } finally {
+      setTrashBusy(null);
+    }
+  };
+
+  const purgeNote = async (id: number) => {
+    setTrashBusy(id);
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/notes/${id}?hard=1`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVaultStatus(data.message || 'Delete failed');
+        return;
+      }
+      await loadTrash();
+      setVaultStatus('Permanently deleted');
+    } finally {
+      setTrashBusy(null);
+    }
+  };
+
+  const displayTrashPath = (path: string, id: number) => {
+    const prefix = `__trash__/${id}/`;
+    return path.startsWith(prefix) ? path.slice(prefix.length) : path;
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div
@@ -132,7 +319,7 @@ export default function VaultOptionsModal({
           <div>
             <h2 className="text-lg font-semibold tracking-tight">Vault options</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              {vaultName} — broken links, sharing, and Project Management.
+              {vaultName} — links, sharing, trash, export, and Project Management.
             </p>
           </div>
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -156,6 +343,7 @@ export default function VaultOptionsModal({
               >
                 {t.label}
                 {t.id === 'links' && broken.length > 0 ? ` (${broken.length})` : ''}
+                {t.id === 'trash' && trash.length > 0 ? ` (${trash.length})` : ''}
               </button>
             ))}
         </div>
@@ -255,6 +443,51 @@ export default function VaultOptionsModal({
             />
           )}
 
+          {tab === 'trash' && canEdit && (
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="border-b border-[var(--border)] px-5 py-3 text-sm text-[var(--muted)]">
+                Soft-deleted notes. Restore to bring them back, or delete permanently.
+              </div>
+              <div className="min-h-0 flex-1 space-y-2 overflow-auto p-5">
+                {loadingTrash && <p className="text-sm text-[var(--muted)]">Loading trash…</p>}
+                {!loadingTrash && trash.length === 0 && (
+                  <p className="rounded-xl border border-dashed border-[var(--border)] px-4 py-10 text-center text-sm text-[var(--muted)]">
+                    Trash is empty.
+                  </p>
+                )}
+                {trash.map((n) => (
+                  <div
+                    key={n.Id}
+                    className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{n.Title}</p>
+                      <p className="truncate font-mono text-[11px] text-[var(--muted)]">
+                        {displayTrashPath(n.Path, n.Id)}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-primary py-1 text-xs"
+                      disabled={trashBusy === n.Id}
+                      onClick={() => void restoreNote(n.Id)}
+                    >
+                      Restore
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-danger py-1 text-xs"
+                      disabled={trashBusy === n.Id}
+                      onClick={() => void purgeNote(n.Id)}
+                    >
+                      Delete forever
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {tab === 'pm' && canEdit && (
             <VaultPmSettingsModal
               open
@@ -271,8 +504,132 @@ export default function VaultOptionsModal({
               }}
             />
           )}
+
+          {tab === 'vault' && (
+            <div className="space-y-4 overflow-auto p-5">
+              <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 p-4">
+                <h3 className="text-sm font-semibold">Default visibility</h3>
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  Applied to notes that use “Vault default”. Per-note overrides still win.
+                </p>
+                <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+                  New notes / Vault default
+                  <select
+                    className="input mt-1.5 w-full max-w-sm"
+                    value={vaultDefaultVis}
+                    disabled={!isOwner || savingVis}
+                    onChange={(e) => void saveDefaultVisibility(e.target.value)}
+                  >
+                    <option value="private">Private</option>
+                    <option value="authenticated">Authenticated users</option>
+                    <option value="unlisted">Unlisted</option>
+                    <option value="public">Public</option>
+                  </select>
+                </label>
+                {!isOwner && (
+                  <p className="mt-2 text-xs text-[var(--muted)]">Only the vault owner can change this.</p>
+                )}
+              </section>
+
+              <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 p-4">
+                <h3 className="text-sm font-semibold">Export</h3>
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  Download all notes as Markdown plus images (compatible with ZIP import).
+                </p>
+                <button
+                  type="button"
+                  className="btn-primary mt-3"
+                  disabled={exporting}
+                  onClick={() => void exportZip()}
+                >
+                  {exporting ? 'Exporting…' : 'Export ZIP'}
+                </button>
+              </section>
+
+              {!isOwner && (
+                <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 p-4">
+                  <h3 className="text-sm font-semibold">Leave vault</h3>
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    Remove your access. You can be invited again later.
+                  </p>
+                  <button type="button" className="btn-danger mt-3" onClick={() => setLeaveOpen(true)}>
+                    Leave vault
+                  </button>
+                </section>
+              )}
+
+              {isOwner && (
+                <section className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+                  <h3 className="text-sm font-semibold text-red-300">Delete vault</h3>
+                  <p className="mt-1 text-xs text-[var(--muted)]">
+                    Permanently deletes this vault, all notes, revisions, and media. This cannot be
+                    undone.
+                  </p>
+                  <button type="button" className="btn-danger mt-3" onClick={() => setDeleteOpen(true)}>
+                    Delete vault…
+                  </button>
+                </section>
+              )}
+
+              {vaultStatus && <p className="text-xs text-[var(--muted)]">{vaultStatus}</p>}
+            </div>
+          )}
         </div>
       </div>
+
+      <ConfirmModal
+        open={leaveOpen}
+        title="Leave vault"
+        message={`Leave “${vaultName}”? You will lose access until invited again.`}
+        confirmLabel="Leave"
+        danger
+        onConfirm={() => void leaveVault()}
+        onCancel={() => setLeaveOpen(false)}
+      />
+
+      {deleteOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-2xl"
+          >
+            <h3 className="text-lg font-semibold tracking-tight">Delete vault</h3>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              Type <strong className="text-[var(--text)]">{vaultName}</strong> to confirm permanent
+              deletion.
+            </p>
+            <input
+              className="input mt-3 w-full"
+              value={deleteConfirm}
+              onChange={(e) => setDeleteConfirm(e.target.value)}
+              placeholder={vaultName}
+              autoFocus
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={deletingVault}
+                onClick={() => {
+                  setDeleteOpen(false);
+                  setDeleteConfirm('');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={deletingVault || deleteConfirm !== vaultName}
+                onClick={() => void deleteVault()}
+              >
+                {deletingVault ? 'Deleting…' : 'Delete forever'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

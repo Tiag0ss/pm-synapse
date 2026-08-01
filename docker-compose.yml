@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  app:
+    image: ${DOCKER_USERNAME:-myuser}/pm-synapse:latest
+    container_name: pm-synapse-app
+    env_file:
+      - .env.docker
+    restart: unless-stopped
+    ports:
+      - "3010:3010"
+    environment:
+      PORT: 3010
+      NODE_ENV: production
+      DB_PROVIDER: ${DB_PROVIDER:-mysql}
+      DB_HOST: ${DB_HOST:-mysql}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:-synapse}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-pm_synapse}
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      PM_BASE_URL: ${PM_BASE_URL}
+      SSO_CLIENT_ID: ${SSO_CLIENT_ID:-pm-synapse}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3010}
+      NEXT_PUBLIC_PM_BASE_URL: ${NEXT_PUBLIC_PM_BASE_URL:-}
+      SYNAPSE_UPLOAD_DIR: /app/data/uploads
+    volumes:
+      - synapse-uploads:/app/data/uploads
+      - synapse-logs:/app/logs
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - synapse-network
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "require('http').get('http://localhost:3010/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  mysql:
+    image: mysql:8.0
+    container_name: pm-synapse-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME:-pm_synapse}
+      MYSQL_USER: ${DB_USER:-synapse}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${SYNAPSE_MYSQL_PORT:-3307}:3306"
+    volumes:
+      - synapse-mysql-data:/var/lib/mysql
+    networks:
+      - synapse-network
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${DB_PASSWORD}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  synapse-mysql-data:
+    driver: local
+  synapse-uploads:
+    driver: local
+  synapse-logs:
+    driver: local
+
+networks:
+  synapse-network:
+    driver: bridge

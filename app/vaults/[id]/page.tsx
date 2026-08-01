@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import MarkdownNoteEditor from '@/components/MarkdownNoteEditor';
-import PromptModal from '@/components/PromptModal';
+import CreateNoteModal from '@/components/CreateNoteModal';
+import QuickSwitcher from '@/components/QuickSwitcher';
 import NoteGraphMindmap from '@/components/NoteGraphMindmap';
 import RevisionDiffModal, { type RevisionSnapshot } from '@/components/RevisionDiffModal';
 import VaultOptionsModal from '@/components/VaultOptionsModal';
@@ -12,6 +13,7 @@ import NoteTasksPanel from '@/components/NoteTasksPanel';
 import NotesFolderTree from '@/components/NotesFolderTree';
 import VaultSwitcher, { rememberLastVault } from '@/components/VaultSwitcher';
 import { noteLeafName } from '@/lib/notePaths';
+import { templateBody, type NoteTemplateId } from '@/lib/noteTemplates';
 import ConfirmModal from '@/components/ConfirmModal';
 
 interface NoteListItem {
@@ -126,6 +128,7 @@ export default function VaultWorkspacePage() {
   }>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [vaultOptionsOpen, setVaultOptionsOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [centerMode, setCenterMode] = useState<CenterMode>('editor');
@@ -139,6 +142,11 @@ export default function VaultWorkspacePage() {
   const [zipOverwriteOpen, setZipOverwriteOpen] = useState(false);
   const [pendingZipBase64, setPendingZipBase64] = useState<string | null>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
+  const [savedSnapshot, setSavedSnapshot] = useState({ title: '', body: '', visibility: '' });
+  const [saveState, setSaveState] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
+  const [pendingSwitchId, setPendingSwitchId] = useState<number | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextAutosaveRef = useRef(false);
 
   const noteIndex = useMemo(
     () => notes.map((n) => ({ id: n.Id, title: n.Title, path: n.Path })),
@@ -161,6 +169,31 @@ export default function VaultWorkspacePage() {
       effectiveNoteVisibility === 'authenticated')
       ? `/w/${vaultMeta.slug}?n=${selectedId}`
       : null;
+
+  const dirty =
+    selectedId != null &&
+    canEdit &&
+    (title !== savedSnapshot.title ||
+      body !== savedSnapshot.body ||
+      visibility !== savedSnapshot.visibility);
+
+  useEffect(() => {
+    if (!dirty) {
+      if (saveState === 'dirty') setSaveState('idle');
+      return;
+    }
+    setSaveState('dirty');
+  }, [dirty, saveState]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
 
   const loadNotes = useCallback(async () => {
     const res = await fetch(`/api/vaults/${vaultId}/notes${q ? `?q=${encodeURIComponent(q)}` : ''}`, {
@@ -186,24 +219,36 @@ export default function VaultWorkspacePage() {
   }, [vaultId]);
 
   useEffect(() => {
-    void loadNotes();
     void loadVault();
     void loadGraph();
-  }, [loadNotes, loadVault, loadGraph]);
+  }, [loadVault, loadGraph]);
 
   useEffect(() => {
     if (vaultId) rememberLastVault(vaultId);
   }, [vaultId]);
 
-  const openNote = async (id: number) => {
+  // notes load via debounced q effect
+
+  const openNote = async (id: number, opts?: { force?: boolean }) => {
+    if (!opts?.force && dirty && selectedId != null && selectedId !== id) {
+      setPendingSwitchId(id);
+      return;
+    }
     const res = await fetch(`/api/vaults/${vaultId}/notes/${id}`, { credentials: 'include' });
     const data = await res.json();
     if (!res.ok) return;
     const n = data.data;
+    skipNextAutosaveRef.current = true;
     setSelectedId(n.Id);
     setTitle(n.Title);
     setBody(n.BodyMarkdown || '');
     setVisibility(n.Visibility || '');
+    setSavedSnapshot({
+      title: String(n.Title || ''),
+      body: String(n.BodyMarkdown || ''),
+      visibility: String(n.Visibility || ''),
+    });
+    setSaveState('idle');
     setCenterMode('editor');
     setHistoryExpanded(false);
     const [revRes, blRes] = await Promise.all([
@@ -212,7 +257,6 @@ export default function VaultWorkspacePage() {
     ]);
     setRevisions((await revRes.json()).data || []);
     const blData = (await blRes.json()).data;
-    // Support new { backlinks, references } shape and legacy array
     if (Array.isArray(blData)) {
       setBacklinks(blData);
       setReferences([]);
@@ -230,32 +274,98 @@ export default function VaultWorkspacePage() {
     const noteId = Number(noteParam);
     if (!Number.isFinite(noteId) || noteId <= 0) return;
     deepNoteOpenedRef.current = true;
-    void openNote(noteId);
+    void openNote(noteId, { force: true });
   }, [searchParams, vaultId]);
 
-  const saveNote = async () => {
-    if (!selectedId) return;
-    setStatus('Saving…');
+  const saveNote = async (opts?: { reason?: 'manual' | 'auto' }) => {
+    if (!selectedId || !canEdit) return false;
+    const reason = opts?.reason || 'manual';
+    setSaveState('saving');
+    setStatus(reason === 'auto' ? 'Autosaving…' : 'Saving…');
+    const payload = {
+      title,
+      bodyMarkdown: body,
+      visibility: visibility || null,
+    };
     const res = await fetch(`/api/vaults/${vaultId}/notes/${selectedId}`, {
       method: 'PUT',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title,
-        bodyMarkdown: body,
-        visibility: visibility || null,
-      }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
-    setStatus(res.ok ? 'Saved' : data.message || 'Save failed');
+    if (!res.ok) {
+      setSaveState('error');
+      setStatus(data.message || 'Save failed');
+      return false;
+    }
+    setSavedSnapshot({
+      title,
+      body,
+      visibility,
+    });
+    setSaveState('saved');
+    setStatus(reason === 'auto' ? 'Autosaved' : 'Saved');
     await loadNotes();
-    if (selectedId) await openNote(selectedId);
-    if (res.ok) await loadGraph();
+    // Refresh revisions quietly without resetting editor cursor
+    const revRes = await fetch(`/api/vaults/${vaultId}/notes/${selectedId}/revisions`, {
+      credentials: 'include',
+    });
+    if (revRes.ok) setRevisions((await revRes.json()).data || []);
+    if (reason === 'manual') await loadGraph();
+    return true;
   };
+
+  // Debounced autosave
+  useEffect(() => {
+    if (!canEdit || !selectedId || !dirty) return;
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false;
+      return;
+    }
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      void saveNote({ reason: 'auto' });
+    }, 2500);
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, body, visibility, selectedId, canEdit, dirty]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && quickOpen) {
+        setQuickOpen(false);
+        return;
+      }
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (k === 's') {
+        e.preventDefault();
+        if (canEdit && selectedId) void saveNote({ reason: 'manual' });
+      } else if (k === 'o') {
+        e.preventDefault();
+        setQuickOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEdit, selectedId, title, body, visibility, quickOpen]);
+
+  // Debounce title/path/body search filter
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void loadNotes();
+    }, q ? 250 : 0);
+    return () => window.clearTimeout(t);
+  }, [q, loadNotes]);
 
   const createNote = async (
     name: string,
-    opts?: { linkFromNoteId?: number | null; skipOpen?: boolean }
+    opts?: { linkFromNoteId?: number | null; skipOpen?: boolean; templateId?: NoteTemplateId }
   ) => {
     setCreateOpen(false);
     const trimmed = name.trim();
@@ -263,6 +373,7 @@ export default function VaultWorkspacePage() {
 
     const linkFromNoteId = opts?.linkFromNoteId ?? null;
     const skipOpen = Boolean(opts?.skipOpen);
+    const bodyMarkdown = templateBody(opts?.templateId || 'blank', noteLeafName(trimmed));
 
     const rebuildSourceGraph = async () => {
       if (!linkFromNoteId) return;
@@ -272,7 +383,6 @@ export default function VaultWorkspacePage() {
       }).catch(() => null);
     };
 
-    // If the target already resolves in the current index, just open it
     const existingId = noteIndex.find(
       (n) =>
         n.title.replace(/\\/g, '/').toLowerCase() === trimmed.replace(/\\/g, '/').toLowerCase() ||
@@ -292,7 +402,7 @@ export default function VaultWorkspacePage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: trimmed,
-        bodyMarkdown: `# ${noteLeafName(trimmed)}\n\n`,
+        bodyMarkdown,
         ...(linkFromNoteId ? { linkFromNoteId } : {}),
       }),
     });
@@ -311,7 +421,6 @@ export default function VaultWorkspacePage() {
     const newId = Number(data.data.id);
     const newPath = String(data.data.path || `${trimmed}.md`);
     const newTitle = String(data.data.title || trimmed);
-    // Optimistic index so [[wikilinks]] resolve as soon as you return to the source note
     setNotes((prev) => {
       if (prev.some((n) => n.Id === newId)) return prev;
       return [
@@ -329,7 +438,7 @@ export default function VaultWorkspacePage() {
     setStatus(`Created “${trimmed}”`);
     await loadNotes();
     await loadGraph();
-    if (!skipOpen) await openNote(newId);
+    if (!skipOpen) await openNote(newId, { force: true });
   };
 
   const deleteNote = async () => {
@@ -350,10 +459,12 @@ export default function VaultWorkspacePage() {
       setTitle('');
       setBody('');
       setVisibility('');
+      setSavedSnapshot({ title: '', body: '', visibility: '' });
+      setSaveState('idle');
       setRevisions([]);
       setBacklinks([]);
       setReferences([]);
-      setStatus('Note deleted');
+      setStatus('Note moved to trash');
       await loadNotes();
       await loadGraph();
     } finally {
@@ -547,13 +658,19 @@ export default function VaultWorkspacePage() {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <input
             className="input w-44 py-1.5"
-            placeholder="Search notes…"
+            placeholder="Filter notes…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void loadNotes();
-            }}
+            title="Filters by title, path, or body"
           />
+          <button
+            type="button"
+            className="btn-ghost py-1.5"
+            onClick={() => setQuickOpen(true)}
+            title="Jump to note (Ctrl/Cmd+O)"
+          >
+            Jump…
+          </button>
           {canEdit && (
             <button type="button" className="btn-primary py-1.5" onClick={() => setCreateOpen(true)}>
               New note
@@ -589,9 +706,13 @@ export default function VaultWorkspacePage() {
           >
             {centerMode === 'mindmap' ? 'Back to editor' : 'Full mindmap'}
           </button>
-          {status && (
-            <span className="max-w-[200px] truncate rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--muted)]">
-              {status}
+          {(status || saveState === 'dirty' || saveState === 'saving' || saveState === 'saved') && (
+            <span className="max-w-[220px] truncate rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--muted)]">
+              {saveState === 'saving'
+                ? 'Saving…'
+                : saveState === 'dirty'
+                  ? 'Unsaved changes'
+                  : status || (saveState === 'saved' ? 'Saved' : '')}
             </span>
           )}
         </div>
@@ -649,15 +770,23 @@ export default function VaultWorkspacePage() {
                   aria-label="Visibility"
                   disabled={!canEdit}
                 >
-                  <option value="">Vault default</option>
+                  <option value="">
+                    Vault default ({(vaultMeta.DefaultVisibility || 'private').toLowerCase()})
+                  </option>
                   <option value="private">Private</option>
                   <option value="authenticated">Authenticated users</option>
                   <option value="unlisted">Unlisted</option>
                   <option value="public">Public</option>
                 </select>
                 {canEdit && (
-                  <button type="button" className="btn-primary" onClick={() => void saveNote()}>
-                    Save
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={saveState === 'saving'}
+                    onClick={() => void saveNote({ reason: 'manual' })}
+                    title="Save (Ctrl/Cmd+S) — also autosaves after a short pause"
+                  >
+                    {saveState === 'saving' ? 'Saving…' : dirty ? 'Save*' : 'Save'}
                   </button>
                 )}
                 {canEdit && (
@@ -665,7 +794,7 @@ export default function VaultWorkspacePage() {
                     type="button"
                     className="btn-danger"
                     onClick={() => setDeleteOpen(true)}
-                    title="Delete this note"
+                    title="Move this note to trash"
                   >
                     Delete
                   </button>
@@ -845,21 +974,40 @@ export default function VaultWorkspacePage() {
         </aside>
       </div>
 
-      <PromptModal
+      <CreateNoteModal
         open={createOpen}
-        title="New note"
-        label="Title"
-        placeholder="meta/risks or Meeting notes"
-        confirmLabel="Create"
         onCancel={() => setCreateOpen(false)}
-        onConfirm={(v) => void createNote(v)}
+        onConfirm={(v, templateId) => void createNote(v, { templateId })}
+      />
+
+      <QuickSwitcher
+        open={quickOpen}
+        vaultId={vaultId}
+        notes={noteIndex}
+        onClose={() => setQuickOpen(false)}
+        onOpenNote={(id) => void openNote(id)}
+      />
+
+      <ConfirmModal
+        open={pendingSwitchId != null}
+        title="Unsaved changes"
+        message="You have unsaved edits on this note. Discard them and open the other note, or cancel and save first."
+        confirmLabel="Discard & open"
+        cancelLabel="Stay"
+        danger
+        onConfirm={() => {
+          const id = pendingSwitchId;
+          setPendingSwitchId(null);
+          if (id != null) void openNote(id, { force: true });
+        }}
+        onCancel={() => setPendingSwitchId(null)}
       />
 
       <ConfirmModal
         open={deleteOpen}
-        title="Delete note"
-        message={`Delete “${title || 'this note'}”? This cannot be undone (revisions are removed too).`}
-        confirmLabel={deleting ? 'Deleting…' : 'Delete'}
+        title="Move to trash"
+        message={`Move “${title || 'this note'}” to trash? You can restore it from Vault options → Trash.`}
+        confirmLabel={deleting ? 'Deleting…' : 'Move to trash'}
         cancelLabel="Cancel"
         danger
         onConfirm={() => {
@@ -919,6 +1067,7 @@ export default function VaultWorkspacePage() {
         vaultName={vaultMeta.Name || `Vault #${vaultId}`}
         isOwner={isOwner}
         canEdit={canEdit}
+        defaultVisibility={vaultMeta.DefaultVisibility || 'private'}
         pmProjectId={vaultMeta.PmProjectId}
         pmOrganizationId={vaultMeta.PmOrganizationId}
         onClose={() => setVaultOptionsOpen(false)}

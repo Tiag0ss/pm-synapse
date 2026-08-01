@@ -50,7 +50,7 @@ export async function snapshotRevision(
 
 export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise<void> {
   const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path, BodyMarkdown, AliasesJson FROM Notes WHERE VaultId = ?',
+    'SELECT Id, Title, Path, BodyMarkdown, AliasesJson FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
     [vaultId]
   );
   const self = notes.find((n) => Number(n.Id) === noteId);
@@ -76,9 +76,11 @@ export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise
   await pool.execute('DELETE FROM NoteLinks WHERE FromNoteId = ?', [noteId]);
   await pool.execute('DELETE FROM NoteTags WHERE NoteId = ?', [noteId]);
 
+  const wikiLinkedIds = new Set<number>();
   for (const target of wikiTargets) {
     const toId = resolveNoteId(target, resolveIndex);
     if (toId && toId !== noteId) {
+      wikiLinkedIds.add(toId);
       await pool.execute(
         'INSERT IGNORE INTO NoteLinks (FromNoteId, ToNoteId, Kind) VALUES (?, ?, ?)',
         [noteId, toId, 'wikilink']
@@ -87,6 +89,8 @@ export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise
   }
 
   for (const toId of mentionIds) {
+    // Prefer explicit [[wikilink]] — do not also store a mention edge to the same note
+    if (wikiLinkedIds.has(toId)) continue;
     await pool.execute(
       'INSERT IGNORE INTO NoteLinks (FromNoteId, ToNoteId, Kind) VALUES (?, ?, ?)',
       [noteId, toId, 'mention']
@@ -116,7 +120,7 @@ export async function rewriteWikiLinksOnRename(
   newPath: string
 ): Promise<void> {
   const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, BodyMarkdown FROM Notes WHERE VaultId = ?',
+    'SELECT Id, BodyMarkdown FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
     [vaultId]
   );
   const oldStem = pathStem(oldPath);
