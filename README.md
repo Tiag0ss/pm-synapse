@@ -1,0 +1,133 @@
+# PM Synapse
+
+Markdown vaults companion to [Project Management](https://github.com/tiag0ss/project-management). Notes live in MySQL; creating notes never creates PM work — push project/task is always an explicit manual action.
+
+This project is a work in progress — bugs may still be found; please report them on GitHub.
+
+## Features
+
+- 📔 **Markdown vaults** — Folder paths (`meta/risks`), note tree (folders first), vault switcher
+- ✍️ **Editor** — Split/edit/preview, toolbar, paste/drop images + lightbox
+- 🔗 **Wikilinks & graph** — `[[links]]` (path + unique leaf), tags, backlinks, focused + full mindmap
+- 🕘 **Revisions** — Autosave history with side-by-side restore
+- 📦 **ZIP import** — Nested folders → note paths; images uploaded into vault media
+- ✅ **Checkbox → PM tasks** — Manual create (single or bulk with progress); Synapse pulls PM closed/cancelled status
+- 👁️ **Visibility** — Private, authenticated users, unlisted, public + `/w/:slug` wiki
+- 👥 **Vault sharing** — Owner-only by default; grant read or edit to other Synapse users
+- 🔐 **SSO** — Sign in with Project Management; resume last opened vault after login
+- 🔌 **PM bridge** — Manual vault→project link; Synapse refs stored on PM tasks
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS |
+| Backend | Node.js, Express 5, TypeScript (custom server) |
+| Database | MySQL 8+ |
+| Auth | JWT session cookie + PM SSO (`/api/sso/*`) |
+| Markdown | `marked` + Synapse preprocess (wikilinks, tags, checkboxes) |
+
+## Local Development
+
+1. Create MySQL database **and user**:
+
+```bash
+mysql -u root -p < server/database/scripts/bootstrap.sql
+```
+
+That creates DB `pm_synapse` and user `synapse` / password `change-me-synapse-db-password` (edit the SQL first if you want another password).
+
+Or run manually:
+
+```sql
+CREATE DATABASE IF NOT EXISTS pm_synapse CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'synapse'@'localhost' IDENTIFIED BY 'your-password';
+GRANT ALL PRIVILEGES ON pm_synapse.* TO 'synapse'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+2. Copy env:
+
+```bash
+cp .env.example .env
+```
+
+```env
+PORT=3010
+JWT_SECRET=change-me-synapse-jwt-secret
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=synapse
+DB_PASSWORD=change-me-synapse-db-password
+DB_NAME=pm_synapse
+PM_BASE_URL=http://localhost:3000
+SSO_CLIENT_ID=pm-synapse
+SSO_CLIENT_SECRET=change-me-synapse-sso-secret
+NEXT_PUBLIC_APP_URL=http://localhost:3010
+```
+
+3. On **Project Management**, set:
+
+```env
+ALLOWED_SSO_REDIRECTS=http://localhost:3010/api/auth/sso/callback
+SSO_CLIENT_ID=pm-synapse
+SSO_CLIENT_SECRET=change-me-synapse-sso-secret
+```
+
+4. Install and run (from this folder):
+
+```bash
+pnpm install --ignore-workspace
+pnpm run dev
+```
+
+Open [http://localhost:3010](http://localhost:3010) — Sign in with Project Management (SSO). After login you land on the last vault you opened (if still accessible).
+
+**Note:** TypeScript must stay on 5.x (`typescript@5.9.3`) — Next.js 15 does not support TypeScript 7.
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `3010` | Synapse HTTP port |
+| `JWT_SECRET` | **Yes** | — | Session JWT secret |
+| `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME` | **Yes** | — | MySQL connection |
+| `DB_PROVIDER` | No | `mysql` | Database provider |
+| `PM_BASE_URL` | **Yes** | — | Project Management base URL |
+| `SSO_CLIENT_ID` | **Yes** | `pm-synapse` | Must match PM SSO client |
+| `SSO_CLIENT_SECRET` | **Yes** | — | Must match PM `SSO_CLIENT_SECRET` |
+| `ENCRYPTION_KEY` | No | — | Token encryption (falls back to `JWT_SECRET`) |
+| `NEXT_PUBLIC_APP_URL` | **Yes** | — | Public Synapse URL (SSO redirect) |
+| `NEXT_PUBLIC_PM_BASE_URL` | No | — | Optional PM link base in the UI |
+
+## Ports
+
+| Port | Description |
+|------|-------------|
+| `3010` | Synapse (frontend + API) |
+| `3000` | Project Management (SSO issuer) |
+| `3306` | MySQL |
+
+## Architecture
+
+```
++---------------------------+          +----------------------------+
+|  pm-synapse               |  SSO +   |  project-management        |
+|  Next.js + Express :3010 |  REST →  |  Next.js + Express :3000   |
+|  MySQL: pm_synapse        |          |  MySQL/MSSQL               |
++---------------------------+          +----------------------------+
+```
+
+Notes and vault ACLs live only in Synapse. Task/project create goes through PM’s authenticated APIs with the user’s SSO token.
+
+## Agent docs
+
+- [AGENTS.md](./AGENTS.md) — Cursor / agent entry
+- [docs/PM_API_CONTRACT.md](./docs/PM_API_CONTRACT.md) — PM HTTP contracts Synapse depends on
+- `.cursor/rules/` + `.github/prompts/` — conventions and task skills
+
+This folder can be moved to its own git repository (`pm-synapse`) when ready. Keep `docs/PM_API_CONTRACT.md` in sync whenever Synapse’s PM client changes.
+
+## Related
+
+- [Project Management](https://github.com/tiag0ss/project-management) — parent app (SSO + task APIs)

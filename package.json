@@ -1,0 +1,45 @@
+{
+  "name": "pm-synapse",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch server/index.ts",
+    "build": "next build && tsc -p server/tsconfig.json",
+    "start": "NODE_ENV=production node dist/server/index.js",
+    "typecheck": "tsc -p server/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.1",
+    "gray-matter": "^4.0.3",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.1",
+    "marked": "^18.0.7",
+    "mysql2": "^3.23.2",
+    "next": "^15.5.22",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "sanitize-html": "^2.17.6",
+    "winston": "^3.19.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/cookie-parser": "^1.4.10",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@types/sanitize-html": "^2.16.1",
+    "postcss": "^8.5.25",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.1",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,16 @@
+---
+description: Synapse Next.js UI conventions
+globs: app/**/*.{ts,tsx},components/**/*.{ts,tsx},lib/**/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Synapse frontend
+
+- Client pages: `'use client'` where needed; fetch vault APIs with `credentials: 'include'`.
+- Markdown: `MarkdownNoteEditor` + `lib/renderMarkdown.ts` (wikilinks/tags).
+- Folder tree: `NotesFolderTree` + `lib/notePaths.ts`.
+- Path helpers / resolve wikilinks: keep `lib/notePaths.ts` and `server/services/notePaths.ts` in sync.
+- Checkbox helpers: keep `lib/checkboxes.ts` and `server/services/checkboxes.ts` in sync.
+- Modals: `ConfirmModal`, `PromptModal`, `ImageLightbox`, `VaultOptionsModal`, `RevisionDiffModal`.
+- Theme: CSS variables (`--accent`, `--panel`, …) — do not introduce purple/Inter defaults.
+- Status messages: short English strings via page `setStatus` / `onStatus`.

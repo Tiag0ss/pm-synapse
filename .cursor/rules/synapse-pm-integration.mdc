@@ -1,0 +1,28 @@
+---
+description: Synapse ↔ Project Management integration
+globs: server/services/pmClient.ts,server/services/pmCheckboxSync.ts,server/routes/auth.ts,server/routes/vaults.ts
+alwaysApply: false
+---
+
+# Synapse ↔ PM integration
+
+Before changing SSO or PM HTTP calls, read [docs/PM_API_CONTRACT.md](../../docs/PM_API_CONTRACT.md).
+
+## Direction of data
+
+| Flow | Owner | Mechanism |
+|------|-------|-----------|
+| Auth | PM issues access token via SSO | `/sso/authorize` + `/api/sso/token` |
+| Create/link project | Synapse → PM | `POST /api/projects` |
+| Push checkbox → task | Synapse → PM | `POST /api/tasks` (+ Synapse* fields) |
+| Toggle done | Synapse → PM | `PUT /api/tasks/:id` `{ status }` |
+| PM task closed elsewhere | Synapse pulls | `GET /api/tasks/project/:id` then update markdown |
+| Open task in PM | Deep link | `/projects/{id}?tab=tasks&taskId={id}` |
+| Open note from PM | Deep link | `/vaults/{id}?note={noteId}` |
+
+## Rules
+
+- Never assume PM will call Synapse.
+- Store PM access token encrypted in `SsoTokens`; treat 401 as re-auth.
+- When adding a PM API dependency, update `PM_API_CONTRACT.md` and `pmClient.ts` together.
+- Task create should send `synapseVaultId`, `synapseNoteId`, `synapseMarkerId`, `synapseNoteUrl` so PM can show “Open in Synapse” only when linked.

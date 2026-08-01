@@ -1,0 +1,16 @@
+---
+description: Synapse Express backend conventions
+globs: server/**/*.ts
+alwaysApply: false
+---
+
+# Synapse backend
+
+- Routes under `server/routes/`; register in `server/index.ts`.
+- Protected vault routes: `authenticateSession` (`server/middleware/auth.ts`).
+- Public wiki: rate-limited, no session; only `AllowPublicPages` vaults.
+- Use `ownedVault(vaultId, pmUserId)` before mutating vault/note data.
+- After note body/title/path changes: `snapshotRevision` + `rebuildNoteGraph` when appropriate.
+- Passive PM status pull: `syncNoteCheckboxesFromPm` — do **not** snapshot revisions for pull-sync (avoids history spam).
+- Uploads: `server/services/vaultMedia.ts`; files under `data/uploads/{vaultId}/`.
+- Env: `PM_BASE_URL`, `SSO_*`, `NEXT_PUBLIC_APP_URL`, `JWT_SECRET`, `ENCRYPTION_KEY`, `DB_*`.

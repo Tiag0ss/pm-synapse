@@ -1,0 +1,153 @@
+import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
+import { extractTags, extractWikiLinks, findMentions } from './markdown';
+import { pathStem, resolveNoteId } from './notePaths';
+
+const MAX_REVISIONS = 50;
+
+export async function snapshotRevision(
+  noteId: number,
+  pmUserId: number,
+  snapshot: {
+    title: string;
+    path: string;
+    bodyMarkdown: string;
+    frontmatterJson: string | null;
+    visibility: string | null;
+  }
+): Promise<void> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT COALESCE(MAX(RevisionNumber), 0) AS MaxRev FROM NoteRevisions WHERE NoteId = ?',
+    [noteId]
+  );
+  const next = Number(rows[0]?.MaxRev || 0) + 1;
+  await pool.execute(
+    `INSERT INTO NoteRevisions
+      (NoteId, RevisionNumber, Title, Path, BodyMarkdown, FrontmatterJson, Visibility, CreatedByPmUserId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      noteId,
+      next,
+      snapshot.title,
+      snapshot.path,
+      snapshot.bodyMarkdown,
+      snapshot.frontmatterJson,
+      snapshot.visibility,
+      pmUserId,
+    ]
+  );
+
+  await pool.execute(
+    `DELETE FROM NoteRevisions
+     WHERE NoteId = ?
+       AND RevisionNumber <= (
+         SELECT MaxRev FROM (
+           SELECT COALESCE(MAX(RevisionNumber), 0) - ? AS MaxRev FROM NoteRevisions WHERE NoteId = ?
+         ) t
+       )`,
+    [noteId, MAX_REVISIONS, noteId]
+  );
+}
+
+export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise<void> {
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    'SELECT Id, Title, Path, BodyMarkdown, AliasesJson FROM Notes WHERE VaultId = ?',
+    [vaultId]
+  );
+  const self = notes.find((n) => Number(n.Id) === noteId);
+  if (!self) return;
+
+  const dictionary = notes.map((n) => ({
+    id: Number(n.Id),
+    title: String(n.Title),
+    aliases: safeJsonArray(n.AliasesJson),
+  }));
+
+  const resolveIndex = notes.map((n) => ({
+    id: Number(n.Id),
+    title: String(n.Title),
+    path: String(n.Path || ''),
+  }));
+
+  const body = String(self.BodyMarkdown || '');
+  const wikiTargets = extractWikiLinks(body);
+  const mentionIds = findMentions(body, dictionary, noteId);
+  const tags = extractTags(body);
+
+  await pool.execute('DELETE FROM NoteLinks WHERE FromNoteId = ?', [noteId]);
+  await pool.execute('DELETE FROM NoteTags WHERE NoteId = ?', [noteId]);
+
+  for (const target of wikiTargets) {
+    const toId = resolveNoteId(target, resolveIndex);
+    if (toId && toId !== noteId) {
+      await pool.execute(
+        'INSERT IGNORE INTO NoteLinks (FromNoteId, ToNoteId, Kind) VALUES (?, ?, ?)',
+        [noteId, toId, 'wikilink']
+      );
+    }
+  }
+
+  for (const toId of mentionIds) {
+    await pool.execute(
+      'INSERT IGNORE INTO NoteLinks (FromNoteId, ToNoteId, Kind) VALUES (?, ?, ?)',
+      [noteId, toId, 'mention']
+    );
+  }
+
+  for (const tag of tags) {
+    await pool.execute('INSERT IGNORE INTO NoteTags (NoteId, Tag) VALUES (?, ?)', [noteId, tag]);
+  }
+}
+
+function safeJsonArray(raw: unknown): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function rewriteWikiLinksOnRename(
+  vaultId: number,
+  oldTitle: string,
+  newTitle: string,
+  oldPath: string,
+  newPath: string
+): Promise<void> {
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    'SELECT Id, BodyMarkdown FROM Notes WHERE VaultId = ?',
+    [vaultId]
+  );
+  const oldStem = pathStem(oldPath);
+  const newStem = pathStem(newPath);
+
+  for (const note of notes) {
+    let body = String(note.BodyMarkdown || '');
+    const before = body;
+    body = body.split(`[[${oldTitle}]]`).join(`[[${newTitle}]]`);
+    body = body.split(`[[${oldStem}]]`).join(`[[${newStem}]]`);
+    if (oldTitle !== newTitle) {
+      body = body.replace(
+        new RegExp(`\\[\\[${escapeRegExp(oldTitle)}\\|([^\\]]+)\\]\\]`, 'g'),
+        `[[${newTitle}|$1]]`
+      );
+    }
+    if (oldStem !== newStem) {
+      body = body.replace(
+        new RegExp(`\\[\\[${escapeRegExp(oldStem)}\\|([^\\]]+)\\]\\]`, 'g'),
+        `[[${newStem}|$1]]`
+      );
+    }
+    if (body !== before) {
+      await pool.execute('UPDATE Notes SET BodyMarkdown = ? WHERE Id = ?', [body, note.Id]);
+      await rebuildNoteGraph(Number(note.Id), vaultId);
+    }
+  }
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export type { ResultSetHeader };

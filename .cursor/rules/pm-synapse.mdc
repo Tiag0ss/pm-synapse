@@ -1,0 +1,84 @@
+---
+description: PM Synapse master context — stack, map, non-negotiables
+alwaysApply: true
+---
+
+# PM Synapse — agent master context
+
+Read this first. For depth use scoped rules in `.cursor/rules/` and [AGENTS.md](../../AGENTS.md).
+
+## Language (mandatory)
+
+- **Always respond in English (EN).**
+- User may write in **European Portuguese (PT)**; understand PT but **never reply in PT or PT-BR** unless they explicitly ask for Portuguese in that reply.
+- Non-English UI copy requires explicit user approval first.
+
+## Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 15 App Router, React 19, Tailwind 4 |
+| Backend | Express 5, TypeScript, `server/index.ts` (serves Next) |
+| Database | MySQL (`server/config/database.ts`), schema in `server/services/schema.ts` |
+| Auth | Cookie session + SSO against Project Management |
+| Validation | Zod on route bodies |
+| Markdown | `marked` + Synapse preprocess (wikilinks, tags, checkboxes) |
+
+## Repository map
+
+```
+app/                 # Next.js pages (vault workspace, public wiki)
+components/          # Editor, mindmap, modals, folder tree, lightbox
+lib/                 # Client helpers (checkboxes, notePaths, renderMarkdown)
+server/routes/       # auth, vaults, publicWiki
+server/services/     # schema, pmClient, notesGraph, vaultMedia, pmCheckboxSync
+docs/                # PM_API_CONTRACT.md and feature docs
+.github/prompts/     # Task skills — open matching skill before coding
+```
+
+## Non-negotiables
+
+### Product
+- **Never auto-create PM projects/tasks on note save** — push is always explicit/manual.
+- **PM is agnostic to Synapse** — no webhooks from PM into Synapse. Synapse **pulls** task status; Synapse **pushes** status on checkbox toggle and link metadata on create.
+- Checkbox tasks (`- [ ]` / `- [x]` with `<!--synapse:cb:…-->`) map 1:1 to PM tasks when pushed.
+
+### Backend
+- Parameterized SQL only via `pool.execute`.
+- Errors: `logger` from `server/utils/logger.ts` — not `console`.
+- Response shape: `{ success: true, data?, message? }` / `{ success: false, message }`.
+- Schema changes: edit `ensureSchema()` statements in `server/services/schema.ts` (no separate migration runner).
+
+### Frontend
+- Dark teal Synapse theme via CSS variables in `app/globals.css`.
+- No `alert()` / `confirm()` — use `ConfirmModal` / `PromptModal`.
+- English UI unless user approved otherwise.
+
+### Notes & paths
+- Title `meta/risks` → Path `meta/risks.md`; sidebar groups by folder.
+- Wikilinks resolve: full title/path, or unique leaf name (`[[risks]]`).
+
+### Media
+- Paste/drop images → `VaultMedia` + `![alt](/api/vaults/:id/media/:mediaId)`.
+- Click preview image → `ImageLightbox`.
+
+## PM integration (when PM lives in another repo)
+
+**Source of truth for HTTP contracts:** [docs/PM_API_CONTRACT.md](../../docs/PM_API_CONTRACT.md).  
+Client implementation: `server/services/pmClient.ts`.  
+Do not invent PM endpoints — document new ones in `PM_API_CONTRACT.md` when Synapse needs them.
+
+## Prompt library
+
+| Task | Skill |
+|------|-------|
+| New API route | `skill-synapse-backend-route.prompt.md` |
+| Editor / wikilinks / folders / media | `skill-synapse-note-features.prompt.md` |
+| SSO / push / status sync | `skill-synapse-pm-integration.prompt.md` |
+| ZIP / bulk import | `skill-synapse-vault-import.prompt.md` |
+
+## Quality bar
+
+- TypeScript strict; avoid `any`.
+- Minimal diff; no drive-by refactors.
+- Commit only when user asks.
