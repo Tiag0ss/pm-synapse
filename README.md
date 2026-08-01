@@ -18,8 +18,9 @@ This project is a work in progress — bugs may still be found; please report th
 - 👁️ **Visibility** — Private, authenticated users, unlisted, public + `/w/:slug` wiki; vault members see full wiki contents
 - 🌐 **Wiki directory** — `/w` lists public wikis visible to you (public / signed-in / your access)
 - 👥 **Vault sharing** — Invite by search or PM user id (before first Synapse login)
-- 🔐 **SSO** — Sign in with Project Management; resume last opened vault after login
-- 🔌 **PM bridge** — Manual vault→project link; Synapse refs stored on PM tasks
+- 🔐 **Auth** — Local username/password and optional PM SSO (linked by email); password reset via SMTP
+- ⚙️ **Admin settings** — Registration toggle, SMTP, instance PM API key, user management
+- 🔌 **PM bridge** — SSO token or instance `pt_…` API key; manual vault→project link; Synapse refs on PM tasks
 
 ## Tech Stack
 
@@ -28,7 +29,7 @@ This project is a work in progress — bugs may still be found; please report th
 | Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS |
 | Backend | Node.js, Express 5, TypeScript (custom server) |
 | Database | MySQL 8+ |
-| Auth | JWT session cookie + PM SSO (`/api/sso/*`) |
+| Auth | Local password + optional PM SSO; JWT session cookie |
 | Markdown | `marked` + Synapse preprocess (wikilinks, tags, checkboxes) |
 
 ## Local Development
@@ -67,10 +68,11 @@ DB_NAME=pm_synapse
 PM_BASE_URL=http://localhost:3000
 SSO_CLIENT_ID=pm-synapse
 SSO_CLIENT_SECRET=change-me-synapse-sso-secret
+# Optional: PM_API_KEY=pt_…
 NEXT_PUBLIC_APP_URL=http://localhost:3010
 ```
 
-3. On **Project Management**, set:
+3. On **Project Management** (only if using SSO), set:
 
 ```env
 ALLOWED_SSO_REDIRECTS=http://localhost:3010/api/auth/sso/callback
@@ -85,7 +87,7 @@ pnpm install --ignore-workspace
 pnpm run dev
 ```
 
-Open [http://localhost:3010](http://localhost:3010) — Sign in with Project Management (SSO). After login you land on the last vault you opened (if still accessible).
+Open [http://localhost:3010](http://localhost:3010) — register a local account (first user becomes admin) and/or sign in with Project Management. Admins manage registration, SMTP, PM API key, and users under **Settings**. Local and SSO accounts with the same email are linked.
 
 **Note:** TypeScript must stay on 5.x (`typescript@5.9.3`) — Next.js 15 does not support TypeScript 7.
 

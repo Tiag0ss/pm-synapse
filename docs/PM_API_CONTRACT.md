@@ -3,7 +3,14 @@
 This document is the **portable contract** Synapse depends on. When Synapse is split into its own repository, keep this file (and `server/services/pmClient.ts`) updated — do **not** rely on browsing the PM codebase.
 
 Base URL: `PM_BASE_URL` (e.g. `http://localhost:3000`).  
-Auth for API calls: `Authorization: Bearer <accessToken>` from SSO token exchange (stored encrypted per user in Synapse).
+Auth for API calls: `Authorization: Bearer <token>` where `<token>` is either:
+
+1. **SSO access token** from the SSO token exchange (stored encrypted per Synapse user), or  
+2. **Personal API token** (`pt_…`) — Synapse may use an **instance-wide** key from admin Settings (or `PM_API_KEY` env) when the signed-in user has no valid SSO token.
+
+PM’s `authenticateToken` middleware accepts both JWT and `pt_` tokens on the same routes.
+
+Local Synapse accounts and PM SSO accounts are linked by **email** (case-insensitive) when both login methods are used.
 
 Unless noted, JSON responses use:
 
@@ -57,7 +64,9 @@ Success `data`:
 }
 ```
 
-Synapse stores `accessToken` encrypted and uses it as Bearer for subsequent PM calls.
+Synapse stores `accessToken` encrypted per Synapse user (`SsoTokens.UserId`) and uses it as Bearer for subsequent PM calls when present. Otherwise Synapse falls back to the instance API key (`pt_…`).
+
+SSO login resolves the Synapse user by linked `PmUserId`, then by **email**, then creates a new user.
 
 ---
 

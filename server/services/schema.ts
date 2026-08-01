@@ -1,4 +1,4 @@
-import { pool } from '../config/database';
+import { pool, RowDataPacket } from '../config/database';
 import logger from '../utils/logger';
 
 const STATEMENTS = [
@@ -9,6 +9,37 @@ const STATEMENTS = [
     LastLoginAt DATETIME NULL,
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS Users (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    Username VARCHAR(255) NOT NULL,
+    Email VARCHAR(255) NOT NULL,
+    PasswordHash VARCHAR(255) NULL,
+    PmUserId INT NULL,
+    IsAdmin TINYINT NOT NULL DEFAULT 0,
+    IsActive TINYINT NOT NULL DEFAULT 1,
+    LastLoginAt DATETIME NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_users_username (Username),
+    UNIQUE KEY uq_users_email (Email),
+    UNIQUE KEY uq_users_pm (PmUserId)
+  )`,
+  `CREATE TABLE IF NOT EXISTS AppSettings (
+    SettingKey VARCHAR(64) NOT NULL PRIMARY KEY,
+    SettingValue TEXT NULL,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  )`,
+  `CREATE TABLE IF NOT EXISTS PasswordResetTokens (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    UserId INT NOT NULL,
+    TokenHash VARCHAR(64) NOT NULL,
+    ExpiresAt DATETIME NOT NULL,
+    UsedAt DATETIME NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_prt_hash (TokenHash),
+    KEY idx_prt_user (UserId),
+    CONSTRAINT fk_prt_user FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS Vaults (
     Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -83,10 +114,11 @@ const STATEMENTS = [
     CONSTRAINT fk_tags_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS SsoTokens (
-    PmUserId INT NOT NULL PRIMARY KEY,
+    UserId INT NOT NULL PRIMARY KEY,
     AccessTokenEnc TEXT NOT NULL,
     ExpiresAt DATETIME NOT NULL,
-    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_sso_user FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS NoteCheckboxTasks (
     Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -136,6 +168,100 @@ const ALTERS = [
   'ALTER TABLE Notes ADD KEY idx_note_deleted (VaultId, DeletedAt)',
 ];
 
+/** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */
+async function migrateSsoTokensIfNeeded(): Promise<void> {
+  const [cols] = await pool.execute<RowDataPacket[]>(
+    `SELECT COLUMN_NAME AS name FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'SsoTokens'`
+  );
+  const names = new Set(cols.map((c) => String(c.name)));
+  if (!names.has('PmUserId') || names.has('UserId')) return;
+
+  logger.info('Migrating SsoTokens from PmUserId to UserId');
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS SsoTokens_new (
+      UserId INT NOT NULL PRIMARY KEY,
+      AccessTokenEnc TEXT NOT NULL,
+      ExpiresAt DATETIME NOT NULL,
+      UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.execute(`
+    INSERT IGNORE INTO SsoTokens_new (UserId, AccessTokenEnc, ExpiresAt, UpdatedAt)
+    SELECT u.Id, s.AccessTokenEnc, s.ExpiresAt, s.UpdatedAt
+    FROM SsoTokens s
+    INNER JOIN Users u ON u.PmUserId = s.PmUserId OR u.Id = s.PmUserId
+  `);
+  await pool.execute('DROP TABLE SsoTokens');
+  await pool.execute('RENAME TABLE SsoTokens_new TO SsoTokens');
+  try {
+    await pool.execute(
+      'ALTER TABLE SsoTokens ADD CONSTRAINT fk_sso_user FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE'
+    );
+  } catch (error) {
+    const code = (error as { code?: string })?.code;
+    if (code !== 'ER_DUP_KEYNAME' && code !== 'ER_FK_DUP_NAME') {
+      logger.warn('SsoTokens FK add skipped', { error });
+    }
+  }
+}
+
+async function migrateUserProfilesToUsers(): Promise<void> {
+  const [countRows] = await pool.execute<RowDataPacket[]>('SELECT COUNT(*) AS c FROM Users');
+  if (Number(countRows[0]?.c || 0) > 0) return;
+
+  const [profiles] = await pool.execute<RowDataPacket[]>(
+    'SELECT PmUserId, Username, Email, LastLoginAt, CreatedAt, UpdatedAt FROM UserProfiles'
+  );
+  if (!profiles.length) return;
+
+  logger.info('Migrating UserProfiles into Users', { count: profiles.length });
+  for (const p of profiles) {
+    await pool.execute(
+      `INSERT INTO Users (Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive, LastLoginAt, CreatedAt, UpdatedAt)
+       VALUES (?, ?, ?, NULL, ?, 0, 1, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE Email = VALUES(Email), Username = VALUES(Username)`,
+      [
+        p.PmUserId,
+        p.Username,
+        String(p.Email || '').toLowerCase(),
+        p.PmUserId,
+        p.LastLoginAt,
+        p.CreatedAt,
+        p.UpdatedAt,
+      ]
+    );
+  }
+  const [admins] = await pool.execute<RowDataPacket[]>(
+    'SELECT COUNT(*) AS c FROM Users WHERE IsAdmin = 1'
+  );
+  if (Number(admins[0]?.c || 0) === 0) {
+    const [first] = await pool.execute<RowDataPacket[]>(
+      'SELECT Id FROM Users ORDER BY Id ASC LIMIT 1'
+    );
+    if (first[0]) {
+      await pool.execute('UPDATE Users SET IsAdmin = 1 WHERE Id = ?', [first[0].Id]);
+    }
+  }
+}
+
+async function seedDefaultAppSettings(): Promise<void> {
+  const defaults: Record<string, string> = {
+    siteName: 'PM Synapse',
+    allowPublicWikiDirectory: 'true',
+    allowPublicRegistration: 'true',
+    allowSsoLogin: 'true',
+    minPasswordLength: '8',
+    pmIntegrationEnabled: 'true',
+  };
+  for (const [key, value] of Object.entries(defaults)) {
+    await pool.execute(
+      `INSERT IGNORE INTO AppSettings (SettingKey, SettingValue) VALUES (?, ?)`,
+      [key, value]
+    );
+  }
+}
+
 export async function ensureSchema(): Promise<void> {
   for (const sql of STATEMENTS) {
     await pool.execute(sql);
@@ -145,11 +271,15 @@ export async function ensureSchema(): Promise<void> {
       await pool.execute(sql);
     } catch (error) {
       const code = (error as { code?: string })?.code;
-      // Duplicate column / key name — already migrated
       if (code !== 'ER_DUP_FIELDNAME' && code !== 'ER_DUP_KEYNAME') {
         logger.warn('Schema alter skipped or failed', { sql, error });
       }
     }
   }
+
+  await migrateUserProfilesToUsers();
+  await migrateSsoTokensIfNeeded();
+  await seedDefaultAppSettings();
+
   logger.info('PM Synapse schema ready');
 }

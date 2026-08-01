@@ -4,9 +4,10 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 
 interface Me {
-  pmUserId: number;
+  userId: number;
   username: string;
   email: string;
+  isAdmin: boolean;
 }
 
 interface Vault {
@@ -18,17 +19,39 @@ interface Vault {
   AccessRole?: 'owner' | 'edit' | 'read';
 }
 
+interface Providers {
+  siteName: string;
+  allowPublicRegistration: boolean;
+  allowSsoLogin: boolean;
+  ssoConfigured: boolean;
+  passwordResetAvailable: boolean;
+  hasUsers: boolean;
+}
+
 export default function HomePage() {
   const [me, setMe] = useState<Me | null>(null);
   const [vaults, setVaults] = useState<Vault[]>([]);
+  const [providers, setProviders] = useState<Providers | null>(null);
   const [name, setName] = useState('');
   const [defaultVisibility, setDefaultVisibility] = useState('private');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
+  const [regUsername, setRegUsername] = useState('');
+  const [regEmail, setRegEmail] = useState('');
+  const [regPassword, setRegPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
 
   const load = async () => {
     setLoading(true);
     try {
+      const provRes = await fetch('/api/auth/providers', { credentials: 'include' });
+      if (provRes.ok) {
+        const provJson = await provRes.json();
+        setProviders(provJson.data);
+      }
       const meRes = await fetch('/api/auth/me', { credentials: 'include' });
       if (!meRes.ok) {
         setMe(null);
@@ -69,6 +92,56 @@ export default function HomePage() {
     await load();
   };
 
+  const submitLogin = async () => {
+    setAuthBusy(true);
+    setError('');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || 'Login failed');
+        return;
+      }
+      window.location.href = '/';
+    } catch {
+      setError('Login failed');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const submitRegister = async () => {
+    setAuthBusy(true);
+    setError('');
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: regUsername,
+          email: regEmail,
+          password: regPassword,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.message || 'Registration failed');
+        return;
+      }
+      window.location.href = '/';
+    } catch {
+      setError('Registration failed');
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center text-sm text-[var(--muted)]">
@@ -77,31 +150,137 @@ export default function HomePage() {
     );
   }
 
+  const siteName = providers?.siteName || 'PM Synapse';
+
   if (!me) {
     return (
-      <main className="relative flex min-h-screen flex-col items-center justify-center px-6">
+      <main className="relative flex min-h-screen flex-col items-center justify-center px-6 py-10">
         <div className="absolute inset-0 overflow-hidden" aria-hidden>
           <div className="absolute -left-24 top-20 h-72 w-72 rounded-full bg-teal-500/10 blur-3xl" />
           <div className="absolute -right-16 bottom-16 h-80 w-80 rounded-full bg-sky-500/10 blur-3xl" />
         </div>
-        <div className="relative w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--panel)]/80 p-10 shadow-2xl shadow-black/40 backdrop-blur-xl">
+        <div className="relative w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--panel)]/80 p-8 shadow-2xl shadow-black/40 backdrop-blur-xl">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--accent-soft)]">
             Knowledge vaults
           </p>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight">PM Synapse</h1>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight">{siteName}</h1>
           <p className="mt-3 text-[15px] leading-relaxed text-[var(--muted)]">
-            Markdown notes with wikilinks, backlinks, and optional push into Project Management —
-            signed in with your existing PM account.
+            Markdown notes with wikilinks, backlinks, and optional Project Management integration.
           </p>
-          <a
-            href="/api/auth/sso/start"
-            className="btn-primary mt-8 inline-flex no-underline hover:no-underline"
-          >
-            Sign in with Project Management
-          </a>
+
+          {error && (
+            <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+              {error}
+            </p>
+          )}
+
+          {mode === 'login' ? (
+            <form
+              className="mt-6 space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitLogin();
+              }}
+            >
+              <input
+                className="input w-full"
+                placeholder="Username or email"
+                autoComplete="username"
+                value={login}
+                onChange={(e) => setLogin(e.target.value)}
+              />
+              <input
+                className="input w-full"
+                type="password"
+                placeholder="Password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button type="submit" className="btn-primary w-full" disabled={authBusy}>
+                {authBusy ? 'Signing in…' : 'Sign in'}
+              </button>
+              {providers?.passwordResetAvailable && (
+                <Link
+                  href="/forgot-password"
+                  className="block text-center text-sm text-[var(--accent-soft)] no-underline hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              )}
+            </form>
+          ) : (
+            <form
+              className="mt-6 space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitRegister();
+              }}
+            >
+              <input
+                className="input w-full"
+                placeholder="Username"
+                autoComplete="username"
+                value={regUsername}
+                onChange={(e) => setRegUsername(e.target.value)}
+              />
+              <input
+                className="input w-full"
+                type="email"
+                placeholder="Email"
+                autoComplete="email"
+                value={regEmail}
+                onChange={(e) => setRegEmail(e.target.value)}
+              />
+              <input
+                className="input w-full"
+                type="password"
+                placeholder="Password"
+                autoComplete="new-password"
+                value={regPassword}
+                onChange={(e) => setRegPassword(e.target.value)}
+              />
+              <button type="submit" className="btn-primary w-full" disabled={authBusy}>
+                {authBusy ? 'Creating…' : 'Create account'}
+              </button>
+            </form>
+          )}
+
+          {providers?.allowPublicRegistration && (
+            <button
+              type="button"
+              className="mt-4 w-full text-sm text-[var(--muted)] hover:text-[var(--text)]"
+              onClick={() => {
+                setError('');
+                setMode(mode === 'login' ? 'register' : 'login');
+              }}
+            >
+              {mode === 'login' ? 'Need an account? Register' : 'Already have an account? Sign in'}
+            </button>
+          )}
+
+          {providers?.allowSsoLogin && (
+            <>
+              <div className="my-5 flex items-center gap-3 text-xs text-[var(--muted)]">
+                <div className="h-px flex-1 bg-[var(--border)]" />
+                or
+                <div className="h-px flex-1 bg-[var(--border)]" />
+              </div>
+              <a
+                href="/api/auth/sso/start"
+                className="btn-ghost inline-flex w-full justify-center no-underline hover:no-underline"
+              >
+                Sign in with Project Management
+              </a>
+              <p className="mt-2 text-center text-[11px] text-[var(--muted)]">
+                Same email as in Project Management links your accounts.
+              </p>
+            </>
+          )}
+
           <Link
             href="/w"
-            className="mt-4 block text-center text-sm text-[var(--accent-soft)] no-underline hover:underline"
+            className="mt-6 block text-center text-sm text-[var(--accent-soft)] no-underline hover:underline"
           >
             Browse public wikis →
           </Link>
@@ -115,7 +294,7 @@ export default function HomePage() {
       <header className="mb-10 flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent-soft)]">
-            PM Synapse
+            {siteName}
           </p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Your vaults</h1>
           <p className="mt-1 text-sm text-[var(--muted)]">
@@ -123,6 +302,11 @@ export default function HomePage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {me.isAdmin && (
+            <Link href="/settings" className="btn-ghost no-underline hover:no-underline">
+              Settings
+            </Link>
+          )}
           <Link href="/w" className="btn-ghost no-underline hover:no-underline">
             Public wikis
           </Link>

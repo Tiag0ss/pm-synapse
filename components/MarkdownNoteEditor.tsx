@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { renderSynapseMarkdown, type NoteIndexEntry } from '@/lib/renderMarkdown';
+import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import ImageLightbox from '@/components/ImageLightbox';
 
 type ViewMode = 'edit' | 'split' | 'preview';
@@ -237,6 +238,7 @@ export default function MarkdownNoteEditor({
     const root = previewRef.current;
     if (!root) return;
     const onClick = (e: MouseEvent) => {
+      if (handleMarkdownCodeCopyClick(e, root)) return;
       const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
       if (img?.src && root.contains(img)) {
         e.preventDefault();

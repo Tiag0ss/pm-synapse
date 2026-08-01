@@ -253,9 +253,72 @@ a:hover { text-decoration: underline; }
   border-radius: 0.65rem;
   padding: 0.9rem 1rem;
   overflow: auto;
-  margin: 0.85rem 0;
+  margin: 0;
 }
 .synapse-md-preview pre code { background: transparent; padding: 0; }
+
+.synapse-md-preview .synapse-code-block {
+  position: relative;
+  margin: 0.85rem 0;
+}
+.synapse-md-preview .synapse-code-toolbar {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  z-index: 1;
+}
+.synapse-md-preview .synapse-copy-code {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.4rem;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.synapse-md-preview .synapse-copy-code:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.synapse-md-preview .synapse-copy-code.is-copied {
+  color: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.synapse-md-preview .synapse-inline-code {
+  display: inline;
+  position: relative;
+  white-space: nowrap;
+}
+.synapse-md-preview .synapse-inline-code > code {
+  padding-right: 0.35rem;
+}
+.synapse-md-preview .synapse-inline-code > .synapse-copy-code {
+  margin-left: 0.15rem;
+  padding: 0.2rem 0.4rem;
+  vertical-align: middle;
+  opacity: 0;
+  pointer-events: none;
+}
+.synapse-md-preview .synapse-inline-code:hover > .synapse-copy-code,
+.synapse-md-preview .synapse-inline-code:focus-within > .synapse-copy-code {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .synapse-md-preview .synapse-inline-code > .synapse-copy-code {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .synapse-md-preview a:not(.synapse-wikilink):not(.synapse-mention) {
   color: var(--accent-soft);
   text-decoration: underline;

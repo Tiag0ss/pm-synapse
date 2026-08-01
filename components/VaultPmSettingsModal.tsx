@@ -82,8 +82,11 @@ export default function VaultPmSettingsModal({
         }
       } else {
         setOrgs([]);
-        setOrgError(orgJson.message || 'Failed to load organizations');
-        setStatus(orgJson.message || 'Failed to load organizations');
+        const msg =
+          orgJson.message ||
+          'Failed to load organizations — sign in with Project Management or ask an admin to set an API key in Settings';
+        setOrgError(msg);
+        setStatus(msg);
       }
       const cbJson = await cbRes.json();
       if (cbRes.ok) setItems(cbJson.data?.items || []);

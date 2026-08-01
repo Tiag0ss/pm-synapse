@@ -223,7 +223,7 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
   const fm = parseFrontmatter(md);
   const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data) : '';
   const html = marked.parse(preprocessSynapseMarkdown(fm.body, notes), { async: false, gfm: true }) as string;
-  return sanitizeHtml(props + html, {
+  return sanitizeHtml(props + enhanceCodeCopyHtml(html), {
     allowedTags: [
       ...sanitizeHtml.defaults.allowedTags,
       'img',
@@ -232,6 +232,7 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
       'span',
       'aside',
       'input',
+      'button',
     ],
     allowedAttributes: {
       ...sanitizeHtml.defaults.allowedAttributes,
@@ -241,9 +242,24 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
       div: ['class'],
       img: ['src', 'alt', 'title', 'class'],
       input: ['type', 'checked', 'disabled'],
+      button: ['type', 'class', 'aria-label', 'title', 'data-label'],
     },
     allowedSchemes: ['http', 'https', 'mailto', 'data'],
     allowProtocolRelative: true,
     allowedSchemesAppliedToAttributes: ['href', 'src'],
   });
+}
+
+/** Keep in sync with lib/codeCopy.ts enhanceCodeCopyHtml */
+function enhanceCodeCopyHtml(html: string): string {
+  const slots: string[] = [];
+  let out = html.replace(/<pre\b[\s\S]*?<\/pre>/gi, (block) => {
+    const wrapped = `<div class="synapse-code-block"><div class="synapse-code-toolbar"><button type="button" class="synapse-copy-code" data-label="Copy" aria-label="Copy code" title="Copy">Copy</button></div>${block}</div>`;
+    slots.push(wrapped);
+    return `\u0000PRE${slots.length - 1}\u0000`;
+  });
+  out = out.replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, (block) => {
+    return `<span class="synapse-inline-code">${block}<button type="button" class="synapse-copy-code" data-label="Copy" aria-label="Copy code" title="Copy">Copy</button></span>`;
+  });
+  return out.replace(/\u0000PRE(\d+)\u0000/g, (_, i) => slots[Number(i)] ?? '');
 }

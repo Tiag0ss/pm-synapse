@@ -8,6 +8,7 @@ import NotesFolderTree from '@/components/NotesFolderTree';
 import NoteGraphMindmap from '@/components/NoteGraphMindmap';
 import QuickSwitcher from '@/components/QuickSwitcher';
 import { noteLeafName } from '@/lib/notePaths';
+import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import ImageLightbox from '@/components/ImageLightbox';
 
 interface WikiLinkRow {
@@ -142,6 +143,7 @@ export default function PublicWikiPage() {
     const root = articleRef.current;
     if (!root) return;
     const onClick = (e: MouseEvent) => {
+      if (handleMarkdownCodeCopyClick(e, root)) return;
       const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
       if (img?.src && root.contains(img)) {
         e.preventDefault();

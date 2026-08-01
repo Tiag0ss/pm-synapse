@@ -5,6 +5,7 @@ import { readVaultMedia } from '../services/vaultMedia';
 import { pool, RowDataPacket } from '../config/database';
 import { optionalAuthenticateSession, AuthRequest } from '../middleware/auth';
 import { accessibleVault } from '../services/vaultAccess';
+import { getSettingBool, SETTING_KEYS } from '../services/appSettings';
 
 const router = Router();
 
@@ -67,8 +68,11 @@ async function vaultAccessFor(
 
 /** Directory of public wikis visible to the current viewer. */
 router.get('/', async (req: AuthRequest, res: Response) => {
-  const isAuthed = Boolean(req.user?.pmUserId);
-  const pmUserId = req.user?.pmUserId;
+  if (!(await getSettingBool(SETTING_KEYS.allowPublicWikiDirectory, true))) {
+    return res.json({ success: true, data: [] });
+  }
+  const isAuthed = Boolean(req.user?.userId);
+  const userId = req.user?.userId;
   const [vaults] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Name, slug, Description, DefaultVisibility, OwnerPmUserId, UpdatedAt
      FROM Vaults
@@ -89,7 +93,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
   for (const vault of vaults) {
     const vaultId = Number(vault.Id);
-    const hasAccess = await vaultAccessFor(vaultId, pmUserId);
+    const hasAccess = await vaultAccessFor(vaultId, userId);
     const [notes] = await pool.execute<RowDataPacket[]>(
       `SELECT Visibility FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL`,
       [vaultId]
@@ -162,8 +166,8 @@ router.get('/:slug', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Public vault not found' });
   }
   const vault = vaults[0];
-  const isAuthed = Boolean(req.user?.pmUserId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.pmUserId);
+  const isAuthed = Boolean(req.user?.userId);
+  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
   const [allNotes] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Path, Title, Visibility, UpdatedAt
      FROM Notes
@@ -209,8 +213,8 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
   }
   const note = notes[0];
   const visibility = effectiveVis(note.Visibility, vault.DefaultVisibility);
-  const isAuthed = Boolean(req.user?.pmUserId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.pmUserId);
+  const isAuthed = Boolean(req.user?.userId);
+  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
   const access = canOpenNote(visibility, isAuthed, hasVaultAccess);
   if (!access.ok) {
     if (access.reason === 'auth') {
@@ -301,8 +305,8 @@ router.get('/:slug/search', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Public vault not found' });
   }
   const vault = vaults[0];
-  const isAuthed = Boolean(req.user?.pmUserId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.pmUserId);
+  const isAuthed = Boolean(req.user?.userId);
+  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
   const q = String(req.query.q || '').trim();
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 30));
   if (q.length < 1) {
@@ -375,8 +379,8 @@ router.get('/:slug/graph', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Public vault not found' });
   }
   const vault = vaults[0];
-  const isAuthed = Boolean(req.user?.pmUserId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.pmUserId);
+  const isAuthed = Boolean(req.user?.userId);
+  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
   const [nodes] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Title, Path, Visibility FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL`,
     [vault.Id]

@@ -1,5 +1,6 @@
 import { decryptSecret } from './crypto';
 import { pool, RowDataPacket } from '../config/database';
+import { getPmApiKey, getSettingBool, SETTING_KEYS } from './appSettings';
 import logger from '../utils/logger';
 
 const PM_BASE_URL = (process.env.PM_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
@@ -16,56 +17,109 @@ export function buildSynapseNoteUrl(vaultId: number, noteId: number): string {
 }
 
 /** Short-lived decrypted token cache — avoids DB + decrypt on every PM API call. */
-const tokenCache = new Map<number, { token: string; expiresAtMs: number }>();
+const ssoTokenCache = new Map<number, { token: string; expiresAtMs: number }>();
+let instanceKeyCache: { token: string; expiresAtMs: number } | null = null;
 const TOKEN_CACHE_TTL_MS = 5 * 60_000;
 
-export async function getPmAccessToken(pmUserId: number): Promise<string | null> {
-  const cached = tokenCache.get(pmUserId);
+export function invalidatePmTokenCache(userId?: number): void {
+  if (userId != null) ssoTokenCache.delete(userId);
+  else {
+    ssoTokenCache.clear();
+    instanceKeyCache = null;
+  }
+}
+
+export async function hasValidSsoToken(userId: number): Promise<boolean> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT ExpiresAt FROM SsoTokens WHERE UserId = ?',
+    [userId]
+  );
+  if (!rows.length) return false;
+  const expiresAt = new Date(rows[0].ExpiresAt);
+  return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() > Date.now() + 60_000;
+}
+
+async function getSsoAccessToken(userId: number): Promise<string | null> {
+  const cached = ssoTokenCache.get(userId);
   if (cached && cached.expiresAtMs > Date.now() + 60_000) {
     return cached.token;
   }
 
   const [rows] = await pool.execute<RowDataPacket[]>(
-    'SELECT AccessTokenEnc, ExpiresAt FROM SsoTokens WHERE PmUserId = ?',
-    [pmUserId]
+    'SELECT AccessTokenEnc, ExpiresAt FROM SsoTokens WHERE UserId = ?',
+    [userId]
   );
   if (!rows.length) {
-    tokenCache.delete(pmUserId);
-    logger.warn('No PM SSO token stored for user', { pmUserId });
+    ssoTokenCache.delete(userId);
     return null;
   }
   const expiresAt = new Date(rows[0].ExpiresAt);
-  // 60s skew buffer
   if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60_000) {
-    tokenCache.delete(pmUserId);
-    logger.warn('PM SSO token expired or invalid expiry', { pmUserId, expiresAt: rows[0].ExpiresAt });
+    ssoTokenCache.delete(userId);
     return null;
   }
   try {
     const token = decryptSecret(String(rows[0].AccessTokenEnc));
     const cacheUntil = Math.min(expiresAt.getTime(), Date.now() + TOKEN_CACHE_TTL_MS);
-    tokenCache.set(pmUserId, { token, expiresAtMs: cacheUntil });
+    ssoTokenCache.set(userId, { token, expiresAtMs: cacheUntil });
     return token;
   } catch (error) {
-    tokenCache.delete(pmUserId);
-    logger.error('Failed to decrypt PM token', { error, pmUserId });
+    ssoTokenCache.delete(userId);
+    logger.error('Failed to decrypt PM SSO token', { error, userId });
     return null;
   }
 }
 
+/** Prefer per-user SSO token; fall back to instance PM API key. */
+export async function resolvePmBearer(userId: number): Promise<string | null> {
+  const enabled = await getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true);
+  if (!enabled) return null;
+
+  const sso = await getSsoAccessToken(userId);
+  if (sso) return sso;
+
+  if (instanceKeyCache && instanceKeyCache.expiresAtMs > Date.now() + 60_000) {
+    return instanceKeyCache.token;
+  }
+  const apiKey = await getPmApiKey();
+  if (apiKey) {
+    instanceKeyCache = { token: apiKey, expiresAtMs: Date.now() + TOKEN_CACHE_TTL_MS };
+    return apiKey;
+  }
+  logger.warn('No PM credentials (SSO token or instance API key)', { userId });
+  return null;
+}
+
+/** @deprecated use resolvePmBearer — kept as alias for call-site compatibility during rename */
+export async function getPmAccessToken(userId: number): Promise<string | null> {
+  return resolvePmBearer(userId);
+}
+
 async function pmFetch<T>(
-  pmUserId: number,
+  userId: number,
   path: string,
   init?: RequestInit
 ): Promise<{ ok: boolean; status: number; data: T & { message?: string; success?: boolean } }> {
-  const token = await getPmAccessToken(pmUserId);
+  const enabled = await getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true);
+  if (!enabled) {
+    return {
+      ok: false,
+      status: 503,
+      data: {
+        message: 'Project Management integration is disabled in Settings',
+      } as T & { message?: string },
+    };
+  }
+
+  const token = await resolvePmBearer(userId);
   if (!token) {
     return {
       ok: false,
       status: 401,
-      data: { message: 'SSO session expired — sign in again with Project Management' } as T & {
-        message?: string;
-      },
+      data: {
+        message:
+          'No Project Management credentials — sign in with PM (SSO) or ask an admin to set an API key in Settings',
+      } as T & { message?: string },
     };
   }
   try {
@@ -84,7 +138,7 @@ async function pmFetch<T>(
         path,
         status: res.status,
         message: data.message,
-        pmUserId,
+        userId,
       });
     }
     return { ok: res.ok, status: res.status, data };
@@ -107,7 +161,11 @@ export function normalizeOrganizationList(payload: unknown): Array<{ Id: number;
     const obj = raw as Record<string, unknown>;
     if (Array.isArray(obj.organizations)) raw = obj.organizations;
     else if (Array.isArray(obj.data)) raw = obj.data;
-    else if (obj.data && typeof obj.data === 'object' && Array.isArray((obj.data as { organizations?: unknown }).organizations)) {
+    else if (
+      obj.data &&
+      typeof obj.data === 'object' &&
+      Array.isArray((obj.data as { organizations?: unknown }).organizations)
+    ) {
       raw = (obj.data as { organizations: unknown[] }).organizations;
     }
   }
@@ -122,27 +180,27 @@ export function normalizeOrganizationList(payload: unknown): Array<{ Id: number;
     .filter((o) => Number.isFinite(o.Id) && o.Id > 0);
 }
 
-export async function fetchPmOrganizations(pmUserId: number) {
-  return pmFetch<{ organizations?: unknown[]; data?: unknown[] }>(pmUserId, '/api/organizations');
+export async function fetchPmOrganizations(userId: number) {
+  return pmFetch<{ organizations?: unknown[]; data?: unknown[] }>(userId, '/api/organizations');
 }
 
-export async function fetchPmProjectStatuses(pmUserId: number, organizationId: number) {
+export async function fetchPmProjectStatuses(userId: number, organizationId: number) {
   return pmFetch<{ statuses?: Array<{ Id: number }>; data?: Array<{ Id: number }> }>(
-    pmUserId,
+    userId,
     `/api/status-values/project/${organizationId}`
   );
 }
 
-export async function fetchPmTaskStatuses(pmUserId: number, organizationId: number) {
+export async function fetchPmTaskStatuses(userId: number, organizationId: number) {
   return pmFetch<{ statuses?: Array<{ Id: number }>; data?: Array<{ Id: number }> }>(
-    pmUserId,
+    userId,
     `/api/status-values/task/${organizationId}`
   );
 }
 
-export async function fetchPmTaskPriorities(pmUserId: number, organizationId: number) {
+export async function fetchPmTaskPriorities(userId: number, organizationId: number) {
   return pmFetch<{ priorities?: Array<{ Id: number }>; data?: Array<{ Id: number }> }>(
-    pmUserId,
+    userId,
     `/api/status-values/priority/${organizationId}`
   );
 }
@@ -155,9 +213,9 @@ export type PmTaskSummary = {
 };
 
 /** Fetch tasks for a PM project (includes StatusIsClosed / StatusIsCancelled). */
-export async function fetchPmProjectTasks(pmUserId: number, projectId: number) {
+export async function fetchPmProjectTasks(userId: number, projectId: number) {
   return pmFetch<{ tasks?: PmTaskSummary[]; success?: boolean }>(
-    pmUserId,
+    userId,
     `/api/tasks/project/${projectId}`
   );
 }
@@ -167,17 +225,17 @@ export function isPmTaskDone(task: PmTaskSummary): boolean {
 }
 
 export async function createPmProject(
-  pmUserId: number,
+  userId: number,
   body: { organizationId: number; projectName: string; description?: string; status: number }
 ) {
-  return pmFetch<{ projectId?: number; id?: number; data?: { Id?: number } }>(pmUserId, '/api/projects', {
+  return pmFetch<{ projectId?: number; id?: number; data?: { Id?: number } }>(userId, '/api/projects', {
     method: 'POST',
     body: JSON.stringify(body),
   });
 }
 
 export async function createPmTask(
-  pmUserId: number,
+  userId: number,
   body: {
     projectId: number;
     taskName: string;
@@ -190,14 +248,14 @@ export async function createPmTask(
     synapseNoteUrl?: string;
   }
 ) {
-  return pmFetch<{ taskId?: number; id?: number; data?: { Id?: number } }>(pmUserId, '/api/tasks', {
+  return pmFetch<{ taskId?: number; id?: number; data?: { Id?: number } }>(userId, '/api/tasks', {
     method: 'POST',
     body: JSON.stringify(body),
   });
 }
 
 export async function updatePmTask(
-  pmUserId: number,
+  userId: number,
   taskId: number,
   body: {
     status?: number;
@@ -208,7 +266,7 @@ export async function updatePmTask(
     synapseNoteUrl?: string;
   }
 ) {
-  return pmFetch<{ success?: boolean }>(pmUserId, `/api/tasks/${taskId}`, {
+  return pmFetch<{ success?: boolean }>(userId, `/api/tasks/${taskId}`, {
     method: 'PUT',
     body: JSON.stringify(body),
   });
@@ -232,13 +290,14 @@ function pickStatusId(
 }
 
 export async function resolveTaskStatusId(
-  pmUserId: number,
+  userId: number,
   organizationId: number,
   checked: boolean
 ): Promise<number | null> {
-  const statusRes = await fetchPmTaskStatuses(pmUserId, organizationId);
+  const statusRes = await fetchPmTaskStatuses(userId, organizationId);
   const statusList =
-    (statusRes.data as { statuses?: Array<{ Id: number; IsDefault?: number; IsClosed?: number }> }).statuses ||
+    (statusRes.data as { statuses?: Array<{ Id: number; IsDefault?: number; IsClosed?: number }> })
+      .statuses ||
     (Array.isArray(statusRes.data)
       ? (statusRes.data as Array<{ Id: number; IsDefault?: number; IsClosed?: number }>)
       : []);

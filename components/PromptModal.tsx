@@ -9,6 +9,8 @@ interface PromptModalProps {
   placeholder?: string;
   initialValue?: string;
   confirmLabel?: string;
+  /** HTML input type — use "password" to mask the value */
+  inputType?: 'text' | 'password';
   onConfirm: (value: string) => void;
   onCancel: () => void;
 }
@@ -20,6 +22,7 @@ export default function PromptModal({
   placeholder,
   initialValue = '',
   confirmLabel = 'Create',
+  inputType = 'text',
   onConfirm,
   onCancel,
 }: PromptModalProps) {
@@ -39,8 +42,9 @@ export default function PromptModal({
         className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-2xl shadow-black/40"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!value.trim()) return;
-          onConfirm(value.trim());
+          const next = inputType === 'password' ? value : value.trim();
+          if (!next) return;
+          onConfirm(next);
         }}
       >
         <h2 className="text-lg font-semibold tracking-tight text-[var(--text)]">{title}</h2>
@@ -48,6 +52,8 @@ export default function PromptModal({
           {label}
           <input
             autoFocus
+            type={inputType}
+            autoComplete={inputType === 'password' ? 'new-password' : undefined}
             className="input mt-1.5 w-full"
             placeholder={placeholder}
             value={value}
@@ -58,7 +64,11 @@ export default function PromptModal({
           <button type="button" className="btn-ghost" onClick={onCancel}>
             Cancel
           </button>
-          <button type="submit" className="btn-primary" disabled={!value.trim()}>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={!(inputType === 'password' ? value : value.trim())}
+          >
             {confirmLabel}
           </button>
         </div>
