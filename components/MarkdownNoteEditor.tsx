@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { renderSynapseMarkdown, type NoteIndexEntry } from '@/lib/renderMarkdown';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
+import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import ImageLightbox from '@/components/ImageLightbox';
 
@@ -69,7 +70,12 @@ const LEGEND: Array<{ syntax: string; meaning: string }> = [
   { syntax: '- [ ] task', meaning: 'Checklist item' },
   { syntax: '> quote', meaning: 'Block quote' },
   { syntax: '`code`', meaning: 'Inline code' },
-  { syntax: '``` … ```', meaning: 'Code block' },
+  { syntax: '```js … ```', meaning: 'Code block (syntax highlighted)' },
+  { syntax: '```mermaid', meaning: 'Diagram (flowchart, sequence, …)' },
+  { syntax: '$a=1$ / $$…$$', meaning: 'Inline / block math (KaTeX)' },
+  { syntax: '> [!NOTE]', meaning: 'Callout (tip, warning, danger, …)' },
+  { syntax: '[[toc]]', meaning: 'Table of contents from headings' },
+  { syntax: '[^1] + [^1]:', meaning: 'Footnote reference and definition' },
   { syntax: '[label](url)', meaning: 'External link' },
   { syntax: '![alt](url)', meaning: 'Image (paste or drop into the editor)' },
   { syntax: '--- yaml ---', meaning: 'YAML frontmatter at top (shown as Properties)' },
@@ -279,10 +285,13 @@ export default function MarkdownNoteEditor({
     };
   }, [vaultId, noteId, plannerLinks, value]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = previewRef.current;
     if (!root || mode === 'edit') return;
+    // Own the preview DOM so Mermaid SVG is not wiped by React's dangerouslySetInnerHTML
+    root.innerHTML = html || '<p class="synapse-empty">Nothing to preview yet.</p>';
     applyPlannerButtons(root, fetchedPlannerLinks);
+    void renderMermaidInRoot(root);
   }, [html, fetchedPlannerLinks, mode]);
 
   const uploadImages = useCallback(
@@ -555,9 +564,6 @@ export default function MarkdownNoteEditor({
             <div
               ref={previewRef}
               className="synapse-md-preview min-h-0 overflow-auto p-5 text-[15px] leading-7"
-              dangerouslySetInnerHTML={{
-                __html: html || '<p class="synapse-empty">Nothing to preview yet.</p>',
-              }}
             />
           )}
         </div>

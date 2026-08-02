@@ -346,13 +346,13 @@ export default function HomePage() {
             className="input w-auto"
             value={defaultVisibility}
             onChange={(e) => setDefaultVisibility(e.target.value)}
-            title="Default visibility for notes that inherit the vault setting"
-            aria-label="Default visibility"
+            title="Wiki audience when public pages are enabled; also default for notes"
+            aria-label="Default wiki visibility"
           >
-            <option value="private">Default: Private</option>
-            <option value="authenticated">Default: Authenticated</option>
-            <option value="unlisted">Default: Unlisted</option>
-            <option value="public">Default: Public</option>
+            <option value="private">Wiki: Private (Share only)</option>
+            <option value="authenticated">Wiki: Authenticated</option>
+            <option value="unlisted">Wiki: Unlisted</option>
+            <option value="public">Wiki: Public</option>
           </select>
           <button type="button" onClick={() => void createVault()} className="btn-primary">
             Create

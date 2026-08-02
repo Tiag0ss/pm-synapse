@@ -15,9 +15,9 @@ This project is a work in progress — bugs may still be found; please report th
 - 📋 **Templates** — Blank, meeting, risk, decision when creating notes
 - 🗑️ **Trash** — Soft-delete notes with restore; leave shared vaults / delete owned vaults
 - ✅ **Checkbox → PM tasks** — Manual create (single or bulk with progress); Synapse pulls PM closed/cancelled status
-- 👁️ **Visibility** — Private, authenticated users, unlisted, public + `/w/:slug` wiki; vault members see full wiki contents
-- 🌐 **Wiki directory** — `/w` lists public wikis visible to you (public / signed-in / your access)
-- 👥 **Vault sharing** — Invite by search or PM user id (before first Synapse login)
+- 👁️ **Visibility** — Vault wiki audience (private / authenticated / unlisted / public) + per-note overrides on `/w/:slug`
+- 🌐 **Wiki directory** — `/w` lists wikis you may open (not unlisted); private wikis only if shared with you
+- 👥 **Vault sharing** — **Read** = wiki only; **Edit** = vault editor + wiki; invite by search or PM user id
 - 🔐 **Auth** — Local username/password and optional PM SSO (linked by email); password reset via SMTP
 - ⚙️ **Admin settings** — Registration toggle, SMTP, instance PM API key, user management
 - 🔌 **PM bridge** — SSO token or instance `pt_…` API key; manual vault→project link; Synapse refs on PM tasks
@@ -30,7 +30,7 @@ This project is a work in progress — bugs may still be found; please report th
 | Backend | Node.js, Express 5, TypeScript (custom server) |
 | Database | MySQL 8+ |
 | Auth | Local password + optional PM SSO; JWT session cookie |
-| Markdown | `marked` + Synapse preprocess (wikilinks, tags, checkboxes) |
+| Markdown | `marked` + Synapse extras (wikilinks, tags, checkboxes, Mermaid, KaTeX, highlight, callouts, footnotes, TOC) |
 
 ## Local Development
 
@@ -140,6 +140,17 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for compose ports, volumes, and SSO checkli
 ```
 
 Notes and vault ACLs live only in Synapse. Task/project create goes through PM’s authenticated APIs with the user’s SSO token.
+
+### Wiki visibility
+
+| Vault default visibility | Open `/w/:slug` | Listed on `/w` |
+|--------------------------|-----------------|----------------|
+| **private** | Share Read / Edit / Owner only | Only for those with access |
+| **authenticated** | Any signed-in Synapse user | Yes (when signed in) |
+| **unlisted** | Anyone with the link | No |
+| **public** | Everyone | Yes |
+
+Share **Read** = wiki only (no vault editor). Share **Edit** / owner = vault app + wiki. Per-note visibility filters content inside an accessible wiki; **private** notes are visible on the wiki only to Edit/Owner (not Share Read).
 
 ## Agent docs
 

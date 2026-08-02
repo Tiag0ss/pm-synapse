@@ -64,6 +64,15 @@ async function main() {
 }
 
 main().catch((error) => {
-  logger.error('Failed to start PM Synapse', { error });
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : JSON.stringify(error, Object.getOwnPropertyNames(error instanceof Object ? error : {}));
+  logger.error('Failed to start PM Synapse', {
+    message,
+    stack: error instanceof Error ? error.stack : undefined,
+  });
   process.exit(1);
 });

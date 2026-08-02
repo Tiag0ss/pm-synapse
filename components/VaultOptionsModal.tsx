@@ -508,22 +508,23 @@ export default function VaultOptionsModal({
           {tab === 'vault' && (
             <div className="space-y-4 overflow-auto p-5">
               <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 p-4">
-                <h3 className="text-sm font-semibold">Default visibility</h3>
+                <h3 className="text-sm font-semibold">Wiki audience (default visibility)</h3>
                 <p className="mt-1 text-xs text-[var(--muted)]">
-                  Applied to notes that use “Vault default”. Per-note overrides still win.
+                  Who may open this vault’s wiki when public pages are enabled. Also the default for
+                  notes that use “Vault default”. Per-note overrides still apply inside the wiki.
                 </p>
                 <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
-                  New notes / Vault default
+                  Vault wiki audience
                   <select
                     className="input mt-1.5 w-full max-w-sm"
                     value={vaultDefaultVis}
                     disabled={!isOwner || savingVis}
                     onChange={(e) => void saveDefaultVisibility(e.target.value)}
                   >
-                    <option value="private">Private</option>
-                    <option value="authenticated">Authenticated users</option>
-                    <option value="unlisted">Unlisted</option>
-                    <option value="public">Public</option>
+                    <option value="private">Private — Share only</option>
+                    <option value="authenticated">Authenticated — any signed-in user</option>
+                    <option value="unlisted">Unlisted — link only (hidden from /w)</option>
+                    <option value="public">Public — everyone</option>
                   </select>
                 </label>
                 {!isOwner && (

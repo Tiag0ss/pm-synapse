@@ -4,7 +4,17 @@ import { markdownToSafeHtml } from '../services/markdown';
 import { readVaultMedia } from '../services/vaultMedia';
 import { pool, RowDataPacket } from '../config/database';
 import { optionalAuthenticateSession, AuthRequest } from '../middleware/auth';
-import { accessibleVault } from '../services/vaultAccess';
+import {
+  accessibleVault,
+  canListNoteOnWiki,
+  canListVaultInWikiDirectory,
+  canOpenNoteOnWiki,
+  canOpenVaultApp,
+  canOpenVaultWiki,
+  effectiveVisibility,
+  hasWikiShare,
+  type VaultAccessRole,
+} from '../services/vaultAccess';
 import { getSettingBool, SETTING_KEYS } from '../services/appSettings';
 import { buildPmTaskOpenUrl } from '../services/pmClient';
 
@@ -20,57 +30,56 @@ const publicLimiter = rateLimit({
 router.use(publicLimiter);
 router.use(optionalAuthenticateSession);
 
-function effectiveVis(noteVis: unknown, vaultDefault: unknown): string {
-  return String(noteVis || vaultDefault || 'private').toLowerCase();
-}
-
-/**
- * List in wiki index / sidebar / search:
- * - vault members/owners see all notes
- * - public → everyone
- * - authenticated → signed-in users
- * - unlisted / private → not listed (open by URL only for unlisted)
- */
-function canListNote(visibility: string, isAuthed: boolean, hasVaultAccess: boolean): boolean {
-  if (hasVaultAccess) return true;
-  if (visibility === 'public') return true;
-  if (visibility === 'authenticated' && isAuthed) return true;
-  return false;
-}
-
-/**
- * Open a note on the public wiki:
- * - vault access → always
- * - public / unlisted / authenticated (if signed in)
- */
-function canOpenNote(
-  visibility: string,
-  isAuthed: boolean,
-  hasVaultAccess: boolean
-): { ok: boolean; robots: string; reason?: 'auth' | 'private' } {
-  if (hasVaultAccess) return { ok: true, robots: 'noindex,nofollow' };
-  if (visibility === 'public') return { ok: true, robots: 'index,follow' };
-  if (visibility === 'unlisted') return { ok: true, robots: 'noindex,nofollow' };
-  if (visibility === 'authenticated') {
-    if (isAuthed) return { ok: true, robots: 'noindex,nofollow' };
-    return { ok: false, robots: 'noindex,nofollow', reason: 'auth' };
-  }
-  return { ok: false, robots: 'noindex,nofollow', reason: 'private' };
-}
-
-async function vaultAccessFor(
+async function resolveShareRole(
   vaultId: number,
-  pmUserId: number | undefined
-): Promise<boolean> {
-  if (!pmUserId) return false;
-  const access = await accessibleVault(vaultId, pmUserId, 'read');
-  return Boolean(access);
+  userId: number | undefined
+): Promise<VaultAccessRole | null> {
+  if (!userId) return null;
+  const access = await accessibleVault(vaultId, userId, 'read');
+  return access ? access.AccessRole : null;
 }
 
-/** Directory of public wikis visible to the current viewer. */
+type WikiContext = {
+  isAuthed: boolean;
+  shareRole: VaultAccessRole | null;
+  hasShare: boolean;
+  canEditVault: boolean;
+  wikiGate: ReturnType<typeof canOpenVaultWiki>;
+};
+
+async function wikiContextFor(
+  vault: RowDataPacket,
+  req: AuthRequest
+): Promise<WikiContext> {
+  const isAuthed = Boolean(req.user?.userId);
+  const shareRole = await resolveShareRole(Number(vault.Id), req.user?.userId);
+  const hasShare = hasWikiShare(shareRole);
+  const canEditVault = Boolean(shareRole && canOpenVaultApp(shareRole));
+  const wikiGate = canOpenVaultWiki(vault.DefaultVisibility, isAuthed, hasShare);
+  return { isAuthed, shareRole, hasShare, canEditVault, wikiGate };
+}
+
+function denyWikiGate(res: Response, reason?: 'auth' | 'private' | 'forbidden') {
+  if (reason === 'auth') {
+    return res.status(401).json({
+      success: false,
+      message: 'Sign in required to view this wiki',
+      requiresAuth: true,
+    });
+  }
+  if (reason === 'forbidden') {
+    return res.status(403).json({
+      success: false,
+      message: 'You do not have access to this private wiki',
+    });
+  }
+  return res.status(404).json({ success: false, message: 'Public vault not found' });
+}
+
+/** Directory of wikis visible to the current viewer. */
 router.get('/', async (req: AuthRequest, res: Response) => {
   if (!(await getSettingBool(SETTING_KEYS.allowPublicWikiDirectory, true))) {
-    return res.json({ success: true, data: [] });
+    return res.json({ success: true, data: { wikis: [], authenticated: Boolean(req.user?.userId) } });
   }
   const isAuthed = Boolean(req.user?.userId);
   const userId = req.user?.userId;
@@ -89,36 +98,48 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     defaultVisibility: string;
     noteCount: number;
     hasAccess: boolean;
-    visibilityHint: 'public' | 'authenticated' | 'access';
+    canOpenVault: boolean;
+    visibilityHint: 'public' | 'authenticated' | 'private' | 'access';
   }> = [];
 
   for (const vault of vaults) {
     const vaultId = Number(vault.Id);
-    const hasAccess = await vaultAccessFor(vaultId, userId);
+    const shareRole = await resolveShareRole(vaultId, userId);
+    const hasShare = hasWikiShare(shareRole);
+    const canEditVault = Boolean(shareRole && canOpenVaultApp(shareRole));
+    const vaultVis = effectiveVisibility(null, vault.DefaultVisibility);
+
+    if (!canListVaultInWikiDirectory(vault.DefaultVisibility, isAuthed, hasShare)) {
+      continue;
+    }
+    if (!canOpenVaultWiki(vault.DefaultVisibility, isAuthed, hasShare).ok) {
+      continue;
+    }
+
     const [notes] = await pool.execute<RowDataPacket[]>(
       `SELECT Visibility FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL`,
       [vaultId]
     );
     const listable = notes.filter((n) =>
-      canListNote(effectiveVis(n.Visibility, vault.DefaultVisibility), isAuthed, hasAccess)
-    );
-    if (!listable.length) continue;
-
-    let visibilityHint: 'public' | 'authenticated' | 'access' = 'public';
-    if (hasAccess) {
-      visibilityHint = 'access';
-    } else if (
-      listable.every(
-        (n) => effectiveVis(n.Visibility, vault.DefaultVisibility) === 'authenticated'
+      canListNoteOnWiki(
+        effectiveVisibility(n.Visibility, vault.DefaultVisibility),
+        isAuthed,
+        canEditVault
       )
-    ) {
+    );
+    // Private vaults with share but zero listable notes still appear (empty wiki)
+    if (!listable.length && vaultVis !== 'private') continue;
+    if (!listable.length && vaultVis === 'private' && !hasShare) continue;
+
+    let visibilityHint: 'public' | 'authenticated' | 'private' | 'access' = 'public';
+    if (hasShare && vaultVis === 'private') {
+      visibilityHint = 'access';
+    } else if (vaultVis === 'authenticated') {
       visibilityHint = 'authenticated';
-    } else if (
-      listable.some((n) => effectiveVis(n.Visibility, vault.DefaultVisibility) === 'public')
-    ) {
-      visibilityHint = 'public';
+    } else if (vaultVis === 'private') {
+      visibilityHint = 'private';
     } else {
-      visibilityHint = 'authenticated';
+      visibilityHint = 'public';
     }
 
     items.push({
@@ -126,9 +147,10 @@ router.get('/', async (req: AuthRequest, res: Response) => {
       name: String(vault.Name),
       slug: String(vault.slug),
       description: vault.Description ? String(vault.Description) : null,
-      defaultVisibility: String(vault.DefaultVisibility || 'private').toLowerCase(),
+      defaultVisibility: vaultVis,
       noteCount: listable.length,
-      hasAccess,
+      hasAccess: hasShare,
+      canOpenVault: canEditVault,
       visibilityHint,
     });
   }
@@ -142,16 +164,21 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   });
 });
 
-/** Public media when vault allows public pages. */
-router.get('/:slug/media/:mediaId', async (req: Request, res: Response) => {
+/** Public media when vault allows public pages and viewer may open the wiki. */
+router.get('/:slug/media/:mediaId', async (req: AuthRequest, res: Response) => {
   const [vaults] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id FROM Vaults WHERE slug = ? AND AllowPublicPages = 1',
+    'SELECT * FROM Vaults WHERE slug = ? AND AllowPublicPages = 1',
     [req.params.slug]
   );
   if (!vaults.length) {
     return res.status(404).json({ success: false, message: 'Not found' });
   }
-  const media = await readVaultMedia(Number(vaults[0].Id), Number(req.params.mediaId));
+  const vault = vaults[0];
+  const ctx = await wikiContextFor(vault, req);
+  if (!ctx.wikiGate.ok) {
+    return denyWikiGate(res, ctx.wikiGate.reason);
+  }
+  const media = await readVaultMedia(Number(vault.Id), Number(req.params.mediaId));
   if (!media) return res.status(404).json({ success: false, message: 'Not found' });
   res.setHeader('Content-Type', media.mimeType);
   res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -167,8 +194,11 @@ router.get('/:slug', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Public vault not found' });
   }
   const vault = vaults[0];
-  const isAuthed = Boolean(req.user?.userId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
+  const ctx = await wikiContextFor(vault, req);
+  if (!ctx.wikiGate.ok) {
+    return denyWikiGate(res, ctx.wikiGate.reason);
+  }
+
   const [allNotes] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Path, Title, Visibility, UpdatedAt, Icon
      FROM Notes
@@ -177,8 +207,13 @@ router.get('/:slug', async (req: AuthRequest, res: Response) => {
     [vault.Id]
   );
   const notes = allNotes.filter((n) =>
-    canListNote(effectiveVis(n.Visibility, vault.DefaultVisibility), isAuthed, hasVaultAccess)
+    canListNoteOnWiki(
+      effectiveVisibility(n.Visibility, vault.DefaultVisibility),
+      ctx.isAuthed,
+      ctx.canEditVault
+    )
   );
+  const vaultVis = effectiveVisibility(null, vault.DefaultVisibility);
   res.json({
     success: true,
     data: {
@@ -187,18 +222,20 @@ router.get('/:slug', async (req: AuthRequest, res: Response) => {
         name: vault.Name,
         slug: vault.slug,
         description: vault.Description,
+        defaultVisibility: vaultVis,
       },
       notes,
-      authenticated: isAuthed,
-      user: isAuthed
+      authenticated: ctx.isAuthed,
+      user: ctx.isAuthed
         ? {
             userId: req.user!.userId,
             username: req.user!.username,
             email: req.user!.email,
           }
         : null,
-      canOpenVault: hasVaultAccess,
-      robots: 'index,follow',
+      hasShare: ctx.hasShare,
+      canOpenVault: ctx.canEditVault,
+      robots: vaultVis === 'public' ? 'index,follow' : 'noindex,nofollow',
     },
   });
 });
@@ -212,6 +249,11 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Public vault not found' });
   }
   const vault = vaults[0];
+  const ctx = await wikiContextFor(vault, req);
+  if (!ctx.wikiGate.ok) {
+    return denyWikiGate(res, ctx.wikiGate.reason);
+  }
+
   const [notes] = await pool.execute<RowDataPacket[]>(
     `SELECT * FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL`,
     [req.params.noteId, vault.Id]
@@ -220,10 +262,8 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Note not found' });
   }
   const note = notes[0];
-  const visibility = effectiveVis(note.Visibility, vault.DefaultVisibility);
-  const isAuthed = Boolean(req.user?.userId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
-  const access = canOpenNote(visibility, isAuthed, hasVaultAccess);
+  const visibility = effectiveVisibility(note.Visibility, vault.DefaultVisibility);
+  const access = canOpenNoteOnWiki(visibility, ctx.isAuthed, ctx.canEditVault);
   if (!access.ok) {
     if (access.reason === 'auth') {
       return res.status(401).json({
@@ -241,8 +281,8 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
   );
   const noteIndex = allNotes
     .filter((n) => {
-      const v = effectiveVis(n.Visibility, vault.DefaultVisibility);
-      return canOpenNote(v, isAuthed, hasVaultAccess).ok;
+      const v = effectiveVisibility(n.Visibility, vault.DefaultVisibility);
+      return canOpenNoteOnWiki(v, ctx.isAuthed, ctx.canEditVault).ok;
     })
     .map((n) => ({
       id: Number(n.Id),
@@ -260,7 +300,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     pmTaskId: number | null;
     openUrl: string | null;
   }> = [];
-  if (isAuthed) {
+  if (ctx.isAuthed) {
     const noteId = Number(note.Id);
     const [linkRows] = await pool.execute<RowDataPacket[]>(
       `SELECT MarkerId, PmTaskId, PmProjectId FROM NoteCheckboxTasks
@@ -326,7 +366,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       visibility,
       backlinks: prefer(incoming),
       references: prefer(outgoing),
-      checkboxTasks: isAuthed ? checkboxTasks : [],
+      checkboxTasks: ctx.isAuthed ? checkboxTasks : [],
     },
   });
 });
@@ -340,8 +380,11 @@ router.get('/:slug/search', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Public vault not found' });
   }
   const vault = vaults[0];
-  const isAuthed = Boolean(req.user?.userId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
+  const ctx = await wikiContextFor(vault, req);
+  if (!ctx.wikiGate.ok) {
+    return denyWikiGate(res, ctx.wikiGate.reason);
+  }
+
   const q = String(req.query.q || '').trim();
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 30));
   if (q.length < 1) {
@@ -379,7 +422,11 @@ router.get('/:slug/search', async (req: AuthRequest, res: Response) => {
   const qLower = q.toLowerCase();
   const data = rows
     .filter((r) =>
-      canListNote(effectiveVis(r.Visibility, vault.DefaultVisibility), isAuthed, hasVaultAccess)
+      canListNoteOnWiki(
+        effectiveVisibility(r.Visibility, vault.DefaultVisibility),
+        ctx.isAuthed,
+        ctx.canEditVault
+      )
     )
     .slice(0, limit)
     .map((r) => {
@@ -414,14 +461,21 @@ router.get('/:slug/graph', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Public vault not found' });
   }
   const vault = vaults[0];
-  const isAuthed = Boolean(req.user?.userId);
-  const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
+  const ctx = await wikiContextFor(vault, req);
+  if (!ctx.wikiGate.ok) {
+    return denyWikiGate(res, ctx.wikiGate.reason);
+  }
+
   const [nodes] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Title, Path, Visibility FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL`,
     [vault.Id]
   );
   const visible = nodes.filter((n) =>
-    canListNote(effectiveVis(n.Visibility, vault.DefaultVisibility), isAuthed, hasVaultAccess)
+    canListNoteOnWiki(
+      effectiveVisibility(n.Visibility, vault.DefaultVisibility),
+      ctx.isAuthed,
+      ctx.canEditVault
+    )
   );
   const ids = new Set(visible.map((n) => Number(n.Id)));
   const [edges] = await pool.execute<RowDataPacket[]>(
@@ -447,7 +501,7 @@ router.get('/:slug/graph', async (req: AuthRequest, res: Response) => {
         }
         return [...map.values()];
       })(),
-      robots: 'index,follow',
+      robots: 'noindex,nofollow',
     },
   });
 });

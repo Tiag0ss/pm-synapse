@@ -6,6 +6,7 @@ import {
   parseFrontmatter,
   renderFrontmatterHtml,
 } from './frontmatter';
+import { postprocessMarkdownHtml, preprocessMarkdownExtras } from './markdownEnhance';
 
 const STOP = new Set([
   'the', 'and', 'for', 'with', 'from', 'this', 'that', 'user', 'api', 'note', 'task', 'project',
@@ -225,8 +226,12 @@ export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] =
 export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): string {
   const fm = parseFrontmatter(md);
   const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data) : '';
-  const html = marked.parse(preprocessSynapseMarkdown(fm.body, notes), { async: false, gfm: true }) as string;
-  return sanitizeHtml(props + enhanceCodeCopyHtml(html), {
+  const withExtras = preprocessMarkdownExtras(fm.body);
+  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes), {
+    async: false,
+    gfm: true,
+  }) as string;
+  return sanitizeHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)), {
     allowedTags: [
       ...sanitizeHtml.defaults.allowedTags,
       'img',
@@ -234,18 +239,46 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
       'h2',
       'span',
       'aside',
+      'nav',
+      'section',
       'input',
       'button',
+      'svg',
+      'path',
+      'g',
+      'defs',
+      'use',
+      'marker',
+      'foreignObject',
+      // KaTeX embeds <style>; allowed only with allowVulnerableTags below
+      'style',
     ],
+    // Required when allowing <style> (KaTeX). Mermaid SVG is injected client-side after sanitize.
+    allowVulnerableTags: true,
     allowedAttributes: {
       ...sanitizeHtml.defaults.allowedAttributes,
-      a: ['href', 'name', 'target', 'rel', 'class', 'data-note-title', 'data-note-id'],
-      span: ['class', 'data-marker-id', 'hidden'],
-      aside: ['class', 'aria-label'],
-      div: ['class'],
+      a: ['href', 'name', 'target', 'rel', 'class', 'data-note-title', 'data-note-id', 'id', 'title'],
+      span: ['class', 'data-marker-id', 'hidden', 'style', 'aria-hidden'],
+      aside: ['class', 'aria-label', 'data-callout'],
+      nav: ['class', 'aria-label'],
+      section: ['class', 'aria-label', 'id'],
+      div: ['class', 'id', 'style', 'data-mermaid-rendered'],
+      p: ['class'],
+      li: ['class', 'id', 'style'],
+      ol: ['class', 'start'],
+      ul: ['class'],
+      pre: ['class'],
+      code: ['class'],
       img: ['src', 'alt', 'title', 'class'],
       input: ['type', 'checked', 'disabled'],
       button: ['type', 'class', 'aria-label', 'title', 'data-label'],
+      h1: ['id', 'class'],
+      h2: ['id', 'class'],
+      h3: ['id', 'class'],
+      h4: ['id', 'class'],
+      h5: ['id', 'class'],
+      h6: ['id', 'class'],
+      '*': ['class', 'id', 'style'],
     },
     allowedSchemes: ['http', 'https', 'mailto', 'data'],
     allowProtocolRelative: true,
@@ -257,6 +290,10 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
 function enhanceCodeCopyHtml(html: string): string {
   const slots: string[] = [];
   let out = html.replace(/<pre\b[\s\S]*?<\/pre>/gi, (block) => {
+    if (/\bsynapse-mermaid-source\b|\blanguage-mermaid\b/i.test(block)) {
+      slots.push(block);
+      return `\u0000PRE${slots.length - 1}\u0000`;
+    }
     const wrapped = `<div class="synapse-code-block"><div class="synapse-code-toolbar"><button type="button" class="synapse-copy-code" data-label="Copy" aria-label="Copy code" title="Copy">Copy</button></div>${block}</div>`;
     slots.push(wrapped);
     return `\u0000PRE${slots.length - 1}\u0000`;

@@ -110,7 +110,8 @@ async function editableVault(vaultId: number, pmUserId: number) {
 }
 
 async function readableVault(vaultId: number, pmUserId: number) {
-  return accessibleVault(vaultId, pmUserId, 'read');
+  // Vault editor APIs require edit/owner — Share Read is wiki-only
+  return accessibleVault(vaultId, pmUserId, 'edit');
 }
 
 /** Upload image (paste / drop / file picker) — JSON body with base64. */
@@ -399,9 +400,9 @@ router.delete('/:vaultId/members/:memberPmUserId', async (req: AuthRequest, res:
   res.json({ success: true });
 });
 
-/** Member leaves a shared vault (not available to the owner). */
+/** Member leaves a shared vault (not available to the owner). Share Read may leave too. */
 router.post('/:vaultId/leave', async (req: AuthRequest, res: Response) => {
-  const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
+  const vault = await accessibleVault(Number(req.params.vaultId), req.user!.userId, 'read');
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   if (vault.AccessRole === 'owner') {
     return res.status(400).json({

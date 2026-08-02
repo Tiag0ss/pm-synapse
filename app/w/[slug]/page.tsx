@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { resolveNoteId, type NoteIndexEntry } from '@/lib/renderMarkdown';
@@ -10,6 +10,7 @@ import QuickSwitcher from '@/components/QuickSwitcher';
 import { noteLeafName } from '@/lib/notePaths';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
+import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import ImageLightbox from '@/components/ImageLightbox';
 
 interface WikiLinkRow {
@@ -123,7 +124,7 @@ export default function PublicWikiPage() {
           ? { username: String(data.data.user.username || ''), email: String(data.data.user.email || '') }
           : null
       );
-      setCanOpenVault(Boolean(data.data.authenticated && data.data.canOpenVault));
+      setCanOpenVault(Boolean(data.data.canOpenVault));
       const list = data.data.notes || [];
       setNotes(list);
       if (data.data.robots) {
@@ -191,10 +192,12 @@ export default function PublicWikiPage() {
     return () => root.removeEventListener('click', onClick);
   }, [html, noteIndex, openNote]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = articleRef.current;
     if (!root) return;
+    root.innerHTML = html || '';
     applyPlannerButtons(root, plannerLinks);
+    void renderMermaidInRoot(root);
   }, [html, plannerLinks]);
 
   if (error && !notes.length) {
@@ -313,11 +316,7 @@ export default function PublicWikiPage() {
           ) : (
             <p className="text-[var(--muted)]">Select a public note</p>
           )}
-          <div
-            ref={articleRef}
-            className="synapse-md-preview"
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
+          <div ref={articleRef} className="synapse-md-preview" />
         </section>
 
         <aside className="flex min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--panel)]/40">

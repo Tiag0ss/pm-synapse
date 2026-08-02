@@ -11,15 +11,18 @@ interface PublicWikiItem {
   defaultVisibility: string;
   noteCount: number;
   hasAccess: boolean;
-  visibilityHint: 'public' | 'authenticated' | 'access';
+  canOpenVault?: boolean;
+  visibilityHint: 'public' | 'authenticated' | 'private' | 'access';
 }
 
 function hintLabel(hint: PublicWikiItem['visibilityHint']): string {
   switch (hint) {
     case 'access':
-      return 'Your vault';
+      return 'Shared with you';
     case 'authenticated':
       return 'Signed-in users';
+    case 'private':
+      return 'Private';
     default:
       return 'Public';
   }

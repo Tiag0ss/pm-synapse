@@ -154,7 +154,8 @@ export default function VaultShareModal({
           <div>
             <h2 className="text-lg font-semibold tracking-tight">Share vault</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              {vaultName} — invite Synapse users with read or edit access.
+              {vaultName} — <strong className="font-medium text-[var(--text)]">Wiki only</strong> (Read)
+              or <strong className="font-medium text-[var(--text)]">Vault + wiki</strong> (Edit).
             </p>
           </div>
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -166,7 +167,9 @@ export default function VaultShareModal({
         <div className={`min-h-0 flex-1 space-y-4 overflow-auto ${embedded ? 'p-5' : 'p-5'}`}>
           {embedded && (
             <p className="text-sm text-[var(--muted)]">
-              Invite Synapse users with read or edit access to this vault.
+              <strong className="font-medium text-[var(--text)]">Read</strong> = wiki only (no vault
+              editor). <strong className="font-medium text-[var(--text)]">Edit</strong> = vault editor +
+              wiki. Private wikis are only visible to people you share with.
             </p>
           )}
           {owner && (
@@ -208,8 +211,8 @@ export default function VaultShareModal({
                             void changeRole(m.pmUserId, e.target.value as 'read' | 'edit')
                           }
                         >
-                          <option value="read">Read</option>
-                          <option value="edit">Edit</option>
+                          <option value="read">Wiki only (Read)</option>
+                          <option value="edit">Vault + wiki (Edit)</option>
                         </select>
                         <button
                           type="button"
@@ -250,8 +253,8 @@ export default function VaultShareModal({
                   value={role}
                   onChange={(e) => setRole(e.target.value as 'read' | 'edit')}
                 >
-                  <option value="read">Read</option>
-                  <option value="edit">Edit</option>
+                  <option value="read">Wiki only (Read)</option>
+                  <option value="edit">Vault + wiki (Edit)</option>
                 </select>
                 {/^\d+$/.test(query.trim()) && !memberIds.has(Number(query.trim())) && (
                   <button

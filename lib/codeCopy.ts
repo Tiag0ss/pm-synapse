@@ -57,6 +57,11 @@ function fallbackCopy(text: string): void {
 export function enhanceCodeCopyHtml(html: string): string {
   const slots: string[] = [];
   let out = html.replace(/<pre\b[\s\S]*?<\/pre>/gi, (block) => {
+    // Mermaid sources are rendered client-side — skip copy chrome
+    if (/\bsynapse-mermaid-source\b|\blanguage-mermaid\b/i.test(block)) {
+      slots.push(block);
+      return `\u0000PRE${slots.length - 1}\u0000`;
+    }
     const wrapped = `<div class="synapse-code-block"><div class="synapse-code-toolbar"><button type="button" class="synapse-copy-code" data-label="Copy" aria-label="Copy code" title="Copy">Copy</button></div>${block}</div>`;
     slots.push(wrapped);
     return `\u0000PRE${slots.length - 1}\u0000`;

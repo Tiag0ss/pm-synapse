@@ -13,6 +13,16 @@ Read this first. For depth use scoped rules in `.cursor/rules/` and [AGENTS.md](
 - User may write in **European Portuguese (PT)**; understand PT but **never reply in PT or PT-BR** unless they explicitly ask for Portuguese in that reply.
 - Non-English UI copy requires explicit user approval first.
 
+# Language Enforcement
+language: European Portuguese (PT-PT)
+thinking_language: European Portuguese (PT-PT)
+
+rules:
+  - Never use PT-BR terms in thinking or response.
+  - Replace "usuário" with "utilizador".
+  - Replace "arquivo" with "ficheiro".
+  - Pre-1990 Portuguese spelling agreement preferred.
+
 ## Stack
 
 | Layer | Technology |

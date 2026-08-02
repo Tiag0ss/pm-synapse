@@ -824,9 +824,9 @@ export default function VaultWorkspacePage() {
                   <option value="">
                     Vault default ({(vaultMeta.DefaultVisibility || 'private').toLowerCase()})
                   </option>
-                  <option value="private">Private</option>
+                  <option value="private">Private (vault editors only on wiki)</option>
                   <option value="authenticated">Authenticated users</option>
-                  <option value="unlisted">Unlisted</option>
+                  <option value="unlisted">Unlisted (link only)</option>
                   <option value="public">Public</option>
                 </select>
                 {canEdit && (
@@ -1018,7 +1018,7 @@ export default function VaultWorkspacePage() {
                   <p className="mt-2 text-[11px] leading-relaxed text-[var(--muted)]">
                     {Number(vaultMeta.AllowPublicPages) !== 1
                       ? 'Enable the public wiki in the vault header first.'
-                      : 'Set visibility to public, unlisted, or authenticated (then save) to share this note on the wiki.'}
+                      : 'Wiki audience is set by vault default visibility. Override this note to public, unlisted, or authenticated to publish it; private notes stay hidden from Share Read viewers.'}
                   </p>
                 )}
               </div>

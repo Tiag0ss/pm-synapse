@@ -2,6 +2,7 @@ import { marked } from 'marked';
 import { resolveNoteId, type NoteResolveEntry } from '@/lib/notePaths';
 import { parseFrontmatter, renderFrontmatterHtml } from '@/lib/frontmatter';
 import { enhanceCodeCopyHtml } from '@/lib/codeCopy';
+import { postprocessMarkdownHtml, preprocessMarkdownExtras } from '@/lib/markdownEnhance';
 
 export type NoteIndexEntry = NoteResolveEntry;
 
@@ -134,9 +135,10 @@ export function renderSynapseMarkdown(md: string, notes: NoteIndexEntry[] = []):
   try {
     const fm = parseFrontmatter(md);
     const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data) : '';
-    const prepared = preprocessSynapseMarkdown(fm.body, notes);
+    const withExtras = preprocessMarkdownExtras(fm.body);
+    const prepared = preprocessSynapseMarkdown(withExtras, notes);
     const html = marked.parse(prepared, { async: false, gfm: true }) as string;
-    return props + enhanceCodeCopyHtml(html);
+    return props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html));
   } catch {
     return '<p class="synapse-md-error">Preview error</p>';
   }

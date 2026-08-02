@@ -361,6 +361,204 @@ a:hover { text-decoration: underline; }
 .synapse-empty { color: var(--muted); font-family: var(--font-sans); }
 .synapse-md-error { color: var(--danger); font-family: var(--font-sans); }
 
+/* —— TOC —— */
+.synapse-md-preview .synapse-toc {
+  margin: 1rem 0 1.35rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+.synapse-md-preview .synapse-toc-title {
+  margin: 0 0 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-family: var(--font-sans);
+}
+.synapse-md-preview .synapse-toc ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.synapse-md-preview .synapse-toc li {
+  margin: 0.2rem 0;
+}
+.synapse-md-preview .synapse-toc a {
+  color: var(--accent-soft);
+  text-decoration: none;
+  font-family: var(--font-sans);
+  font-size: 0.92em;
+}
+.synapse-md-preview .synapse-toc a:hover {
+  text-decoration: underline;
+}
+
+/* —— Callouts —— */
+.synapse-md-preview .synapse-callout {
+  margin: 0.85rem 0;
+  padding: 0.75rem 1rem 0.85rem;
+  border-radius: 0.5rem;
+  border-left: 4px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  font-family: var(--font-sans);
+}
+.synapse-md-preview .synapse-callout-title {
+  margin: 0 0 0.35rem;
+  font-weight: 700;
+  font-size: 0.95em;
+  color: var(--text);
+}
+.synapse-md-preview .synapse-callout-body {
+  margin: 0;
+}
+.synapse-md-preview .synapse-callout-body > :first-child { margin-top: 0; }
+.synapse-md-preview .synapse-callout-body > :last-child { margin-bottom: 0; }
+.synapse-md-preview .synapse-callout-note,
+.synapse-md-preview .synapse-callout-info,
+.synapse-md-preview .synapse-callout-abstract,
+.synapse-md-preview .synapse-callout-summary,
+.synapse-md-preview .synapse-callout-quote {
+  border-left-color: #38bdf8;
+  background: color-mix(in srgb, #38bdf8 12%, var(--surface-2));
+}
+.synapse-md-preview .synapse-callout-tip,
+.synapse-md-preview .synapse-callout-hint,
+.synapse-md-preview .synapse-callout-success {
+  border-left-color: #34d399;
+  background: color-mix(in srgb, #34d399 12%, var(--surface-2));
+}
+.synapse-md-preview .synapse-callout-warning,
+.synapse-md-preview .synapse-callout-caution,
+.synapse-md-preview .synapse-callout-todo {
+  border-left-color: #fbbf24;
+  background: color-mix(in srgb, #fbbf24 12%, var(--surface-2));
+}
+.synapse-md-preview .synapse-callout-danger,
+.synapse-md-preview .synapse-callout-error,
+.synapse-md-preview .synapse-callout-failure,
+.synapse-md-preview .synapse-callout-bug {
+  border-left-color: #f87171;
+  background: color-mix(in srgb, #f87171 12%, var(--surface-2));
+}
+.synapse-md-preview .synapse-callout-important,
+.synapse-md-preview .synapse-callout-question,
+.synapse-md-preview .synapse-callout-example {
+  border-left-color: #a78bfa;
+  background: color-mix(in srgb, #a78bfa 12%, var(--surface-2));
+}
+
+/* —— Footnotes —— */
+.synapse-md-preview .synapse-fn-ref a {
+  color: var(--accent-soft);
+  text-decoration: none;
+  font-weight: 600;
+}
+.synapse-md-preview .synapse-footnotes {
+  margin-top: 1.75rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.9em;
+  color: var(--muted);
+  font-family: var(--font-sans);
+}
+.synapse-md-preview .synapse-footnotes ol {
+  padding-left: 1.25rem;
+  margin: 0.35rem 0 0;
+}
+.synapse-md-preview .synapse-fn-back {
+  margin-left: 0.25rem;
+  color: var(--accent-soft);
+  text-decoration: none;
+}
+
+/* —— Math / Mermaid / HLJS —— */
+.synapse-md-preview .katex-display {
+  margin: 0.85rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.synapse-md-preview .synapse-math-error {
+  color: var(--danger);
+}
+.synapse-md-preview .synapse-math-display {
+  margin: 0.85rem 0;
+  overflow-x: auto;
+  text-align: center;
+}
+.synapse-md-preview .synapse-math-inline {
+  display: inline;
+}
+.synapse-md-preview .synapse-mermaid {
+  margin: 1rem 0;
+  padding: 0.75rem 0.85rem;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  text-align: center;
+}
+.synapse-md-preview .synapse-mermaid svg {
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+.synapse-md-preview .synapse-mermaid .edgeLabel,
+.synapse-md-preview .synapse-mermaid .edgeLabel foreignObject,
+.synapse-md-preview .synapse-mermaid .edgeLabel span,
+.synapse-md-preview .synapse-mermaid .nodeLabel,
+.synapse-md-preview .synapse-mermaid .label {
+  color: var(--text);
+  font-family: var(--font-sans);
+}
+.synapse-md-preview .synapse-mermaid .edgeLabel p,
+.synapse-md-preview .synapse-mermaid .nodeLabel p {
+  margin: 0;
+  color: inherit;
+}
+.synapse-md-preview .synapse-mermaid .edgeLabel rect,
+.synapse-md-preview .synapse-mermaid .labelBkg {
+  fill: var(--panel) !important;
+}
+.synapse-md-preview .synapse-mermaid .flowchart-link,
+.synapse-md-preview .synapse-mermaid .edgePath path.path,
+.synapse-md-preview .synapse-mermaid .edgePaths path {
+  stroke: var(--accent-soft) !important;
+}
+.synapse-md-preview .synapse-mermaid marker path {
+  fill: var(--accent-soft) !important;
+  stroke: var(--accent-soft) !important;
+}
+.synapse-md-preview .synapse-mermaid .node rect,
+.synapse-md-preview .synapse-mermaid .node polygon,
+.synapse-md-preview .synapse-mermaid .node circle,
+.synapse-md-preview .synapse-mermaid .node path {
+  stroke: var(--accent) !important;
+  fill: var(--surface-2) !important;
+}
+.synapse-md-preview .synapse-mermaid-error {
+  border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
+  color: var(--danger);
+  white-space: pre-wrap;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.synapse-md-preview .synapse-mermaid-source {
+  opacity: 0.85;
+}
+.synapse-md-preview pre.hljs {
+  background: #0d1117;
+}
+.synapse-md-preview pre.hljs code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
 .synapse-wikilink {
   color: var(--accent-soft) !important;
   text-decoration: none !important;
