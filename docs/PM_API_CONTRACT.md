@@ -201,6 +201,34 @@ PM opens the tasks tab and the task detail modal.
 
 ---
 
+## Users (admin)
+
+### List all users
+
+`GET /api/users`
+
+Auth: Bearer (**PM admin** required — SSO admin JWT or admin `pt_…` API key).
+
+Success:
+
+```json
+{ "success": true, "users": [ /* User rows */ ] }
+```
+
+Fields Synapse uses when syncing into its local `Users` table:
+
+| Field | Use |
+|-------|-----|
+| `Id` | Stored as `Users.PmUserId` |
+| `Username` | Synapse username (uniquified on conflict) |
+| `Email` | Match / create key (required; users without email are skipped) |
+| `IsAdmin` | Applied only when **creating** a new Synapse user |
+| `IsActive` | Synapse `IsActive` on create/update |
+
+Synapse admin action: `POST /api/users/sync-from-pm` pulls this list and upserts local accounts (SSO-ready, no password copy). Matching order: `PmUserId`, then email. Synapse-only users are never deleted.
+
+---
+
 ## Synapse deep links (for PM UI)
 
 | URL | Behaviour |

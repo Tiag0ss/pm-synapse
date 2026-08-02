@@ -306,4 +306,51 @@ export async function resolveTaskStatusId(
   return pickStatusId(statusList, checked);
 }
 
+export type PmUserSummary = {
+  id: number;
+  username: string;
+  email: string;
+  isAdmin: boolean;
+  isActive: boolean;
+};
+
+/** List all PM users (requires admin SSO token or admin API key). */
+export async function fetchPmUsers(userId: number) {
+  return pmFetch<{ users?: unknown[]; data?: unknown[] }>(userId, '/api/users');
+}
+
+export function normalizePmUserList(payload: unknown): PmUserSummary[] {
+  let raw: unknown = payload;
+  if (raw && typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.users)) raw = obj.users;
+    else if (Array.isArray(obj.data)) raw = obj.data;
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((row) => {
+      const u = row as {
+        Id?: number;
+        id?: number;
+        Username?: string;
+        username?: string;
+        Email?: string;
+        email?: string;
+        IsAdmin?: number | boolean;
+        isAdmin?: boolean;
+        IsActive?: number | boolean;
+        isActive?: boolean;
+      };
+      const id = Number(u.Id ?? u.id);
+      const username = String(u.Username ?? u.username ?? '').trim();
+      const email = String(u.Email ?? u.email ?? '').trim();
+      const isAdmin = Number(u.IsAdmin ?? (u.isAdmin ? 1 : 0)) === 1;
+      const isActive = u.IsActive === undefined && u.isActive === undefined
+        ? true
+        : Number(u.IsActive ?? (u.isActive ? 1 : 0)) === 1;
+      return { id, username, email, isAdmin, isActive };
+    })
+    .filter((u) => Number.isFinite(u.id) && u.id > 0);
+}
+
 export { PM_BASE_URL, SYNAPSE_PUBLIC_URL };

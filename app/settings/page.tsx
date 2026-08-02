@@ -73,6 +73,8 @@ export default function SettingsPage() {
   const [newIsAdmin, setNewIsAdmin] = useState(false);
   const [passwordUserId, setPasswordUserId] = useState<number | null>(null);
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
+  const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
+  const [syncBusy, setSyncBusy] = useState(false);
 
   const loadSettings = useCallback(async () => {
     const res = await fetch('/api/settings/general', { credentials: 'include' });
@@ -435,10 +437,25 @@ export default function SettingsPage() {
 
       {tab === 'users' && (
         <section className="space-y-4">
-          <div className="flex justify-end">
-            <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
-              Create user
-            </button>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="max-w-xl text-xs text-[var(--muted)]">
+              Sync pulls accounts from Project Management (admin API). New users are SSO-ready with no
+              local password; existing Synapse users are linked by PM id or email.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={syncBusy}
+                title="Import and link users from Project Management"
+                onClick={() => setSyncConfirmOpen(true)}
+              >
+                {syncBusy ? 'Syncing…' : 'Sync from PM'}
+              </button>
+              <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+                Create user
+              </button>
+            </div>
           </div>
           <div className="overflow-x-auto rounded-2xl border border-[var(--border)]">
             <table className="w-full min-w-[36rem] text-left text-sm">
@@ -621,6 +638,49 @@ export default function SettingsPage() {
           setStatus('User deleted');
           setDeleteUserId(null);
           await loadUsers();
+        }}
+      />
+
+      <ConfirmModal
+        open={syncConfirmOpen}
+        title="Sync users from Project Management"
+        message="Import PM users into Synapse. Matched by PM user id or email. New accounts are SSO-ready (no local password). Existing Synapse-only users are not deleted. Requires a PM admin token or API key."
+        confirmLabel={syncBusy ? 'Syncing…' : 'Sync now'}
+        cancelLabel="Cancel"
+        onCancel={() => {
+          if (!syncBusy) setSyncConfirmOpen(false);
+        }}
+        onConfirm={async () => {
+          if (syncBusy) return;
+          setSyncBusy(true);
+          setError('');
+          setStatus('');
+          try {
+            const res = await fetch('/api/users/sync-from-pm', {
+              method: 'POST',
+              credentials: 'include',
+            });
+            const json = await res.json();
+            if (!res.ok) {
+              setError(json.message || 'Sync failed');
+              return;
+            }
+            const d = json.data as {
+              created?: number;
+              updated?: number;
+              linked?: number;
+              skipped?: number;
+              failed?: number;
+            };
+            setStatus(
+              json.message ||
+                `Created ${d.created ?? 0}, updated ${d.updated ?? 0}, linked ${d.linked ?? 0}, skipped ${d.skipped ?? 0}, failed ${d.failed ?? 0}`
+            );
+            setSyncConfirmOpen(false);
+            await loadUsers();
+          } finally {
+            setSyncBusy(false);
+          }
         }}
       />
     </main>
