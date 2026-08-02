@@ -168,6 +168,24 @@ export default function PublicWikiPage() {
     if (!root) return;
     const onClick = (e: MouseEvent) => {
       if (handleMarkdownCodeCopyClick(e, root)) return;
+
+      const tocLink = (e.target as HTMLElement).closest(
+        'a.synapse-toc-link'
+      ) as HTMLAnchorElement | null;
+      if (tocLink && root.contains(tocLink)) {
+        const href = tocLink.getAttribute('href') || '';
+        if (href.startsWith('#')) {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = decodeURIComponent(href.slice(1));
+          const targetEl = root.querySelector(`#${CSS.escape(id)}`);
+          if (targetEl instanceof HTMLElement) {
+            targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          return;
+        }
+      }
+
       const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
       if (img?.src && root.contains(img)) {
         e.preventDefault();

@@ -106,8 +106,16 @@ function linkifyUnlinkedMentions(chunk: string, notes: NoteIndexEntry[]): string
 /** Turn [[wikilinks]] and #tags into HTML-friendly Markdown. */
 export function preprocessSynapseMarkdown(md: string, notes: NoteIndexEntry[] = []): string {
   return mapProtected(md || '', (chunk) => {
-    // Tags first — never touch hrefs we inject for wikilinks below
-    let next = chunk.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
+    // Protect existing HTML (TOC, callouts, math, …) so # inside href="#…" is not treated as a tag
+    const htmlSlots: string[] = [];
+    const stashHtml = (raw: string) => {
+      htmlSlots.push(raw);
+      return `\u0000HT${htmlSlots.length - 1}\u0000`;
+    };
+    let next = chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml);
+
+    // Tags — only in plain text now
+    next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });
 
@@ -127,7 +135,7 @@ export function preprocessSynapseMarkdown(md: string, notes: NoteIndexEntry[] = 
     });
 
     next = linkifyUnlinkedMentions(next, notes);
-    return next;
+    return next.replace(/\u0000HT(\d+)\u0000/g, (_, i) => htmlSlots[Number(i)] ?? '');
   });
 }
 

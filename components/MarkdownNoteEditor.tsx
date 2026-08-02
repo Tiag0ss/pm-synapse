@@ -61,33 +61,73 @@ const TOOLBAR_GROUPS: Array<Array<{ label: string; title: string; spec: WrapSpec
   ],
 ];
 
-const LEGEND: Array<{ syntax: string; meaning: string }> = [
-  { syntax: '**bold**', meaning: 'Bold text' },
-  { syntax: '_italic_', meaning: 'Italic text' },
-  { syntax: '~~strike~~', meaning: 'Strikethrough' },
-  { syntax: '# Heading', meaning: 'Title (H1); ## H2; ### H3' },
-  { syntax: '- item', meaning: 'Bullet list' },
-  { syntax: '1. item', meaning: 'Numbered list' },
-  { syntax: '- [ ] task', meaning: 'Checklist item' },
-  { syntax: '> quote', meaning: 'Block quote' },
-  { syntax: '`code`', meaning: 'Inline code' },
-  { syntax: '```js … ```', meaning: 'Code block (syntax highlighted)' },
-  { syntax: '```mermaid', meaning: 'Diagram (flowchart, sequence, …)' },
-  { syntax: '$a=1$ / $$…$$', meaning: 'Inline / block math (KaTeX)' },
-  { syntax: '> [!NOTE]', meaning: 'Callout (tip, warning, danger, …)' },
-  { syntax: '[[toc]]', meaning: 'Table of contents from headings' },
-  { syntax: '[^1] + [^1]:', meaning: 'Footnote reference and definition' },
-  { syntax: '[label](url)', meaning: 'External link' },
-  { syntax: '![alt](url)', meaning: 'Image (paste or drop into the editor)' },
-  { syntax: '--- yaml ---', meaning: 'YAML frontmatter at top (shown as Properties)' },
-  { syntax: '[[Note title]]', meaning: 'Link to another note (solid underline)' },
-  { syntax: '[[meta/risks]]', meaning: 'Link by folder path' },
-  { syntax: '[[risks]]', meaning: 'Link by unique leaf name' },
-  { syntax: '[[Note|label]]', meaning: 'Wikilink with custom label' },
-  { syntax: 'plain Title', meaning: 'Unlinked mention (dashed, auto-detected)' },
-  { syntax: '#tag', meaning: 'Tag for filtering / graph' },
-  { syntax: '---', meaning: 'Horizontal line' },
+type LegendSection = {
+  title: string;
+  blurb?: string;
+  items: Array<{ syntax: string; meaning: string }>;
+};
+
+const LEGEND_SECTIONS: LegendSection[] = [
+  {
+    title: 'Basics',
+    items: [
+      { syntax: '**bold**', meaning: 'Bold' },
+      { syntax: '_italic_', meaning: 'Italic' },
+      { syntax: '~~strike~~', meaning: 'Strikethrough' },
+      { syntax: '# / ## / ###', meaning: 'Headings' },
+      { syntax: '- item', meaning: 'Bullet list' },
+      { syntax: '1. item', meaning: 'Numbered list' },
+      { syntax: '- [ ] task', meaning: 'Checklist' },
+      { syntax: '> quote', meaning: 'Block quote' },
+      { syntax: '---', meaning: 'Horizontal rule (in the body)' },
+      { syntax: '[label](url)', meaning: 'External link' },
+      { syntax: '![alt](url)', meaning: 'Image (or paste / drop)' },
+    ],
+  },
+  {
+    title: 'Code & diagrams',
+    items: [
+      { syntax: '`code`', meaning: 'Inline code — click to copy in preview' },
+      { syntax: '```lang', meaning: 'Fenced block — highlight + Copy button' },
+      { syntax: '```mermaid', meaning: 'Diagram — Expand opens fullscreen' },
+      { syntax: '$…$ / $$…$$', meaning: 'Math (KaTeX)' },
+    ],
+  },
+  {
+    title: 'Callouts & structure',
+    items: [
+      { syntax: '> [!NOTE]', meaning: 'Callout (also tip, warning, danger, …)' },
+      { syntax: '[[toc]]', meaning: 'Table of contents from ##–######' },
+      { syntax: '[^1] / [^1]:', meaning: 'Footnote reference + definition' },
+    ],
+  },
+  {
+    title: 'Properties (YAML)',
+    blurb: 'Optional block at the very top of the note, between --- fences. Shown as the Properties card in preview.',
+    items: [
+      { syntax: '--- … ---', meaning: 'Open/close the YAML block (must be first)' },
+      { syntax: 'title: My note', meaning: 'Simple field (string, number, true/false)' },
+      { syntax: 'tags: [a, b]', meaning: 'Scalar list → chips; used for filters' },
+      {
+        syntax: 'todos: …',
+        meaning:
+          'List of objects (id, status, content) → Properties cards; also appear in the note task panel and can be pushed to Planner',
+      },
+    ],
+  },
+  {
+    title: 'Synapse links & tags',
+    items: [
+      { syntax: '[[Note title]]', meaning: 'Link to a note (solid underline)' },
+      { syntax: '[[meta/risks]]', meaning: 'Link by folder path' },
+      { syntax: '[[risks]]', meaning: 'Link by unique leaf name' },
+      { syntax: '[[Note|label]]', meaning: 'Wikilink with custom label' },
+      { syntax: 'plain Title', meaning: 'Unlinked mention (dashed)' },
+      { syntax: '#tag', meaning: 'Inline tag for filtering / graph' },
+    ],
+  },
 ];
+
 
 function applySpec(value: string, start: number, end: number, spec: WrapSpec): { next: string; selectStart: number; selectEnd: number } {
   const selected = value.slice(start, end);
@@ -388,6 +428,24 @@ export default function MarkdownNoteEditor({
     if (!root) return;
     const onClick = (e: MouseEvent) => {
       if (handleMarkdownCodeCopyClick(e, root)) return;
+
+      const tocLink = (e.target as HTMLElement).closest(
+        'a.synapse-toc-link'
+      ) as HTMLAnchorElement | null;
+      if (tocLink && root.contains(tocLink)) {
+        const href = tocLink.getAttribute('href') || '';
+        if (href.startsWith('#')) {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = decodeURIComponent(href.slice(1));
+          const targetEl = root.querySelector(`#${CSS.escape(id)}`);
+          if (targetEl instanceof HTMLElement) {
+            targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          return;
+        }
+      }
+
       const img = (e.target as HTMLElement).closest('img') as HTMLImageElement | null;
       if (img?.src && root.contains(img)) {
         e.preventDefault();
@@ -586,21 +644,32 @@ export default function MarkdownNoteEditor({
         {showLegend && (
           <aside className="overflow-auto border-l border-[var(--border)] bg-[var(--panel)]/60 p-4 text-xs">
             <h3 className="mb-1 text-sm font-semibold text-[var(--text)]">Markdown guide</h3>
-            <p className="mb-3 leading-relaxed text-[var(--muted)]">
-              Toolbar inserts syntax for you. Shortcuts: Ctrl/Cmd+B, I, K. Enter continues lists
-              and tasks (empty item exits). Paste or drop images into the editor. Wikilinks turn
-              blue when the note exists; red dashed means missing — click to create it.
+            <p className="mb-4 leading-relaxed text-[var(--muted)]">
+              Toolbar + Ctrl/Cmd+B, I, K. Enter continues lists and tasks. Paste or drop images
+              into the editor.
             </p>
-            <ul className="space-y-2.5">
-              {LEGEND.map((row) => (
-                <li key={row.syntax}>
-                  <code className="rounded bg-[var(--surface)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--accent-soft)]">
-                    {row.syntax}
-                  </code>
-                  <div className="mt-0.5 text-[var(--muted)]">{row.meaning}</div>
-                </li>
+            <div className="space-y-4">
+              {LEGEND_SECTIONS.map((section) => (
+                <section key={section.title}>
+                  <h4 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-soft)]">
+                    {section.title}
+                  </h4>
+                  {section.blurb ? (
+                    <p className="mb-2 leading-relaxed text-[var(--muted)]">{section.blurb}</p>
+                  ) : null}
+                  <ul className="space-y-2">
+                    {section.items.map((row) => (
+                      <li key={`${section.title}:${row.syntax}`}>
+                        <code className="rounded bg-[var(--surface)] px-1.5 py-0.5 font-mono text-[11px] text-[var(--accent-soft)]">
+                          {row.syntax}
+                        </code>
+                        <div className="mt-0.5 leading-snug text-[var(--muted)]">{row.meaning}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ))}
-            </ul>
+            </div>
           </aside>
         )}
       </div>

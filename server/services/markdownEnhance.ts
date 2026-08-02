@@ -207,43 +207,45 @@ export function preprocessToc(md: string): string {
   const minLevel = Math.min(...headings.map((h) => h.level));
   const items = headings
     .map((h) => {
-      const pad = (h.level - minLevel) * 1.1;
-      return `<li style="margin-left:${pad}rem"><a href="#${escapeAttr(h.id)}">${escapeHtml(h.text)}</a></li>`;
+      const depth = Math.min(4, Math.max(0, h.level - minLevel));
+      return (
+        `<li class="synapse-toc-item synapse-toc-depth-${depth}">` +
+        `<a class="synapse-toc-link" href="#${escapeAttr(h.id)}">${escapeHtml(h.text)}</a>` +
+        `</li>`
+      );
     })
     .join('');
-  const tocHtml = `<nav class="synapse-toc" aria-label="Table of contents"><p class="synapse-toc-title">Contents</p><ul>${items}</ul></nav>`;
+  const tocHtml =
+    `\n\n<nav class="synapse-toc" aria-label="Table of contents">` +
+    `<p class="synapse-toc-title">Contents</p>` +
+    `<ul class="synapse-toc-list">${items}</ul>` +
+    `</nav>\n\n`;
 
-  // Inject heading ids when parsing — mark headings with HTML comment anchors we expand later
-  let withIds = mapProtectedMd(md, (chunk) => {
-    const counts = new Map<string, number>();
-    return chunk
-      .split('\n')
-      .map((line) => {
-        const hm = line.match(/^(#{2,6})\s+(.+?)\s*#*\s*$/);
-        if (!hm) return line;
-        const text = hm[2].replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*_`~]/g, '').trim();
-        let id = slugifyHeading(text);
-        const n = (counts.get(id) || 0) + 1;
-        counts.set(id, n);
-        if (n > 1) id = `${id}-${n}`;
-        return `${hm[1]} ${hm[2]} <!--synapse-h:${id}-->`;
-      })
-      .join('\n');
-  });
-
-  withIds = withIds.replace(/^(\[\[toc\]\]|\[toc\])\s*$/gim, tocHtml);
-  return withIds;
+  return md.replace(/^(\[\[toc\]\]|\[toc\])\s*$/gim, tocHtml);
 }
 
-/** Apply heading id markers left by preprocessToc. */
+/** Assign stable ids to h2–h6 so TOC links can scroll to sections. */
 export function applyHeadingIds(html: string): string {
+  const used = new Map<string, number>();
   return html.replace(
-    /<(h[2-6])([^>]*)>([\s\S]*?)<!--synapse-h:([a-z0-9-]+)-->\s*<\/\1>/gi,
-    (_m, tag: string, attrs: string, inner: string, id: string) => {
-      if (/\sid\s*=/.test(attrs)) {
-        return `<${tag}${attrs}>${inner.trim()}</${tag}>`;
-      }
-      return `<${tag}${attrs} id="${escapeAttr(id)}">${inner.trim()}</${tag}>`;
+    /<(h[2-6])(\b[^>]*)>([\s\S]*?)<\/\1>/gi,
+    (_m, tag: string, attrs: string, inner: string) => {
+      if (/\sid\s*=/.test(attrs)) return `<${tag}${attrs}>${inner}</${tag}>`;
+      const text = inner
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\s+/g, ' ')
+        .trim();
+      let id = slugifyHeading(text);
+      const n = (used.get(id) || 0) + 1;
+      used.set(id, n);
+      if (n > 1) id = `${id}-${n}`;
+      return `<${tag}${attrs} id="${escapeAttr(id)}">${inner}</${tag}>`;
     }
   );
 }

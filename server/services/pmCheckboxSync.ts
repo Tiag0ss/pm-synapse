@@ -1,5 +1,11 @@
 import { pool, RowDataPacket } from '../config/database';
-import { parseCheckboxes, setCheckboxCheckedByMarker } from './checkboxes';
+import { setCheckboxCheckedByMarker } from './checkboxes';
+import {
+  frontmatterTodoIdFromMarker,
+  isFrontmatterTodoMarker,
+  setFrontmatterTodoStatus,
+} from './frontmatter';
+import { listNoteTaskCandidates } from './noteTasks';
 import { fetchPmProjectTasks, isPmTaskDone, type PmTaskSummary } from './pmClient';
 import logger from '../utils/logger';
 
@@ -11,8 +17,8 @@ export type CheckboxLinkRow = {
 };
 
 /**
- * Pull PM task closed/cancelled state into Synapse checkboxes (markdown + link table).
- * PM stays agnostic — Synapse is responsible for this reconciliation.
+ * Pull PM task closed/cancelled state into Synapse checkboxes / YAML todos
+ * (markdown or frontmatter + link table). PM stays agnostic.
  */
 export async function syncNoteCheckboxesFromPm(params: {
   pmUserId: number;
@@ -69,12 +75,12 @@ export async function syncNoteCheckboxesFromPm(params: {
     if (!task) continue;
 
     const wantChecked = isPmTaskDone(task);
-    const box = parseCheckboxes(body).find((b) => b.markerId === markerId);
-    const localChecked = box ? box.checked : Boolean(Number(link.Checked));
+    const candidates = listNoteTaskCandidates(body);
+    const local = candidates.find((b) => b.markerId === markerId);
+    const localChecked = local ? local.checked : Boolean(Number(link.Checked));
 
     if (localChecked === wantChecked) {
-      // Keep link table aligned even if markdown already matches
-      if (box && Number(link.Checked) !== (wantChecked ? 1 : 0)) {
+      if (local && Number(link.Checked) !== (wantChecked ? 1 : 0)) {
         await pool.execute(
           'UPDATE NoteCheckboxTasks SET Checked = ? WHERE NoteId = ? AND MarkerId = ?',
           [wantChecked ? 1 : 0, params.noteId, markerId]
@@ -83,7 +89,13 @@ export async function syncNoteCheckboxesFromPm(params: {
       continue;
     }
 
-    const next = setCheckboxCheckedByMarker(body, markerId, wantChecked);
+    let next: string | null = null;
+    if (isFrontmatterTodoMarker(markerId)) {
+      const todoId = frontmatterTodoIdFromMarker(markerId);
+      if (todoId) next = setFrontmatterTodoStatus(body, todoId, wantChecked);
+    } else {
+      next = setCheckboxCheckedByMarker(body, markerId, wantChecked);
+    }
     if (next == null) continue;
     body = next;
     updated += 1;

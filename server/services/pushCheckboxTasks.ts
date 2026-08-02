@@ -5,6 +5,10 @@ import {
   type ParsedCheckbox,
 } from './checkboxes';
 import {
+  ensureFrontmatterTodoIds,
+} from './frontmatter';
+import { listNoteTaskCandidates, type NoteTaskCandidate } from './noteTasks';
+import {
   buildPmTaskOpenUrl,
   buildSynapseNoteUrl,
   createPmTask,
@@ -270,9 +274,15 @@ export async function pushMissingCheckboxTasksForNote(params: {
   };
 
   let body = params.bodyMarkdown;
-  let boxes = parseCheckboxes(body);
   let bodyChanged = false;
 
+  const ensuredFm = ensureFrontmatterTodoIds(body);
+  if (ensuredFm.changed) {
+    body = ensuredFm.markdown;
+    bodyChanged = true;
+  }
+
+  let boxes = parseCheckboxes(body);
   for (const box of boxes) {
     if (box.markerId) continue;
     const ensured = ensureCheckboxMarker(body, box.index);
@@ -290,7 +300,6 @@ export async function pushMissingCheckboxTasksForNote(params: {
     bodyChanged = true;
   }
   if (bodyChanged) {
-    boxes = parseCheckboxes(body);
     await pool.execute('UPDATE Notes SET BodyMarkdown = ? WHERE Id = ?', [body, params.noteId]);
     await snapshotRevision(params.noteId, params.pmUserId, {
       title: params.noteTitle,
@@ -301,11 +310,12 @@ export async function pushMissingCheckboxTasksForNote(params: {
     });
   }
 
+  const candidates = listNoteTaskCandidates(body);
   const links = await linkRowsForNote(params.noteId);
   const synapseNoteUrl = buildSynapseNoteUrl(params.vaultId, params.noteId);
   const stack: IndentStackEntry[] = [];
 
-  for (const box of boxes) {
+  for (const box of candidates) {
     const markerId = box.markerId;
     if (!markerId) {
       result.failed += 1;
@@ -313,7 +323,10 @@ export async function pushMissingCheckboxTasksForNote(params: {
         noteId: params.noteId,
         noteTitle: params.noteTitle,
         index: box.index,
-        message: 'Checkbox missing marker',
+        message:
+          box.source === 'frontmatter'
+            ? 'Frontmatter todo missing id'
+            : 'Checkbox missing marker',
       });
       continue;
     }
@@ -348,7 +361,10 @@ export async function pushMissingCheckboxTasksForNote(params: {
     const created = await createPmTask(params.pmUserId, {
       projectId: params.projectId,
       taskName: (stripMarkdownToPlainText(box.text) || params.noteTitle).slice(0, 512),
-      description: `<p>From Synapse note <strong>${params.noteTitle}</strong></p>`,
+      description:
+        box.source === 'frontmatter'
+          ? `<p>From Synapse note <strong>${params.noteTitle}</strong> (YAML todo)</p>`
+          : `<p>From Synapse note <strong>${params.noteTitle}</strong></p>`,
       status: statusId,
       priority: params.priorityId,
       parentTaskId: parentTaskId || undefined,
@@ -461,14 +477,14 @@ export async function pushMissingCheckboxTasks(params: {
     label: `Scanning ${noteTotal} note${noteTotal === 1 ? '' : 's'}…`,
   });
 
-  // Approximate create total for progress (unlinked checkboxes)
+  // Approximate create total for progress (unlinked checkboxes + YAML todos)
   let createTotal = 0;
   for (const note of notes) {
     const noteId = Number(note.Id);
     const links = await linkRowsForNote(noteId);
     const linkedMarkers = new Set(links.map((l) => l.MarkerId));
     const linkedText = new Set(links.map((l) => checkboxTextKey(noteId, l.Text)));
-    for (const box of parseCheckboxes(String(note.BodyMarkdown || ''))) {
+    for (const box of listNoteTaskCandidates(String(note.BodyMarkdown || ''))) {
       if (
         (box.markerId && linkedMarkers.has(box.markerId)) ||
         linkedText.has(checkboxTextKey(noteId, box.text))
@@ -571,34 +587,46 @@ export async function pushSingleCheckboxTask(params: {
   const noteTitle = String(note.Title);
   const notePmTaskId = note.PmTaskId != null ? Number(note.PmTaskId) : null;
 
-  const ensured = ensureCheckboxMarker(body, params.checkboxIndex);
-  if (!ensured) {
-    throw Object.assign(new Error('Checkbox not found'), { status: 404 });
-  }
-  body = ensured.markdown;
+  const ensuredFm = ensureFrontmatterTodoIds(body);
+  if (ensuredFm.changed) body = ensuredFm.markdown;
 
-  // Ensure markers for all checkboxes before/at target (needed for stable ancestor ids)
-  let boxes = parseCheckboxes(body);
-  const targetBox = boxes[params.checkboxIndex];
-  if (!targetBox) {
+  let candidates = listNoteTaskCandidates(body);
+  const peek = candidates[params.checkboxIndex];
+  if (!peek) {
     throw Object.assign(new Error('Checkbox not found'), { status: 404 });
   }
-  for (let i = 0; i <= targetBox.index; i++) {
-    boxes = parseCheckboxes(body);
-    if (!boxes[i]?.markerId) {
-      const e = ensureCheckboxMarker(body, i);
-      if (e) body = e.markdown;
+
+  if (peek.source === 'checkbox') {
+    const ensured = ensureCheckboxMarker(body, params.checkboxIndex);
+    if (!ensured) {
+      throw Object.assign(new Error('Checkbox not found'), { status: 404 });
+    }
+    body = ensured.markdown;
+
+    // Ensure markers for all checkboxes before/at target (needed for stable ancestor ids)
+    let boxes = parseCheckboxes(body);
+    const targetBox = boxes[params.checkboxIndex];
+    if (!targetBox) {
+      throw Object.assign(new Error('Checkbox not found'), { status: 404 });
+    }
+    for (let i = 0; i <= targetBox.index; i++) {
+      boxes = parseCheckboxes(body);
+      if (!boxes[i]?.markerId) {
+        const e = ensureCheckboxMarker(body, i);
+        if (e) body = e.markdown;
+      }
     }
   }
-  boxes = parseCheckboxes(body);
-  const target = boxes[params.checkboxIndex];
+
+  candidates = listNoteTaskCandidates(body);
+  const target = candidates[params.checkboxIndex];
   if (!target?.markerId) {
-    throw Object.assign(new Error('Checkbox not found after marker'), { status: 404 });
+    throw Object.assign(new Error('Task not found after marker'), { status: 404 });
   }
 
-  // Ancestor chain: walk preceding boxes with a strict indent stack
-  const stackBoxes: ParsedCheckbox[] = [];
-  for (const box of boxes) {
+  // Ancestor chain: walk preceding tasks with a strict indent stack
+  const stackBoxes: NoteTaskCandidate[] = [];
+  for (const box of candidates) {
     if (box.index > target.index) break;
     while (stackBoxes.length && stackBoxes[stackBoxes.length - 1].indent >= box.indent) {
       stackBoxes.pop();
@@ -633,7 +661,10 @@ export async function pushSingleCheckboxTask(params: {
     const created = await createPmTask(params.pmUserId, {
       projectId: params.projectId,
       taskName: (stripMarkdownToPlainText(box.text) || noteTitle).slice(0, 512),
-      description: `<p>From Synapse note <strong>${noteTitle}</strong></p>`,
+      description:
+        box.source === 'frontmatter'
+          ? `<p>From Synapse note <strong>${noteTitle}</strong> (YAML todo)</p>`
+          : `<p>From Synapse note <strong>${noteTitle}</strong></p>`,
       status: statusId,
       priority: priorityId,
       parentTaskId: parentTaskId || undefined,

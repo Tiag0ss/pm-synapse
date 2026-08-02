@@ -11,6 +11,7 @@ export interface VaultCheckboxItem {
   checked: boolean;
   markerId: string | null;
   indent?: number;
+  source?: 'checkbox' | 'frontmatter';
   pmTaskId: number | null;
   openUrl: string | null;
 }
@@ -560,14 +561,28 @@ export default function VaultPmSettingsModal({
                       ✓
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div
-                        className={`synapse-task-label text-sm leading-snug ${
-                          item.checked ? 'text-[var(--muted)] line-through' : 'text-[var(--text)]'
-                        }`}
-                        dangerouslySetInnerHTML={{
-                          __html: renderInlineMarkdown(item.text || '(empty checkbox)'),
-                        }}
-                      />
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {(item.source === 'frontmatter' ||
+                          (typeof item.markerId === 'string' &&
+                            item.markerId.startsWith('fm:'))) && (
+                          <span
+                            className="shrink-0 rounded border border-[var(--border)] px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--muted)]"
+                            title="From YAML frontmatter todos"
+                          >
+                            YAML
+                          </span>
+                        )}
+                        <div
+                          className={`synapse-task-label text-sm leading-snug ${
+                            item.checked
+                              ? 'text-[var(--muted)] line-through'
+                              : 'text-[var(--text)]'
+                          }`}
+                          dangerouslySetInnerHTML={{
+                            __html: renderInlineMarkdown(item.text || '(empty checkbox)'),
+                          }}
+                        />
+                      </div>
                       <button
                         type="button"
                         className="mt-1 text-[11px] text-[var(--accent-soft)]"

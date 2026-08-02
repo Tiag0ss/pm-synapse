@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { parseCheckboxes } from '@/lib/checkboxes';
+import { listNoteTaskCandidates } from '@/lib/noteTasks';
 import { renderInlineMarkdown } from '@/lib/renderMarkdown';
 
 interface NoteTaskItem {
@@ -10,6 +10,7 @@ interface NoteTaskItem {
   checked: boolean;
   markerId: string | null;
   indent: number;
+  source: 'checkbox' | 'frontmatter';
   pmTaskId: number | null;
   openUrl: string | null;
 }
@@ -58,6 +59,7 @@ export default function NoteTasksPanel({
             checked: boolean;
             markerId: string | null;
             indent?: number;
+            source?: 'checkbox' | 'frontmatter';
             pmTaskId: number | null;
             openUrl: string | null;
           }) => ({
@@ -66,6 +68,11 @@ export default function NoteTasksPanel({
             checked: b.checked,
             markerId: b.markerId,
             indent: typeof b.indent === 'number' ? b.indent : 0,
+            source:
+              b.source === 'frontmatter' ||
+              (typeof b.markerId === 'string' && b.markerId.startsWith('fm:'))
+                ? 'frontmatter'
+                : 'checkbox',
             pmTaskId: b.pmTaskId,
             openUrl: b.openUrl,
           })
@@ -94,12 +101,13 @@ export default function NoteTasksPanel({
       return;
     }
     setItems(
-      parseCheckboxes(body).map((b) => ({
+      listNoteTaskCandidates(body).map((b) => ({
         index: b.index,
         text: b.text,
         checked: b.checked,
         markerId: b.markerId,
         indent: b.indent,
+        source: b.source,
         pmTaskId: null,
         openUrl: null,
       }))
@@ -112,7 +120,7 @@ export default function NoteTasksPanel({
   }, [load]);
 
   useEffect(() => {
-    const local = parseCheckboxes(body);
+    const local = listNoteTaskCandidates(body);
     setItems((prev) =>
       local.map((b) => {
         const old =
@@ -124,6 +132,7 @@ export default function NoteTasksPanel({
           checked: b.checked,
           markerId: b.markerId || old?.markerId || null,
           indent: b.indent,
+          source: b.source,
           pmTaskId: old?.pmTaskId ?? null,
           openUrl: old?.openUrl ?? null,
         };
@@ -293,7 +302,7 @@ export default function NoteTasksPanel({
                   disabled={busy || !hasProject}
                   title={
                     hasProject
-                      ? 'Creates one Planner task named after this note. Does not create tasks for checkboxes.'
+                      ? 'Creates one Planner task named after this note. Does not create tasks for checkboxes or YAML todos.'
                       : 'Link a vault project first'
                   }
                   onClick={() => void createNoteTask(false)}
@@ -307,12 +316,12 @@ export default function NoteTasksPanel({
                     disabled={busy || !hasProject}
                     title={
                       hasProject
-                        ? 'Creates the note task and Planner tasks for all unlinked checkboxes. Indented checkboxes become subtasks; top-level ones nest under the note task.'
+                        ? 'Creates the note task and Planner tasks for all unlinked items (checkboxes and YAML todos). Indented checkboxes become nested subtasks; top-level ones nest under the note task.'
                         : 'Link a vault project first'
                     }
                     onClick={() => void createNoteTask(true)}
                   >
-                    Note + checkboxes
+                    Note + Subtasks
                   </button>
                 )}
               </>
@@ -338,8 +347,9 @@ export default function NoteTasksPanel({
 
       {items.length === 0 ? (
         <p className="text-[11px] text-[var(--muted)]">
-          Add <code className="text-[var(--accent-soft)]">- [ ]</code> lines for checkbox tasks.
-          Indent nested items to create Planner subtasks.
+          Add <code className="text-[var(--accent-soft)]">- [ ]</code> lines or YAML{' '}
+          <code className="text-[var(--accent-soft)]">todos:</code> for tasks. Indent nested
+          checkboxes to create Planner subtasks.
         </p>
       ) : (
         <ul className="space-y-1.5">
@@ -371,6 +381,14 @@ export default function NoteTasksPanel({
               >
                 ✓
               </button>
+              {item.source === 'frontmatter' && (
+                <span
+                  className="shrink-0 rounded border border-[var(--border)] px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--muted)]"
+                  title="From YAML frontmatter todos"
+                >
+                  YAML
+                </span>
+              )}
               <span
                 className={`synapse-task-label min-w-0 flex-1 text-sm leading-snug ${
                   item.checked ? 'text-[var(--muted)] line-through' : 'text-[var(--text)]'

@@ -22,7 +22,6 @@ import {
 } from '../services/notesGraph';
 import {
   ensureCheckboxMarker,
-  parseCheckboxes,
   setCheckboxCheckedByIndex,
   setCheckboxCheckedByMarker,
   titleToPath,
@@ -33,7 +32,14 @@ import {
 import { readVaultMedia, saveVaultImage } from '../services/vaultMedia';
 import { importVaultZip } from '../services/vaultZipImport';
 import { exportVaultZip } from '../services/vaultZipExport';
-import { frontmatterJsonString, parseFrontmatter } from '../services/frontmatter';
+import {
+  frontmatterJsonString,
+  frontmatterTodoIdFromMarker,
+  isFrontmatterTodoMarker,
+  parseFrontmatter,
+  setFrontmatterTodoStatus,
+} from '../services/frontmatter';
+import { listNoteTaskCandidates } from '../services/noteTasks';
 import {
   checkboxTextKey,
   pushMissingCheckboxTasks,
@@ -191,7 +197,7 @@ router.post('/:vaultId/import-zip', async (req: AuthRequest, res: Response) => {
 });
 
 async function syncCheckboxRows(noteId: number, bodyMarkdown: string): Promise<void> {
-  const boxes = parseCheckboxes(bodyMarkdown);
+  const boxes = listNoteTaskCandidates(bodyMarkdown);
   const keepMarkers: string[] = [];
   for (const box of boxes) {
     if (!box.markerId) continue;
@@ -1148,7 +1154,7 @@ router.post('/:vaultId/link-project', async (req: AuthRequest, res: Response) =>
   });
 });
 
-/** All markdown checkboxes in the vault (for vault PM options).
+/** All note tasks in the vault (markdown checkboxes + YAML todos).
  *  By default skips PM status sync (settings only needs link state). Pass ?sync=1 to pull. */
 router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
@@ -1221,7 +1227,7 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
   for (const note of notes) {
     const noteId = Number(note.Id);
     const body = bodyByNoteId.get(noteId) ?? String(note.BodyMarkdown || '');
-    const boxes = parseCheckboxes(body);
+    const boxes = listNoteTaskCandidates(body);
     for (const box of boxes) {
       const link = resolveCheckboxLink(noteId, box, byMarker, byText);
       items.push({
@@ -1232,6 +1238,7 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
         checked: box.checked,
         markerId: box.markerId,
         indent: box.indent,
+        source: box.source,
         pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
         pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
         openUrl: link?.PmTaskId
@@ -1284,7 +1291,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
     defaultProjectId: vault.PmProjectId ? Number(vault.PmProjectId) : null,
   });
   const body = synced.bodyMarkdown;
-  const boxes = parseCheckboxes(body);
+  const boxes = listNoteTaskCandidates(body);
   const byMarker = new Map(links.map((l) => [`${noteId}:${l.MarkerId}`, l] as const));
   const byText = new Map<string, CheckboxLinkRow>();
   for (const l of links) {
@@ -1310,6 +1317,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
           checked: box.checked,
           markerId: box.markerId,
           indent: box.indent,
+          source: box.source,
           pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
           pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
           openUrl: link?.PmTaskId
@@ -1554,7 +1562,7 @@ router.post(
   }
 );
 
-/** Toggle checkbox done state in the note (and sync linked PM task status). */
+/** Toggle checkbox / YAML todo done state (and sync linked PM task status). */
 router.patch('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
@@ -1579,23 +1587,47 @@ router.patch('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res:
   let markerId = parsed.data.markerId || null;
 
   if (!markerId && parsed.data.index != null) {
-    const ensured = ensureCheckboxMarker(body, parsed.data.index);
-    if (!ensured) {
+    const candidates = listNoteTaskCandidates(body);
+    const target = candidates.find((b) => b.index === parsed.data.index);
+    if (!target) {
       return res.status(404).json({ success: false, message: 'Checkbox not found' });
     }
-    body = ensured.markdown;
-    markerId = ensured.markerId;
+    if (target.source === 'frontmatter') {
+      if (!target.markerId) {
+        return res.status(400).json({
+          success: false,
+          message: 'YAML todo needs an id before it can be toggled',
+        });
+      }
+      markerId = target.markerId;
+    } else {
+      const ensured = ensureCheckboxMarker(body, parsed.data.index);
+      if (!ensured) {
+        return res.status(404).json({ success: false, message: 'Checkbox not found' });
+      }
+      body = ensured.markdown;
+      markerId = ensured.markerId;
+    }
   }
 
-  const next = markerId
-    ? setCheckboxCheckedByMarker(body, markerId, parsed.data.checked)
-    : setCheckboxCheckedByIndex(body, parsed.data.index!, parsed.data.checked);
+  let next: string | null = null;
+  if (markerId && isFrontmatterTodoMarker(markerId)) {
+    const todoId = frontmatterTodoIdFromMarker(markerId);
+    if (!todoId) {
+      return res.status(404).json({ success: false, message: 'YAML todo not found' });
+    }
+    next = setFrontmatterTodoStatus(body, todoId, parsed.data.checked);
+  } else if (markerId) {
+    next = setCheckboxCheckedByMarker(body, markerId, parsed.data.checked);
+  } else {
+    next = setCheckboxCheckedByIndex(body, parsed.data.index!, parsed.data.checked);
+  }
   if (next == null) {
     return res.status(404).json({ success: false, message: 'Checkbox not found' });
   }
   body = next;
 
-  const box = parseCheckboxes(body).find((b) =>
+  const box = listNoteTaskCandidates(body).find((b) =>
     markerId ? b.markerId === markerId : b.index === parsed.data.index
   );
 

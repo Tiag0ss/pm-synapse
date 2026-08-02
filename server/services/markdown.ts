@@ -202,7 +202,14 @@ function mapProtected(md: string, transform: (chunk: string) => string): string 
 /** Convert [[wikilinks]] and #tags before marked so public/PM HTML shows them. */
 export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] = []): string {
   return mapProtected(md || '', (chunk) => {
-    let next = chunk.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
+    const htmlSlots: string[] = [];
+    const stashHtml = (raw: string) => {
+      htmlSlots.push(raw);
+      return `\u0000HT${htmlSlots.length - 1}\u0000`;
+    };
+    let next = chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml);
+
+    next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });
     next = next.replace(
@@ -219,7 +226,7 @@ export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] =
     });
 
     next = linkifyUnlinkedMentions(next, notes);
-    return next;
+    return next.replace(/\u0000HT(\d+)\u0000/g, (_, i) => htmlSlots[Number(i)] ?? '');
   });
 }
 
