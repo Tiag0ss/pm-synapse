@@ -14,29 +14,15 @@ import {
   createPmTask,
   fetchPmTaskPriorities,
   fetchPmTaskStatuses,
+  normalizePmTaskStatusList,
+  resolvePmTaskStatusId,
+  type PmTaskStatusValue,
 } from './pmClient';
 import { snapshotRevision } from './notesGraph';
 import { stripMarkdownToPlainText } from './plainText';
 import logger from '../utils/logger';
 
-type StatusRow = { Id: number; IsDefault?: number; IsClosed?: number };
 type PrioRow = { Id: number; IsDefault?: number };
-
-function pickStatusId(statusList: StatusRow[], checked: boolean): number | null {
-  if (!statusList.length) return null;
-  if (checked) {
-    return Number((statusList.find((s) => Number(s.IsClosed) === 1) || statusList[0])?.Id) || null;
-  }
-  return (
-    Number(
-      (
-        statusList.find((s) => Number(s.IsDefault) === 1 && Number(s.IsClosed) !== 1) ||
-        statusList.find((s) => Number(s.IsClosed) !== 1) ||
-        statusList[0]
-      )?.Id
-    ) || null
-  );
-}
 
 function pickPriorityId(prioList: PrioRow[]): number | null {
   if (!prioList.length) return null;
@@ -50,14 +36,12 @@ export function checkboxTextKey(noteId: number, text: string): string {
 async function loadStatusAndPriority(
   pmUserId: number,
   organizationId: number
-): Promise<{ statusList: StatusRow[]; priorityId: number }> {
+): Promise<{ statusList: PmTaskStatusValue[]; priorityId: number }> {
   const [statusRes, prioRes] = await Promise.all([
     fetchPmTaskStatuses(pmUserId, organizationId),
     fetchPmTaskPriorities(pmUserId, organizationId),
   ]);
-  const statusList =
-    (statusRes.data as { statuses?: StatusRow[] }).statuses ||
-    (Array.isArray(statusRes.data) ? (statusRes.data as StatusRow[]) : []);
+  const statusList = normalizePmTaskStatusList(statusRes.data);
   const prioList =
     (prioRes.data as { priorities?: PrioRow[] }).priorities ||
     (Array.isArray(prioRes.data) ? (prioRes.data as PrioRow[]) : []);
@@ -66,6 +50,33 @@ async function loadStatusAndPriority(
     throw Object.assign(new Error('Could not resolve PM task priority'), { status: 400 });
   }
   return { statusList, priorityId };
+}
+
+function taskNameForPm(box: NoteTaskCandidate, fallback: string): string {
+  const raw = box.taskText ?? box.text;
+  return (stripMarkdownToPlainText(raw) || fallback).slice(0, 512);
+}
+
+function estimateCreateFields(box: NoteTaskCandidate): {
+  estimatedHours?: number;
+  unscheduledWork?: boolean;
+} {
+  const out: { estimatedHours?: number; unscheduledWork?: boolean } = {};
+  if (box.estimate?.estimatedHours != null && Number.isFinite(box.estimate.estimatedHours)) {
+    out.estimatedHours = box.estimate.estimatedHours;
+  }
+  if (box.estimate?.unscheduledWork === true) out.unscheduledWork = true;
+  return out;
+}
+
+function statusIdForCandidate(
+  statusList: PmTaskStatusValue[],
+  box: NoteTaskCandidate
+): number | null {
+  return resolvePmTaskStatusId(statusList, {
+    statusText: box.source === 'frontmatter' ? box.statusText : null,
+    checked: box.checked,
+  });
 }
 
 function pickTaskId(data: {
@@ -150,7 +161,7 @@ export async function pushNoteAsPmTask(params: {
     params.pmUserId,
     params.organizationId
   );
-  const statusId = pickStatusId(statusList, false);
+  const statusId = resolvePmTaskStatusId(statusList, { checked: false });
   if (!statusId) {
     throw Object.assign(new Error('Could not resolve PM task status'), { status: 400 });
   }
@@ -261,7 +272,7 @@ export async function pushMissingCheckboxTasksForNote(params: {
   notePmTaskId: number | null;
   pmUserId: number;
   projectId: number;
-  statusList: StatusRow[];
+  statusList: PmTaskStatusValue[];
   priorityId: number;
   onItem?: (label: string) => void | Promise<void>;
 }): Promise<PushMissingResult & { bodyMarkdown: string }> {
@@ -343,7 +354,7 @@ export async function pushMissingCheckboxTasksForNote(params: {
       continue;
     }
 
-    const statusId = pickStatusId(params.statusList, box.checked);
+    const statusId = statusIdForCandidate(params.statusList, box);
     if (!statusId) {
       result.failed += 1;
       result.errors.push({
@@ -360,7 +371,7 @@ export async function pushMissingCheckboxTasksForNote(params: {
 
     const created = await createPmTask(params.pmUserId, {
       projectId: params.projectId,
-      taskName: (stripMarkdownToPlainText(box.text) || params.noteTitle).slice(0, 512),
+      taskName: taskNameForPm(box, params.noteTitle),
       description:
         box.source === 'frontmatter'
           ? `<p>From Synapse note <strong>${params.noteTitle}</strong> (YAML todo)</p>`
@@ -368,6 +379,7 @@ export async function pushMissingCheckboxTasksForNote(params: {
       status: statusId,
       priority: params.priorityId,
       parentTaskId: parentTaskId || undefined,
+      ...estimateCreateFields(box),
       synapseVaultId: params.vaultId,
       synapseNoteId: params.noteId,
       synapseMarkerId: markerId,
@@ -653,14 +665,14 @@ export async function pushSingleCheckboxTask(params: {
       continue;
     }
 
-    const statusId = pickStatusId(statusList, box.checked);
+    const statusId = statusIdForCandidate(statusList, box);
     if (!statusId) {
       throw Object.assign(new Error('Could not resolve PM task status'), { status: 400 });
     }
 
     const created = await createPmTask(params.pmUserId, {
       projectId: params.projectId,
-      taskName: (stripMarkdownToPlainText(box.text) || noteTitle).slice(0, 512),
+      taskName: taskNameForPm(box, noteTitle),
       description:
         box.source === 'frontmatter'
           ? `<p>From Synapse note <strong>${noteTitle}</strong> (YAML todo)</p>`
@@ -668,6 +680,7 @@ export async function pushSingleCheckboxTask(params: {
       status: statusId,
       priority: priorityId,
       parentTaskId: parentTaskId || undefined,
+      ...estimateCreateFields(box),
       synapseVaultId: params.vaultId,
       synapseNoteId: params.noteId,
       synapseMarkerId: markerId,

@@ -87,12 +87,14 @@ Used when creating projects/tasks and mapping checkbox checked → closed status
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/api/status-values/project/{organizationId}` | Project statuses (`Id`, `IsDefault`, …) |
-| GET | `/api/status-values/task/{organizationId}` | Task statuses (`Id`, `IsDefault`, `IsClosed`, `IsCancelled`) |
+| GET | `/api/status-values/task/{organizationId}` | Task statuses (`Id`, `Name`, `IsDefault`, `IsClosed`, `IsCancelled`) |
 | GET | `/api/status-values/priority/{organizationId}` | Priorities (`Id`, `IsDefault`) |
 
 Response shapes: `{ statuses: […] }` or `{ priorities: […] }` or raw arrays.
 
-**Done rule (Synapse):** `StatusIsClosed === 1` **or** `StatusIsCancelled === 1` ⇒ checkbox checked.
+**Done rule (Synapse):** `StatusIsClosed === 1` **or** `StatusIsCancelled === 1` ⇒ checkbox checked / YAML todo treated as done.
+
+**Status name match (Synapse):** On create, if a YAML todo `status` string matches a task status `Name` (case-insensitive), Synapse uses that status `Id`. Otherwise falls back to default open vs closed/cancelled by the done rule.
 
 ---
 
@@ -132,9 +134,9 @@ Task fields Synapse uses:
 | Field | Use |
 |-------|-----|
 | `Id` | Link / deep-link |
-| `StatusIsClosed` | Pull sync → checkbox |
-| `StatusIsCancelled` | Pull sync → checkbox |
-| `Status` | (optional) |
+| `StatusIsClosed` | Pull sync → checkbox / done |
+| `StatusIsCancelled` | Pull sync → checkbox / done |
+| `Status` | Pull sync → YAML todo `status` name (via status catalog) |
 
 ### Create
 
@@ -151,12 +153,14 @@ Required:
 }
 ```
 
-Optional Synapse link fields (stored on PM `Tasks` table; UI shows “Open in Synapse” only if `SynapseNoteUrl` set):
+Optional create fields:
 
 ```json
 {
   "description": "<p>From Synapse…</p>",
   "parentTaskId": 42,
+  "estimatedHours": 2.5,
+  "unscheduledWork": true,
   "synapseVaultId": 1,
   "synapseNoteId": 2,
   "synapseMarkerId": "c…",
@@ -167,6 +171,8 @@ Optional Synapse link fields (stored on PM `Tasks` table; UI shows “Open in Sy
 | Field | Use |
 |-------|-----|
 | `parentTaskId` | Optional. When set, the new task is a **subtask** of that parent (`Tasks.ParentTaskId`). Synapse uses this for nested note checkboxes (and for checkboxes under a note-level task). |
+| `estimatedHours` | Optional effort estimate from note YAML `hours` / checkbox `(2h)`. Synapse does **not** send `storyPoints` on create. |
+| `unscheduledWork` | Optional. Sent as `true` only when the note explicitly marks unscheduled; missing hours does **not** imply unscheduled. |
 
 Success: `taskId` or `id` or `data.Id`.
 

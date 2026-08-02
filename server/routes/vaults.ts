@@ -10,6 +10,7 @@ import {
   fetchPmProjectStatuses,
   normalizeOrganizationList,
   resolveTaskStatusId,
+  resolveTaskStatusIdWithName,
   updatePmTask,
   buildPmTaskOpenUrl,
   buildSynapseNoteUrl,
@@ -38,6 +39,7 @@ import {
   isFrontmatterTodoMarker,
   parseFrontmatter,
   setFrontmatterTodoStatus,
+  setFrontmatterTodoStatusLabel,
 } from '../services/frontmatter';
 import { listNoteTaskCandidates } from '../services/noteTasks';
 import {
@@ -1194,6 +1196,7 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
       linksByNote.set(l.NoteId, list);
     }
     let taskById: Map<number, import('../services/pmClient').PmTaskSummary> | undefined;
+    let statusList: import('../services/pmClient').PmTaskStatusValue[] | undefined;
     for (const note of notes) {
       const noteId = Number(note.Id);
       const noteLinks = linksByNote.get(noteId) || [];
@@ -1207,9 +1210,12 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
         bodyMarkdown: String(note.BodyMarkdown || ''),
         links: noteLinks,
         defaultProjectId: vault.PmProjectId ? Number(vault.PmProjectId) : null,
+        organizationId: vault.PmOrganizationId ? Number(vault.PmOrganizationId) : null,
         taskById,
+        statusList,
       });
       taskById = synced.taskById;
+      statusList = synced.statusList || statusList;
       bodyByNoteId.set(noteId, synced.bodyMarkdown);
       syncedCount += synced.updated;
     }
@@ -1235,7 +1241,8 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
         noteTitle: String(note.Title),
         index: box.index,
         text: box.text,
-        checked: box.checked,
+        checked:
+          link?.Checked != null ? Boolean(Number(link.Checked)) : box.checked,
         markerId: box.markerId,
         indent: box.indent,
         source: box.source,
@@ -1289,6 +1296,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
     bodyMarkdown: String(note.BodyMarkdown || ''),
     links,
     defaultProjectId: vault.PmProjectId ? Number(vault.PmProjectId) : null,
+    organizationId: vault.PmOrganizationId ? Number(vault.PmOrganizationId) : null,
   });
   const body = synced.bodyMarkdown;
   const boxes = listNoteTaskCandidates(body);
@@ -1314,7 +1322,8 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
         return {
           index: box.index,
           text: box.text,
-          checked: box.checked,
+          checked:
+            link?.Checked != null ? Boolean(Number(link.Checked)) : box.checked,
           markerId: box.markerId,
           indent: box.indent,
           source: box.source,
@@ -1611,12 +1620,27 @@ router.patch('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res:
   }
 
   let next: string | null = null;
+  let resolvedStatusId: number | null = null;
+  let statusNameForYaml: string | null = null;
+  const orgId = Number(vault.PmOrganizationId) || 0;
+
   if (markerId && isFrontmatterTodoMarker(markerId)) {
     const todoId = frontmatterTodoIdFromMarker(markerId);
     if (!todoId) {
       return res.status(404).json({ success: false, message: 'YAML todo not found' });
     }
-    next = setFrontmatterTodoStatus(body, todoId, parsed.data.checked);
+    if (orgId) {
+      const resolved = await resolveTaskStatusIdWithName(
+        req.user!.userId,
+        orgId,
+        parsed.data.checked
+      );
+      resolvedStatusId = resolved.statusId;
+      statusNameForYaml = resolved.statusName;
+    }
+    next = statusNameForYaml
+      ? setFrontmatterTodoStatusLabel(body, todoId, statusNameForYaml)
+      : setFrontmatterTodoStatus(body, todoId, parsed.data.checked);
   } else if (markerId) {
     next = setCheckboxCheckedByMarker(body, markerId, parsed.data.checked);
   } else {
@@ -1653,9 +1677,10 @@ router.patch('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res:
       [note.Id, markerId]
     );
     const pmTaskId = linkRows[0]?.PmTaskId ? Number(linkRows[0].PmTaskId) : null;
-    const orgId = Number(vault.PmOrganizationId);
     if (pmTaskId && orgId) {
-      const statusId = await resolveTaskStatusId(req.user!.userId, orgId, parsed.data.checked);
+      const statusId =
+        resolvedStatusId ??
+        (await resolveTaskStatusId(req.user!.userId, orgId, parsed.data.checked));
       if (statusId) {
         const upd = await updatePmTask(req.user!.userId, pmTaskId, {
           status: statusId,

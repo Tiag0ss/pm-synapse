@@ -77,7 +77,9 @@ const LEGEND_SECTIONS: LegendSection[] = [
       { syntax: '# / ## / ###', meaning: 'Headings' },
       { syntax: '- item', meaning: 'Bullet list' },
       { syntax: '1. item', meaning: 'Numbered list' },
-      { syntax: '- [ ] task', meaning: 'Checklist' },
+      { syntax: '- [ ] task', meaning: 'Checklist (pushable task)' },
+      { syntax: '- [ ] task (2h)', meaning: 'Estimate hours on create in Planner' },
+      { syntax: '- [ ] task (unscheduled)', meaning: 'Mark unscheduled work on create' },
       { syntax: '> quote', meaning: 'Block quote' },
       { syntax: '---', meaning: 'Horizontal rule (in the body)' },
       { syntax: '[label](url)', meaning: 'External link' },
@@ -111,8 +113,10 @@ const LEGEND_SECTIONS: LegendSection[] = [
       {
         syntax: 'todos: …',
         meaning:
-          'List of objects (id, status, content) → Properties cards; also appear in the note task panel and can be pushed to Planner',
+          'id, status, content → Properties + note tasks; push to Planner. hours / unscheduled on create; when linked, status follows Planner status names',
       },
+      { syntax: 'hours: 2.5', meaning: 'Under a todo → estimatedHours on Planner create' },
+      { syntax: 'unscheduled: true', meaning: 'Under a todo → unscheduledWork on create (not implied by missing hours)' },
     ],
   },
   {

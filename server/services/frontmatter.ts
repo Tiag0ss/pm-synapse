@@ -2,6 +2,10 @@
  * Server-side frontmatter helpers (keep in sync with lib/frontmatter.ts).
  */
 import matter from 'gray-matter';
+import {
+  parseEstimateFromFrontmatterTodo,
+  type TaskEstimateMeta,
+} from './taskEstimate';
 
 export type FrontmatterData = Record<string, unknown>;
 
@@ -165,9 +169,21 @@ export type FrontmatterTodo = {
   status: string;
   checked: boolean;
   arrayIndex: number;
+  estimate?: TaskEstimateMeta;
 };
 
-const DONE_STATUSES = new Set(['completed', 'done', 'true', 'x', 'yes']);
+const DONE_STATUSES = new Set([
+  'completed',
+  'done',
+  'true',
+  'x',
+  'yes',
+  'closed',
+  'cancelled',
+  'canceled',
+  'complete',
+  'finished',
+]);
 
 function newTodoId(): string {
   return `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -208,12 +224,17 @@ function normalizeTodoEntry(
     const id = idRaw || null;
     const status = raw.status != null ? String(raw.status) : 'pending';
     const content = todoContentFromObj(raw, id || `todo-${arrayIndex + 1}`);
+    const estimate = parseEstimateFromFrontmatterTodo(raw);
     return {
       id,
       content,
       status,
       checked: todoCheckedFromStatus(raw.status),
       arrayIndex,
+      estimate:
+        estimate.estimatedHours != null || estimate.unscheduledWork === true
+          ? estimate
+          : undefined,
     };
   }
   if (typeof raw === 'string' && raw.trim()) {
@@ -248,6 +269,7 @@ export function parseFrontmatterTodos(markdown: string): FrontmatterTodo[] {
       status: n.status,
       checked: n.checked,
       arrayIndex: i,
+      estimate: n.estimate,
     });
   }
   return out;
@@ -306,10 +328,23 @@ export function setFrontmatterTodoStatus(
   todoId: string,
   checked: boolean
 ): string | null {
+  return setFrontmatterTodoStatusLabel(
+    markdown,
+    todoId,
+    checked ? 'completed' : 'pending'
+  );
+}
+
+/** Set frontmatter todo status to an arbitrary Planner status name. */
+export function setFrontmatterTodoStatusLabel(
+  markdown: string,
+  todoId: string,
+  statusLabel: string
+): string | null {
   const parsed = parseFrontmatter(markdown);
   if (!parsed.hasFrontmatter || !Array.isArray(parsed.data.todos)) return null;
 
-  const status = checked ? 'completed' : 'pending';
+  const status = String(statusLabel || '').trim() || 'pending';
   let found = false;
   const nextData = rewriteTodosInData(parsed.data, (item) => {
     if (!isPlainObject(item)) return item;

@@ -4,9 +4,18 @@ import {
   frontmatterTodoIdFromMarker,
   isFrontmatterTodoMarker,
   setFrontmatterTodoStatus,
+  setFrontmatterTodoStatusLabel,
 } from './frontmatter';
 import { listNoteTaskCandidates } from './noteTasks';
-import { fetchPmProjectTasks, isPmTaskDone, type PmTaskSummary } from './pmClient';
+import {
+  fetchPmProjectTasks,
+  fetchPmTaskStatuses,
+  isPmTaskDone,
+  normalizePmTaskStatusList,
+  statusNameFromId,
+  type PmTaskStatusValue,
+  type PmTaskSummary,
+} from './pmClient';
 import logger from '../utils/logger';
 
 export type CheckboxLinkRow = {
@@ -19,6 +28,7 @@ export type CheckboxLinkRow = {
 /**
  * Pull PM task closed/cancelled state into Synapse checkboxes / YAML todos
  * (markdown or frontmatter + link table). PM stays agnostic.
+ * For YAML todos, writes the Planner status Name when organizationId is available.
  */
 export async function syncNoteCheckboxesFromPm(params: {
   pmUserId: number;
@@ -26,15 +36,24 @@ export async function syncNoteCheckboxesFromPm(params: {
   bodyMarkdown: string;
   links: CheckboxLinkRow[];
   defaultProjectId?: number | null;
+  organizationId?: number | null;
   /** Pre-fetched tasks by id (when syncing many notes against one project). */
   taskById?: Map<number, PmTaskSummary>;
-}): Promise<{ bodyMarkdown: string; updated: number; taskById: Map<number, PmTaskSummary> }> {
+  /** Pre-fetched org status catalog (optional). */
+  statusList?: PmTaskStatusValue[];
+}): Promise<{
+  bodyMarkdown: string;
+  updated: number;
+  taskById: Map<number, PmTaskSummary>;
+  statusList?: PmTaskStatusValue[];
+}> {
   const linked = params.links.filter((l) => l.PmTaskId && l.MarkerId);
   if (!linked.length) {
     return {
       bodyMarkdown: params.bodyMarkdown,
       updated: 0,
       taskById: params.taskById || new Map(),
+      statusList: params.statusList,
     };
   }
 
@@ -65,6 +84,13 @@ export async function syncNoteCheckboxesFromPm(params: {
     }
   }
 
+  let statusList = params.statusList;
+  const orgId = Number(params.organizationId || 0);
+  if (!statusList && orgId > 0) {
+    const statusRes = await fetchPmTaskStatuses(params.pmUserId, orgId);
+    statusList = normalizePmTaskStatusList(statusRes.data);
+  }
+
   let body = params.bodyMarkdown;
   let updated = 0;
 
@@ -79,7 +105,18 @@ export async function syncNoteCheckboxesFromPm(params: {
     const local = candidates.find((b) => b.markerId === markerId);
     const localChecked = local ? local.checked : Boolean(Number(link.Checked));
 
-    if (localChecked === wantChecked) {
+    const statusName =
+      statusList && task.Status != null
+        ? statusNameFromId(statusList, Number(task.Status))
+        : null;
+
+    const needsCheckedUpdate = localChecked !== wantChecked;
+    const needsLabelUpdate =
+      isFrontmatterTodoMarker(markerId) &&
+      Boolean(statusName) &&
+      local?.statusText?.trim().toLowerCase() !== statusName!.trim().toLowerCase();
+
+    if (!needsCheckedUpdate && !needsLabelUpdate) {
       if (local && Number(link.Checked) !== (wantChecked ? 1 : 0)) {
         await pool.execute(
           'UPDATE NoteCheckboxTasks SET Checked = ? WHERE NoteId = ? AND MarkerId = ?',
@@ -92,13 +129,26 @@ export async function syncNoteCheckboxesFromPm(params: {
     let next: string | null = null;
     if (isFrontmatterTodoMarker(markerId)) {
       const todoId = frontmatterTodoIdFromMarker(markerId);
-      if (todoId) next = setFrontmatterTodoStatus(body, todoId, wantChecked);
-    } else {
+      if (todoId) {
+        if (statusName) {
+          next = setFrontmatterTodoStatusLabel(body, todoId, statusName);
+        } else {
+          next = setFrontmatterTodoStatus(body, todoId, wantChecked);
+        }
+      }
+    } else if (needsCheckedUpdate) {
       next = setCheckboxCheckedByMarker(body, markerId, wantChecked);
     }
-    if (next == null) continue;
-    body = next;
-    updated += 1;
+
+    if (next == null) {
+      if (!needsCheckedUpdate) continue;
+      continue;
+    }
+    // Even label-only updates count
+    if (next !== body || needsCheckedUpdate) {
+      body = next;
+      updated += 1;
+    }
     await pool.execute(
       'UPDATE NoteCheckboxTasks SET Checked = ? WHERE NoteId = ? AND MarkerId = ?',
       [wantChecked ? 1 : 0, params.noteId, markerId]
@@ -113,7 +163,7 @@ export async function syncNoteCheckboxesFromPm(params: {
     });
   }
 
-  return { bodyMarkdown: body, updated, taskById };
+  return { bodyMarkdown: body, updated, taskById, statusList };
 }
 
 export async function loadNoteCheckboxLinks(noteId: number): Promise<CheckboxLinkRow[]> {

@@ -191,8 +191,17 @@ export async function fetchPmProjectStatuses(userId: number, organizationId: num
   );
 }
 
+export type PmTaskStatusValue = {
+  Id: number;
+  Name?: string | null;
+  Label?: string | null;
+  IsDefault?: number | boolean | null;
+  IsClosed?: number | boolean | null;
+  IsCancelled?: number | boolean | null;
+};
+
 export async function fetchPmTaskStatuses(userId: number, organizationId: number) {
-  return pmFetch<{ statuses?: Array<{ Id: number }>; data?: Array<{ Id: number }> }>(
+  return pmFetch<{ statuses?: PmTaskStatusValue[]; data?: PmTaskStatusValue[] }>(
     userId,
     `/api/status-values/task/${organizationId}`
   );
@@ -224,6 +233,47 @@ export function isPmTaskDone(task: PmTaskSummary): boolean {
   return Number(task.StatusIsClosed || 0) === 1 || Number(task.StatusIsCancelled || 0) === 1;
 }
 
+export function normalizePmTaskStatusList(data: unknown): PmTaskStatusValue[] {
+  const nested = data as { statuses?: PmTaskStatusValue[]; data?: PmTaskStatusValue[] } | null;
+  const list =
+    (nested && Array.isArray(nested.statuses) && nested.statuses) ||
+    (nested && Array.isArray(nested.data) && nested.data) ||
+    (Array.isArray(data) ? (data as PmTaskStatusValue[]) : []);
+  return list.filter((s) => s && Number.isFinite(Number(s.Id)));
+}
+
+export function statusNameFromId(
+  statusList: PmTaskStatusValue[],
+  statusId: number | null | undefined
+): string | null {
+  if (statusId == null || !Number.isFinite(Number(statusId))) return null;
+  const row = statusList.find((s) => Number(s.Id) === Number(statusId));
+  if (!row) return null;
+  const name = String(row.Name || row.Label || '').trim();
+  return name || null;
+}
+
+/**
+ * Resolve PM task status id: prefer case-insensitive Name match on statusText,
+ * else open vs closed by checked / done heuristic.
+ */
+export function resolvePmTaskStatusId(
+  statusList: PmTaskStatusValue[],
+  opts: { statusText?: string | null; checked?: boolean }
+): number | null {
+  if (!statusList.length) return null;
+  const text = String(opts.statusText || '').trim().toLowerCase();
+  if (text) {
+    const byName = statusList.find((s) => {
+      const n = String(s.Name || '').trim().toLowerCase();
+      const l = String(s.Label || '').trim().toLowerCase();
+      return (n && n === text) || (l && l === text);
+    });
+    if (byName) return Number(byName.Id);
+  }
+  return pickStatusId(statusList, Boolean(opts.checked));
+}
+
 export async function createPmProject(
   userId: number,
   body: { organizationId: number; projectName: string; description?: string; status: number }
@@ -244,15 +294,34 @@ export async function createPmTask(
     priority: number;
     /** When set, creates a Planner subtask under this parent task */
     parentTaskId?: number | null;
+    estimatedHours?: number;
+    unscheduledWork?: boolean;
     synapseVaultId?: number;
     synapseNoteId?: number;
     synapseMarkerId?: string;
     synapseNoteUrl?: string;
   }
 ) {
+  const payload: Record<string, unknown> = {
+    projectId: body.projectId,
+    taskName: body.taskName,
+    status: body.status,
+    priority: body.priority,
+  };
+  if (body.description != null) payload.description = body.description;
+  if (body.parentTaskId != null) payload.parentTaskId = body.parentTaskId;
+  if (body.estimatedHours != null && Number.isFinite(body.estimatedHours)) {
+    payload.estimatedHours = body.estimatedHours;
+  }
+  if (body.unscheduledWork === true) payload.unscheduledWork = true;
+  if (body.synapseVaultId != null) payload.synapseVaultId = body.synapseVaultId;
+  if (body.synapseNoteId != null) payload.synapseNoteId = body.synapseNoteId;
+  if (body.synapseMarkerId != null) payload.synapseMarkerId = body.synapseMarkerId;
+  if (body.synapseNoteUrl != null) payload.synapseNoteUrl = body.synapseNoteUrl;
+
   return pmFetch<{ taskId?: number; id?: number; data?: { Id?: number } }>(userId, '/api/tasks', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -274,18 +343,24 @@ export async function updatePmTask(
   });
 }
 
-function pickStatusId(
-  list: Array<{ Id: number; IsDefault?: number; IsClosed?: number }>,
-  preferClosed: boolean
-): number | null {
+function pickStatusId(list: PmTaskStatusValue[], preferClosed: boolean): number | null {
   if (!list.length) return null;
   if (preferClosed) {
-    const closed = list.find((s) => Number(s.IsClosed) === 1);
+    const closed = list.find(
+      (s) => Number(s.IsClosed) === 1 || Number(s.IsCancelled) === 1
+    );
     if (closed) return Number(closed.Id);
   } else {
-    const open = list.find((s) => Number(s.IsClosed) !== 1 && Number(s.IsDefault) === 1);
+    const open = list.find(
+      (s) =>
+        Number(s.IsClosed) !== 1 &&
+        Number(s.IsCancelled) !== 1 &&
+        Number(s.IsDefault) === 1
+    );
     if (open) return Number(open.Id);
-    const anyOpen = list.find((s) => Number(s.IsClosed) !== 1);
+    const anyOpen = list.find(
+      (s) => Number(s.IsClosed) !== 1 && Number(s.IsCancelled) !== 1
+    );
     if (anyOpen) return Number(anyOpen.Id);
   }
   return Number(list[0].Id);
@@ -297,13 +372,20 @@ export async function resolveTaskStatusId(
   checked: boolean
 ): Promise<number | null> {
   const statusRes = await fetchPmTaskStatuses(userId, organizationId);
-  const statusList =
-    (statusRes.data as { statuses?: Array<{ Id: number; IsDefault?: number; IsClosed?: number }> })
-      .statuses ||
-    (Array.isArray(statusRes.data)
-      ? (statusRes.data as Array<{ Id: number; IsDefault?: number; IsClosed?: number }>)
-      : []);
+  const statusList = normalizePmTaskStatusList(statusRes.data);
   return pickStatusId(statusList, checked);
+}
+
+/** Resolve status id + display name for open/closed toggle. */
+export async function resolveTaskStatusIdWithName(
+  userId: number,
+  organizationId: number,
+  checked: boolean
+): Promise<{ statusId: number | null; statusName: string | null }> {
+  const statusRes = await fetchPmTaskStatuses(userId, organizationId);
+  const statusList = normalizePmTaskStatusList(statusRes.data);
+  const statusId = pickStatusId(statusList, checked);
+  return { statusId, statusName: statusNameFromId(statusList, statusId) };
 }
 
 export type PmUserSummary = {
