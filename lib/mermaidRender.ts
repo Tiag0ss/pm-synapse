@@ -1,10 +1,10 @@
 'use client';
 
-import mermaid from 'mermaid';
-import elkLayouts from '@mermaid-js/layout-elk';
+type MermaidApi = typeof import('mermaid').default;
 
 let renderGeneration = 0;
 let initialized = false;
+let mermaidApi: MermaidApi | null = null;
 
 /** Synapse palette from app/globals.css :root — keep in sync. */
 const SYNAPSE = {
@@ -86,14 +86,33 @@ function baseInit() {
   };
 }
 
-function ensureMermaidElk(): void {
-  if (initialized) return;
+/** Lazy-load Mermaid/ELK only in the browser so Next SSR does not emit fragile vendor-chunks. */
+async function ensureMermaidElk(): Promise<MermaidApi> {
+  if (initialized && mermaidApi) return mermaidApi;
+  const [{ default: mermaid }, elkMod] = await Promise.all([
+    import('mermaid'),
+    import('@mermaid-js/layout-elk'),
+  ]);
+  const elkLayouts = (elkMod as { default?: unknown }).default ?? elkMod;
   if (!Array.isArray(elkLayouts) || elkLayouts.length === 0) {
     throw new Error('@mermaid-js/layout-elk export is empty');
   }
   mermaid.registerLayoutLoaders(elkLayouts);
   mermaid.initialize(baseInit());
+  mermaidApi = mermaid;
   initialized = true;
+  return mermaid;
+}
+
+function decorateMermaidExpand(wrap: HTMLElement): void {
+  if (wrap.querySelector('.synapse-mermaid-expand')) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'synapse-mermaid-expand';
+  btn.title = 'Expand diagram';
+  btn.setAttribute('aria-label', 'Expand diagram');
+  btn.textContent = 'Expand';
+  wrap.appendChild(btn);
 }
 
 /**
@@ -220,7 +239,7 @@ function forceSharpOrthogonalEdges(root: HTMLElement): void {
  * Render via mermaid.render into a sized host in the document.
  * ELK needs getBBox on real layout boxes — opacity:0 still has geometry; display:none does not.
  */
-async function renderWithElk(source: string, widthPx: number): Promise<string> {
+async function renderWithElk(mermaid: MermaidApi, source: string, widthPx: number): Promise<string> {
   const id = `synapseMmd${Date.now()}${Math.random().toString(36).slice(2, 9)}`;
   const host = document.createElement('div');
   host.setAttribute('data-synapse-mmd-host', id);
@@ -253,8 +272,9 @@ export async function renderMermaidInRoot(root: HTMLElement | null): Promise<voi
   if (!root || typeof window === 'undefined') return;
   const generation = ++renderGeneration;
 
+  let mermaid: MermaidApi;
   try {
-    ensureMermaidElk();
+    mermaid = await ensureMermaidElk();
   } catch (err) {
     if (generation !== renderGeneration || !root.isConnected) return;
     for (const pre of collectMermaidPres(root)) {
@@ -285,7 +305,7 @@ export async function renderMermaidInRoot(root: HTMLElement | null): Promise<voi
     const outer: HTMLElement = closestBlock instanceof HTMLElement ? closestBlock : pre;
 
     try {
-      const svg = await renderWithElk(source, widthPx);
+      const svg = await renderWithElk(mermaid, source, widthPx);
       if (generation !== renderGeneration || !root.contains(outer)) return;
       const wrap = document.createElement('div');
       wrap.className = 'synapse-mermaid';
@@ -294,6 +314,7 @@ export async function renderMermaidInRoot(root: HTMLElement | null): Promise<voi
       outer.replaceWith(wrap);
       // After mount: redraw ELK bend points as sharp orthogonal polylines (no rounded elbows)
       forceSharpOrthogonalEdges(wrap);
+      decorateMermaidExpand(wrap);
     } catch (error) {
       if (!root.contains(outer)) continue;
       showMermaidError(outer, source, error);

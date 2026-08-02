@@ -245,6 +245,7 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
       'button',
       'svg',
       'path',
+      'rect',
       'g',
       'defs',
       'use',
@@ -268,10 +269,13 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
       ol: ['class', 'start'],
       ul: ['class'],
       pre: ['class'],
-      code: ['class'],
+      code: ['class', 'title'],
       img: ['src', 'alt', 'title', 'class'],
       input: ['type', 'checked', 'disabled'],
       button: ['type', 'class', 'aria-label', 'title', 'data-label'],
+      svg: ['class', 'viewBox', 'width', 'height', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'aria-hidden'],
+      path: ['d', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'],
+      rect: ['x', 'y', 'width', 'height', 'rx', 'ry', 'fill', 'stroke', 'stroke-width'],
       h1: ['id', 'class'],
       h2: ['id', 'class'],
       h3: ['id', 'class'],
@@ -294,12 +298,22 @@ function enhanceCodeCopyHtml(html: string): string {
       slots.push(block);
       return `\u0000PRE${slots.length - 1}\u0000`;
     }
-    const wrapped = `<div class="synapse-code-block"><div class="synapse-code-toolbar"><button type="button" class="synapse-copy-code" data-label="Copy" aria-label="Copy code" title="Copy">Copy</button></div>${block}</div>`;
+    const wrapped =
+      `<div class="synapse-code-block">` +
+      `<div class="synapse-code-toolbar"><button type="button" class="synapse-copy-code" aria-label="Copy code" title="Copy">Copy</button></div>` +
+      `${block}` +
+      `</div>`;
     slots.push(wrapped);
     return `\u0000PRE${slots.length - 1}\u0000`;
   });
-  out = out.replace(/<code\b[^>]*>[\s\S]*?<\/code>/gi, (block) => {
-    return `<span class="synapse-inline-code">${block}<button type="button" class="synapse-copy-code" data-label="Copy" aria-label="Copy code" title="Copy">Copy</button></span>`;
+  out = out.replace(/<code\b([^>]*)>/gi, (_m, attrs: string) => {
+    if (/\bsynapse-inline-copy\b/.test(attrs)) return `<code${attrs}>`;
+    let next = attrs;
+    if (!/\btitle=/i.test(next)) next += ` title="Click to copy"`;
+    if (/\bclass="/i.test(next)) {
+      return `<code${next.replace(/\bclass="/i, 'class="synapse-inline-copy ')}>`;
+    }
+    return `<code class="synapse-inline-copy"${next}>`;
   });
   return out.replace(/\u0000PRE(\d+)\u0000/g, (_, i) => slots[Number(i)] ?? '');
 }

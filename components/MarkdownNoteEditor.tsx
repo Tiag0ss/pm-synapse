@@ -6,6 +6,7 @@ import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import ImageLightbox from '@/components/ImageLightbox';
+import MermaidLightbox from '@/components/MermaidLightbox';
 
 type ViewMode = 'edit' | 'split' | 'preview';
 
@@ -233,6 +234,7 @@ export default function MarkdownNoteEditor({
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
   const [fetchedPlannerLinks, setFetchedPlannerLinks] = useState<PlannerLinkItem[]>([]);
 
   useEffect(() => {
@@ -392,6 +394,19 @@ export default function MarkdownNoteEditor({
         e.stopPropagation();
         setLightbox({ src: img.currentSrc || img.src, alt: img.alt || '' });
         return;
+      }
+      const mermaidHit = (e.target as HTMLElement).closest(
+        '.synapse-mermaid-expand, .synapse-mermaid:not(.synapse-mermaid-error) svg'
+      );
+      if (mermaidHit && root.contains(mermaidHit)) {
+        const wrap = mermaidHit.closest('.synapse-mermaid');
+        const svg = wrap?.querySelector('svg');
+        if (svg) {
+          e.preventDefault();
+          e.stopPropagation();
+          setMermaidLightbox(svg.outerHTML);
+          return;
+        }
       }
       if (!onOpenNote && !onCreateNoteFromWikilink) return;
       const target = (e.target as HTMLElement).closest(
@@ -595,6 +610,7 @@ export default function MarkdownNoteEditor({
         alt={lightbox?.alt}
         onClose={() => setLightbox(null)}
       />
+      <MermaidLightbox svgHtml={mermaidLightbox} onClose={() => setMermaidLightbox(null)} />
     </div>
   );
 }

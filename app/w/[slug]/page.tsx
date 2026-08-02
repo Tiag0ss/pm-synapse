@@ -12,6 +12,7 @@ import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import ImageLightbox from '@/components/ImageLightbox';
+import MermaidLightbox from '@/components/MermaidLightbox';
 
 interface WikiLinkRow {
   Id: number;
@@ -43,6 +44,7 @@ export default function PublicWikiPage() {
   } | null>(null);
   const [graphToken, setGraphToken] = useState(0);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
   const [plannerLinks, setPlannerLinks] = useState<PlannerLinkItem[]>([]);
   const articleRef = useRef<HTMLDivElement>(null);
 
@@ -172,6 +174,19 @@ export default function PublicWikiPage() {
         e.stopPropagation();
         setLightbox({ src: img.currentSrc || img.src, alt: img.alt || '' });
         return;
+      }
+      const mermaidHit = (e.target as HTMLElement).closest(
+        '.synapse-mermaid-expand, .synapse-mermaid:not(.synapse-mermaid-error) svg'
+      );
+      if (mermaidHit && root.contains(mermaidHit)) {
+        const wrap = mermaidHit.closest('.synapse-mermaid');
+        const svg = wrap?.querySelector('svg');
+        if (svg) {
+          e.preventDefault();
+          e.stopPropagation();
+          setMermaidLightbox(svg.outerHTML);
+          return;
+        }
       }
       const target = (e.target as HTMLElement).closest(
         'a.synapse-wikilink, a.synapse-mention'
@@ -404,6 +419,7 @@ export default function PublicWikiPage() {
         alt={lightbox?.alt}
         onClose={() => setLightbox(null)}
       />
+      <MermaidLightbox svgHtml={mermaidLightbox} onClose={() => setMermaidLightbox(null)} />
     </main>
   );
 }

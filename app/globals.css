@@ -269,16 +269,37 @@ a:hover { text-decoration: underline; }
   padding: 0.12rem 0.4rem;
   font-size: 0.82em;
 }
+.synapse-md-preview code.synapse-inline-copy {
+  cursor: copy;
+}
+.synapse-md-preview code.synapse-inline-copy:hover {
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.synapse-md-preview code.synapse-inline-copy.is-copied {
+  color: var(--accent-fg);
+  background: color-mix(in srgb, var(--accent) 35%, var(--surface-2));
+}
 .synapse-md-preview pre {
   font-family: var(--font-mono);
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 0.65rem;
-  padding: 0.9rem 1rem;
+  padding: 2.1rem 1rem 0.9rem;
   overflow: auto;
   margin: 0;
 }
-.synapse-md-preview pre code { background: transparent; padding: 0; }
+.synapse-md-preview pre code {
+  background: transparent;
+  padding: 0;
+  cursor: inherit;
+  outline: none;
+}
+.synapse-md-preview pre code.synapse-inline-copy {
+  cursor: inherit;
+}
+.synapse-md-preview pre code.synapse-inline-copy:hover {
+  outline: none;
+}
 
 .synapse-md-preview .synapse-code-block {
   position: relative;
@@ -286,60 +307,37 @@ a:hover { text-decoration: underline; }
 }
 .synapse-md-preview .synapse-code-toolbar {
   position: absolute;
-  top: 0.45rem;
-  right: 0.45rem;
-  z-index: 1;
+  top: 0.4rem;
+  right: 0.4rem;
+  z-index: 6;
 }
 .synapse-md-preview .synapse-copy-code {
   appearance: none;
-  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.28rem 0.55rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--border-strong);
   background: var(--surface-2);
-  color: var(--muted);
+  color: var(--accent-soft);
   font-family: var(--font-sans);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   line-height: 1;
-  padding: 0.35rem 0.55rem;
-  border-radius: 0.4rem;
   cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 .synapse-md-preview .synapse-copy-code:hover {
-  color: var(--text);
   border-color: var(--accent);
   background: var(--panel);
+  color: var(--text);
 }
 .synapse-md-preview .synapse-copy-code.is-copied {
-  color: var(--accent-soft);
+  color: var(--accent-fg);
+  background: var(--accent);
   border-color: var(--accent);
-}
-
-.synapse-md-preview .synapse-inline-code {
-  display: inline;
-  position: relative;
-  white-space: nowrap;
-}
-.synapse-md-preview .synapse-inline-code > code {
-  padding-right: 0.35rem;
-}
-.synapse-md-preview .synapse-inline-code > .synapse-copy-code {
-  margin-left: 0.15rem;
-  padding: 0.2rem 0.4rem;
-  vertical-align: middle;
-  opacity: 0;
-  pointer-events: none;
-}
-.synapse-md-preview .synapse-inline-code:hover > .synapse-copy-code,
-.synapse-md-preview .synapse-inline-code:focus-within > .synapse-copy-code {
-  opacity: 1;
-  pointer-events: auto;
-}
-@media (hover: none) {
-  .synapse-md-preview .synapse-inline-code > .synapse-copy-code {
-    opacity: 1;
-    pointer-events: auto;
-  }
 }
 
 .synapse-md-preview a:not(.synapse-wikilink):not(.synapse-mention) {
@@ -492,6 +490,7 @@ a:hover { text-decoration: underline; }
   display: inline;
 }
 .synapse-md-preview .synapse-mermaid {
+  position: relative;
   margin: 1rem 0;
   padding: 0.75rem 0.85rem;
   overflow-x: auto;
@@ -506,39 +505,95 @@ a:hover { text-decoration: underline; }
   height: auto;
   display: block;
   margin: 0 auto;
+  cursor: zoom-in;
+}
+.synapse-md-preview .synapse-mermaid-expand {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  z-index: 2;
+  border-radius: 0.4rem;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  color: var(--accent-soft);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.28rem 0.55rem;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.synapse-md-preview .synapse-mermaid:hover .synapse-mermaid-expand,
+.synapse-md-preview .synapse-mermaid-expand:focus-visible {
+  opacity: 1;
+  border-color: var(--accent);
+  background: var(--panel);
 }
 .synapse-md-preview .synapse-mermaid .edgeLabel,
 .synapse-md-preview .synapse-mermaid .edgeLabel foreignObject,
 .synapse-md-preview .synapse-mermaid .edgeLabel span,
 .synapse-md-preview .synapse-mermaid .nodeLabel,
-.synapse-md-preview .synapse-mermaid .label {
+.synapse-md-preview .synapse-mermaid .label,
+.synapse-mermaid-lightbox .edgeLabel,
+.synapse-mermaid-lightbox .edgeLabel foreignObject,
+.synapse-mermaid-lightbox .edgeLabel span,
+.synapse-mermaid-lightbox .nodeLabel,
+.synapse-mermaid-lightbox .label {
   color: var(--text);
   font-family: var(--font-sans);
 }
 .synapse-md-preview .synapse-mermaid .edgeLabel p,
-.synapse-md-preview .synapse-mermaid .nodeLabel p {
+.synapse-md-preview .synapse-mermaid .nodeLabel p,
+.synapse-mermaid-lightbox .edgeLabel p,
+.synapse-mermaid-lightbox .nodeLabel p {
   margin: 0;
   color: inherit;
 }
 .synapse-md-preview .synapse-mermaid .edgeLabel rect,
-.synapse-md-preview .synapse-mermaid .labelBkg {
+.synapse-md-preview .synapse-mermaid .labelBkg,
+.synapse-mermaid-lightbox .edgeLabel rect,
+.synapse-mermaid-lightbox .labelBkg {
   fill: var(--panel) !important;
 }
 .synapse-md-preview .synapse-mermaid .flowchart-link,
 .synapse-md-preview .synapse-mermaid .edgePath path.path,
-.synapse-md-preview .synapse-mermaid .edgePaths path {
+.synapse-md-preview .synapse-mermaid .edgePaths path,
+.synapse-mermaid-lightbox .flowchart-link,
+.synapse-mermaid-lightbox .edgePath path.path,
+.synapse-mermaid-lightbox .edgePaths path {
   stroke: var(--accent-soft) !important;
 }
-.synapse-md-preview .synapse-mermaid marker path {
+.synapse-md-preview .synapse-mermaid marker path,
+.synapse-mermaid-lightbox marker path {
   fill: var(--accent-soft) !important;
   stroke: var(--accent-soft) !important;
 }
 .synapse-md-preview .synapse-mermaid .node rect,
 .synapse-md-preview .synapse-mermaid .node polygon,
 .synapse-md-preview .synapse-mermaid .node circle,
-.synapse-md-preview .synapse-mermaid .node path {
+.synapse-md-preview .synapse-mermaid .node path,
+.synapse-mermaid-lightbox .node rect,
+.synapse-mermaid-lightbox .node polygon,
+.synapse-mermaid-lightbox .node circle,
+.synapse-mermaid-lightbox .node path {
   stroke: var(--accent) !important;
   fill: var(--surface-2) !important;
+}
+.synapse-mermaid-lightbox-stage {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 0%, color-mix(in srgb, var(--bg-glow) 55%, transparent), transparent),
+    var(--bg);
+}
+.synapse-mermaid-lightbox-body {
+  padding: 1rem;
+}
+.synapse-mermaid-lightbox-body svg {
+  max-width: none !important;
+  width: auto !important;
+  height: auto !important;
+  display: block;
+  margin: 0 auto;
 }
 .synapse-md-preview .synapse-mermaid-error {
   border-color: color-mix(in srgb, var(--danger) 50%, var(--border));
