@@ -156,12 +156,17 @@ Optional Synapse link fields (stored on PM `Tasks` table; UI shows “Open in Sy
 ```json
 {
   "description": "<p>From Synapse…</p>",
+  "parentTaskId": 42,
   "synapseVaultId": 1,
   "synapseNoteId": 2,
   "synapseMarkerId": "c…",
   "synapseNoteUrl": "http://localhost:3010/vaults/1?note=2"
 }
 ```
+
+| Field | Use |
+|-------|-----|
+| `parentTaskId` | Optional. When set, the new task is a **subtask** of that parent (`Tasks.ParentTaskId`). Synapse uses this for nested note checkboxes (and for checkboxes under a note-level task). |
 
 Success: `taskId` or `id` or `data.Id`.
 

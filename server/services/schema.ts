@@ -66,6 +66,7 @@ const STATEMENTS = [
     FrontmatterJson TEXT NULL,
     Visibility VARCHAR(32) NULL,
     AliasesJson TEXT NULL,
+    Icon VARCHAR(64) NULL,
     PmTaskId INT NULL,
     PmProjectId INT NULL,
     PmTaskLinkedAt DATETIME NULL,
@@ -166,6 +167,7 @@ const STATEMENTS = [
 const ALTERS = [
   'ALTER TABLE Notes ADD COLUMN DeletedAt DATETIME NULL',
   'ALTER TABLE Notes ADD KEY idx_note_deleted (VaultId, DeletedAt)',
+  'ALTER TABLE Notes ADD COLUMN Icon VARCHAR(64) NULL',
 ];
 
 /** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */

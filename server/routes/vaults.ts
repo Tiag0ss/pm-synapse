@@ -6,11 +6,8 @@ import { slugify, extractWikiLinks } from '../services/markdown';
 import { resolveNoteId } from '../services/notePaths';
 import {
   createPmProject,
-  createPmTask,
   fetchPmOrganizations,
   fetchPmProjectStatuses,
-  fetchPmTaskPriorities,
-  fetchPmTaskStatuses,
   normalizeOrganizationList,
   resolveTaskStatusId,
   updatePmTask,
@@ -37,7 +34,13 @@ import { readVaultMedia, saveVaultImage } from '../services/vaultMedia';
 import { importVaultZip } from '../services/vaultZipImport';
 import { exportVaultZip } from '../services/vaultZipExport';
 import { frontmatterJsonString, parseFrontmatter } from '../services/frontmatter';
-import { checkboxTextKey, pushMissingCheckboxTasks } from '../services/pushCheckboxTasks';
+import {
+  checkboxTextKey,
+  pushMissingCheckboxTasks,
+  pushNoteAsPmTask,
+  pushSingleCheckboxTask,
+} from '../services/pushCheckboxTasks';
+import { normalizeNoteIcon } from '../services/noteIcons';
 import {
   accessibleVault,
   listAccessibleVaults,
@@ -531,7 +534,7 @@ router.get('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   if (q) {
     const like = `%${q}%`;
     [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt
+      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt, Icon
        FROM Notes
        WHERE VaultId = ? AND ${deletedClause}
          AND (Title LIKE ? OR Path LIKE ? OR BodyMarkdown LIKE ?)
@@ -541,7 +544,7 @@ router.get('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
     );
   } else {
     [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt
+      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt, Icon
        FROM Notes WHERE VaultId = ? AND ${deletedClause} ORDER BY Path ASC`,
       [vault.Id]
     );
@@ -620,6 +623,7 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
     bodyMarkdown: z.string().default(''),
     visibility: visibilityEnum.optional().nullable(),
     aliases: z.array(z.string()).optional(),
+    icon: z.union([z.string().max(64), z.null()]).optional(),
     /** When creating from a missing [[wikilink]], rebuild that note's outbound links. */
     linkFromNoteId: z.coerce.number().int().positive().optional(),
   });
@@ -630,6 +634,8 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   let path = parsed.data.path || titleToPath(parsed.data.title);
   if (!path.endsWith('.md')) path = `${path}.md`;
   const fmJson = frontmatterJsonString(parseFrontmatter(parsed.data.bodyMarkdown).data);
+  const icon =
+    parsed.data.icon === undefined ? null : normalizeNoteIcon(parsed.data.icon);
 
   const [pathHits] = await pool.execute<RowDataPacket[]>(
     `SELECT Id FROM Notes WHERE VaultId = ? AND Path = ? AND ${ACTIVE_NOTE} LIMIT 1`,
@@ -655,8 +661,8 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
 
   try {
     const [result] = await pool.execute<ResultSetHeader>(
-      `INSERT INTO Notes (VaultId, Path, Title, BodyMarkdown, Visibility, AliasesJson, FrontmatterJson)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO Notes (VaultId, Path, Title, BodyMarkdown, Visibility, AliasesJson, FrontmatterJson, Icon)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         vault.Id,
         path,
@@ -665,6 +671,7 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
         parsed.data.visibility || null,
         JSON.stringify(parsed.data.aliases || []),
         fmJson,
+        icon,
       ]
     );
     const noteId = result.insertId;
@@ -689,7 +696,7 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
 
     res.json({
       success: true,
-      data: { id: noteId, path, title: parsed.data.title },
+      data: { id: noteId, path, title: parsed.data.title, icon },
     });
   } catch (error) {
     logger.error('Create note failed', { error, vaultId: vault.Id, path });
@@ -724,6 +731,7 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     bodyMarkdown: z.string().optional(),
     visibility: visibilityEnum.optional().nullable(),
     aliases: z.array(z.string()).optional(),
+    icon: z.union([z.string().max(64), z.null()]).optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -743,11 +751,17 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     parsed.data.aliases ?? JSON.parse(String(existing.AliasesJson || '[]'))
   );
   const fmJson = frontmatterJsonString(parseFrontmatter(body).data);
+  const icon =
+    parsed.data.icon !== undefined
+      ? normalizeNoteIcon(parsed.data.icon)
+      : existing.Icon
+        ? normalizeNoteIcon(existing.Icon)
+        : null;
 
   await pool.execute(
-    `UPDATE Notes SET Path = ?, Title = ?, BodyMarkdown = ?, Visibility = ?, AliasesJson = ?, FrontmatterJson = ?
+    `UPDATE Notes SET Path = ?, Title = ?, BodyMarkdown = ?, Visibility = ?, AliasesJson = ?, FrontmatterJson = ?, Icon = ?
      WHERE Id = ?`,
-    [path, title, body, visibility, aliasesJson, fmJson, existing.Id]
+    [path, title, body, visibility, aliasesJson, fmJson, icon, existing.Id]
   );
 
   await snapshotRevision(Number(existing.Id), req.user!.userId, {
@@ -1216,6 +1230,7 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
         text: box.text,
         checked: box.checked,
         markerId: box.markerId,
+        indent: box.indent,
         pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
         pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
         openUrl: link?.PmTaskId
@@ -1276,11 +1291,16 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
     const key = checkboxTextKey(noteId, l.Text);
     if (!byText.has(key)) byText.set(key, l);
   }
+  const notePmTaskId = note.PmTaskId != null ? Number(note.PmTaskId) : null;
+  const projectId = vault.PmProjectId ? Number(vault.PmProjectId) : null;
   res.json({
     success: true,
     data: {
       bodyMarkdown: synced.updated > 0 ? body : undefined,
       syncedFromPm: synced.updated,
+      notePmTaskId,
+      noteOpenUrl:
+        notePmTaskId && projectId ? buildPmTaskOpenUrl(projectId, notePmTaskId) : null,
       items: boxes.map((box) => {
         const link = resolveCheckboxLink(noteId, box, byMarker, byText);
         return {
@@ -1288,6 +1308,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
           text: box.text,
           checked: box.checked,
           markerId: box.markerId,
+          indent: box.indent,
           pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
           pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
           openUrl: link?.PmTaskId
@@ -1389,16 +1410,10 @@ router.post('/:vaultId/checkboxes/push-missing', async (req: AuthRequest, res: R
   }
 });
 
-/** Create a PM task from a checkbox in the note. */
+/** Create a PM task from a checkbox in the note (nested → Planner subtasks). */
 router.post('/:vaultId/notes/:noteId/checkboxes/push', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
-  const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT * FROM Notes WHERE Id = ? AND VaultId = ?',
-    [req.params.noteId, vault.Id]
-  );
-  if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
-  const note = notes[0];
 
   const schema = z.object({
     index: z.coerce.number().int().min(0),
@@ -1417,141 +1432,126 @@ router.post('/:vaultId/notes/:noteId/checkboxes/push', async (req: AuthRequest, 
     });
   }
 
-  let body = String(note.BodyMarkdown || '');
-  const originalBody = body;
-  const ensured = ensureCheckboxMarker(body, parsed.data.index);
-  if (!ensured) {
-    return res.status(404).json({ success: false, message: 'Checkbox not found' });
+  try {
+    const data = await pushSingleCheckboxTask({
+      vaultId: Number(vault.Id),
+      noteId: Number(req.params.noteId),
+      checkboxIndex: parsed.data.index,
+      pmUserId: req.user!.userId,
+      projectId,
+      organizationId: orgId,
+    });
+    if (data.alreadyLinked) {
+      return res.status(409).json({
+        success: false,
+        message: 'Checkbox already linked to a PM task',
+        data,
+      });
+    }
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Checkbox push failed', { error });
+    res.status(status).json({ success: false, message: err.message || 'Failed to create PM task' });
   }
-  body = ensured.markdown;
-  const markerId = ensured.markerId;
-  const box = parseCheckboxes(body).find((b) => b.markerId === markerId);
-  if (!box) {
-    return res.status(404).json({ success: false, message: 'Checkbox not found after marker' });
+});
+
+/** Create a PM task for the note itself (checkboxes can nest under it). */
+router.post('/:vaultId/notes/:noteId/push-task', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+  const projectId = Number(vault.PmProjectId);
+  const orgId = Number(vault.PmOrganizationId);
+  if (!projectId || !orgId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Link or create a PM project on this vault first',
+    });
   }
 
-  const noteId = Number(note.Id);
-  const [existingLink] = await pool.execute<RowDataPacket[]>(
-    `SELECT MarkerId, PmTaskId FROM NoteCheckboxTasks
-     WHERE NoteId = ? AND PmTaskId IS NOT NULL
-       AND (MarkerId = ? OR LOWER(TRIM(Text)) = LOWER(TRIM(?)))
-     LIMIT 1`,
-    [noteId, markerId, box.text.slice(0, 512)]
-  );
-  if (existingLink.length) {
-    const existingTaskId = Number(existingLink[0].PmTaskId);
-    const existingMarker = String(existingLink[0].MarkerId);
-    // Re-bind to current marker if markdown lost/changed the HTML comment
-    if (existingMarker !== markerId) {
-      await pool.execute(
-        `UPDATE NoteCheckboxTasks SET MarkerId = ?, Text = ?, Checked = ?
-         WHERE NoteId = ? AND MarkerId = ?`,
-        [markerId, box.text.slice(0, 512), box.checked ? 1 : 0, noteId, existingMarker]
-      );
-    }
-    if (body !== originalBody) {
-      await pool.execute('UPDATE Notes SET BodyMarkdown = ? WHERE Id = ?', [body, noteId]);
-    }
-    // Backfill Synapse refs on PM if the task was linked before these fields existed
-    void updatePmTask(req.user!.userId, existingTaskId, {
-      synapseVaultId: Number(vault.Id),
-      synapseNoteId: noteId,
-      synapseMarkerId: markerId,
-      synapseNoteUrl: buildSynapseNoteUrl(Number(vault.Id), noteId),
+  const schema = z.object({
+    /** Also create missing checkbox tasks as subtasks of the note task */
+    withCheckboxes: z.boolean().optional(),
+  });
+  const parsed = schema.safeParse(req.body || {});
+  const withCheckboxes = Boolean(parsed.success && parsed.data.withCheckboxes);
+
+  try {
+    const noteTask = await pushNoteAsPmTask({
+      vaultId: Number(vault.Id),
+      noteId: Number(req.params.noteId),
+      pmUserId: req.user!.userId,
+      projectId,
+      organizationId: orgId,
     });
-    return res.status(409).json({
-      success: false,
-      message: 'Checkbox already linked to a PM task',
+
+    let checkboxResult: Awaited<ReturnType<typeof pushMissingCheckboxTasks>> | null = null;
+    if (withCheckboxes) {
+      checkboxResult = await pushMissingCheckboxTasks({
+        vaultId: Number(vault.Id),
+        noteId: Number(req.params.noteId),
+        pmUserId: req.user!.userId,
+        projectId,
+        organizationId: orgId,
+      });
+    }
+
+    res.json({
+      success: true,
       data: {
-        pmTaskId: existingTaskId,
-        openUrl: buildPmTaskOpenUrl(projectId, existingTaskId),
-        bodyMarkdown: body !== originalBody ? body : undefined,
+        ...noteTask,
+        checkboxes: checkboxResult,
       },
     });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Note task push failed', { error });
+    res.status(status).json({ success: false, message: err.message || 'Failed to create note task' });
   }
-
-  const [statusRes, prioRes] = await Promise.all([
-    fetchPmTaskStatuses(req.user!.userId, orgId),
-    fetchPmTaskPriorities(req.user!.userId, orgId),
-  ]);
-  const statusList =
-    (statusRes.data as { statuses?: Array<{ Id: number; IsDefault?: number; IsClosed?: number }> })
-      .statuses ||
-    (Array.isArray(statusRes.data)
-      ? (statusRes.data as Array<{ Id: number; IsDefault?: number; IsClosed?: number }>)
-      : []);
-  const prioList =
-    (prioRes.data as { priorities?: Array<{ Id: number; IsDefault?: number }> }).priorities ||
-    (Array.isArray(prioRes.data) ? (prioRes.data as Array<{ Id: number; IsDefault?: number }>) : []);
-  const statusId = box.checked
-    ? Number((statusList.find((s) => Number(s.IsClosed) === 1) || statusList[0])?.Id)
-    : Number((statusList.find((s) => Number(s.IsDefault) === 1 && Number(s.IsClosed) !== 1) ||
-        statusList.find((s) => Number(s.IsClosed) !== 1) ||
-        statusList[0])?.Id);
-  const priorityId = Number(
-    (prioList.find((s) => Number(s.IsDefault) === 1) || prioList[0])?.Id
-  );
-  if (!statusId || !priorityId) {
-    return res.status(400).json({ success: false, message: 'Could not resolve PM task status/priority' });
-  }
-
-  const synapseNoteUrl = buildSynapseNoteUrl(Number(vault.Id), noteId);
-  const result = await createPmTask(req.user!.userId, {
-    projectId,
-    taskName: box.text.slice(0, 512) || String(note.Title),
-    description: `<p>From Synapse note <strong>${String(note.Title)}</strong></p>`,
-    status: statusId,
-    priority: priorityId,
-    synapseVaultId: Number(vault.Id),
-    synapseNoteId: noteId,
-    synapseMarkerId: markerId,
-    synapseNoteUrl,
-  });
-  if (!result.ok) {
-    return res.status(result.status).json({
-      success: false,
-      message: result.data.message || 'Failed to create PM task',
-    });
-  }
-  const taskId =
-    result.data.taskId || result.data.id || (result.data as { data?: { Id?: number } }).data?.Id;
-  if (!taskId) {
-    return res.status(500).json({ success: false, message: 'PM did not return task id' });
-  }
-
-  if (body !== originalBody) {
-    await pool.execute('UPDATE Notes SET BodyMarkdown = ? WHERE Id = ?', [body, noteId]);
-    await snapshotRevision(noteId, req.user!.userId, {
-      title: String(note.Title),
-      path: String(note.Path),
-      bodyMarkdown: body,
-      frontmatterJson: null,
-      visibility: note.Visibility ? String(note.Visibility) : null,
-    });
-  }
-  await pool.execute(
-    `INSERT INTO NoteCheckboxTasks (NoteId, MarkerId, Text, Checked, PmTaskId, PmProjectId, PmTaskLinkedAt)
-     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-     ON DUPLICATE KEY UPDATE
-       Text = VALUES(Text),
-       Checked = VALUES(Checked),
-       PmTaskId = VALUES(PmTaskId),
-       PmProjectId = VALUES(PmProjectId),
-       PmTaskLinkedAt = CURRENT_TIMESTAMP`,
-    [noteId, markerId, box.text.slice(0, 512), box.checked ? 1 : 0, taskId, projectId]
-  );
-
-  res.json({
-    success: true,
-    data: {
-      markerId,
-      pmTaskId: taskId,
-      pmProjectId: projectId,
-      bodyMarkdown: body !== originalBody ? body : undefined,
-      openUrl: buildPmTaskOpenUrl(projectId, Number(taskId)),
-    },
-  });
 });
+
+/** Create missing PM tasks for checkboxes in a single note. */
+router.post(
+  '/:vaultId/notes/:noteId/checkboxes/push-missing',
+  async (req: AuthRequest, res: Response) => {
+    const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+    if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+    const projectId = Number(vault.PmProjectId);
+    const orgId = Number(vault.PmOrganizationId);
+    if (!projectId || !orgId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Link or create a PM project on this vault first',
+      });
+    }
+
+    try {
+      const data = await pushMissingCheckboxTasks({
+        vaultId: Number(vault.Id),
+        noteId: Number(req.params.noteId),
+        pmUserId: req.user!.userId,
+        projectId,
+        organizationId: orgId,
+      });
+      res.json({
+        success: true,
+        data: {
+          ...data,
+          openUrl: `${PM_BASE_URL}/projects/${projectId}?tab=tasks`,
+        },
+      });
+    } catch (error: unknown) {
+      const err = error as { status?: number; message?: string };
+      const status = err.status || 500;
+      if (status >= 500) logger.error('Note checkbox bulk push failed', { error });
+      res.status(status).json({ success: false, message: err.message || 'Bulk push failed' });
+    }
+  }
+);
 
 /** Toggle checkbox done state in the note (and sync linked PM task status). */
 router.patch('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: Response) => {

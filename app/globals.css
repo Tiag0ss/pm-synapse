@@ -232,6 +232,29 @@ a:hover { text-decoration: underline; }
 .synapse-md-preview li:has(> input[type="checkbox"]:checked) {
   color: var(--muted);
 }
+.synapse-md-preview a.synapse-open-planner {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--accent-soft) !important;
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none !important;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.synapse-md-preview a.synapse-open-planner:hover {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+.synapse-md-preview .synapse-cb-marker {
+  display: none;
+}
 .synapse-md-preview blockquote {
   border-left: 3px solid var(--accent);
   padding: 0.15rem 0 0.15rem 0.9rem;

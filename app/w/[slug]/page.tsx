@@ -9,6 +9,7 @@ import NoteGraphMindmap from '@/components/NoteGraphMindmap';
 import QuickSwitcher from '@/components/QuickSwitcher';
 import { noteLeafName } from '@/lib/notePaths';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
+import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import ImageLightbox from '@/components/ImageLightbox';
 
 interface WikiLinkRow {
@@ -21,10 +22,12 @@ interface WikiLinkRow {
 export default function PublicWikiPage() {
   const params = useParams();
   const slug = String(params.slug);
-  const [notes, setNotes] = useState<Array<{ Id: number; Title: string; Path: string }>>([]);
+  const [notes, setNotes] = useState<Array<{ Id: number; Title: string; Path: string; Icon?: string | null }>>([]);
   const [vaultName, setVaultName] = useState('');
   const [vaultId, setVaultId] = useState<number | null>(null);
   const [canOpenVault, setCanOpenVault] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [authUser, setAuthUser] = useState<{ username: string; email: string } | null>(null);
   const [error, setError] = useState('');
   const [html, setHtml] = useState('');
   const [title, setTitle] = useState('');
@@ -39,6 +42,7 @@ export default function PublicWikiPage() {
   } | null>(null);
   const [graphToken, setGraphToken] = useState(0);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [plannerLinks, setPlannerLinks] = useState<PlannerLinkItem[]>([]);
   const articleRef = useRef<HTMLDivElement>(null);
 
   const noteIndex: NoteIndexEntry[] = notes.map((n) => ({
@@ -85,6 +89,17 @@ export default function PublicWikiPage() {
       setHtml(data.data.html);
       setBacklinks(data.data.backlinks || []);
       setReferences(data.data.references || []);
+      setPlannerLinks(
+        Array.isArray(data.data.checkboxTasks)
+          ? data.data.checkboxTasks.map(
+              (t: { markerId?: string | null; openUrl?: string | null; pmTaskId?: number | null }) => ({
+                markerId: t.markerId ?? null,
+                openUrl: t.openUrl ?? null,
+                pmTaskId: t.pmTaskId ?? null,
+              })
+            )
+          : []
+      );
       const url = new URL(window.location.href);
       url.searchParams.set('n', String(id));
       window.history.replaceState({}, '', url.toString());
@@ -102,6 +117,12 @@ export default function PublicWikiPage() {
       }
       setVaultName(data.data.vault.name);
       setVaultId(Number(data.data.vault.id) || null);
+      setAuthenticated(Boolean(data.data.authenticated));
+      setAuthUser(
+        data.data.user
+          ? { username: String(data.data.user.username || ''), email: String(data.data.user.email || '') }
+          : null
+      );
       setCanOpenVault(Boolean(data.data.authenticated && data.data.canOpenVault));
       const list = data.data.notes || [];
       setNotes(list);
@@ -170,13 +191,19 @@ export default function PublicWikiPage() {
     return () => root.removeEventListener('click', onClick);
   }, [html, noteIndex, openNote]);
 
+  useEffect(() => {
+    const root = articleRef.current;
+    if (!root) return;
+    applyPlannerButtons(root, plannerLinks);
+  }, [html, plannerLinks]);
+
   if (error && !notes.length) {
     return (
       <main className="p-8">
         <p className="text-[var(--danger)]">{error}</p>
-        <a href="/api/auth/sso/start" className="mt-4 inline-block text-sm text-[var(--accent-soft)]">
-          Sign in with Project Management →
-        </a>
+        <Link href="/" className="mt-4 inline-block text-sm text-[var(--accent-soft)]">
+          Sign in →
+        </Link>
       </main>
     );
   }
@@ -223,6 +250,31 @@ export default function PublicWikiPage() {
             Full mindmap
           </Link>
           <span>{notes.length} notes</span>
+          {authenticated && authUser ? (
+            <div className="flex items-center gap-2 border-l border-[var(--border)] pl-2">
+              <span className="max-w-[10rem] truncate text-[var(--text)]" title={authUser.email}>
+                {authUser.username || authUser.email}
+              </span>
+              <button
+                type="button"
+                className="btn-ghost py-1.5"
+                onClick={async () => {
+                  await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+                  window.location.reload();
+                }}
+              >
+                Log out
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/"
+              className="btn-ghost py-1.5 no-underline hover:no-underline border-l border-[var(--border)] pl-2"
+              title="Sign in to see authenticated notes and Planner links"
+            >
+              Sign in
+            </Link>
+          )}
         </div>
       </header>
 
@@ -245,9 +297,9 @@ export default function PublicWikiPage() {
             <p className="mb-3 text-sm text-[var(--danger)]">
               {error}{' '}
               {error.toLowerCase().includes('sign-in') && (
-                <a href="/api/auth/sso/start" className="text-[var(--accent-soft)] underline">
+                <Link href="/" className="text-[var(--accent-soft)] underline">
                   Sign in
-                </a>
+                </Link>
               )}
             </p>
           )}

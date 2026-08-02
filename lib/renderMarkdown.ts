@@ -110,8 +110,11 @@ export function preprocessSynapseMarkdown(md: string, notes: NoteIndexEntry[] = 
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });
 
-    // Hide Synapse task markers in preview
-    next = next.replace(/<!--\s*synapse:cb:[a-zA-Z0-9_-]+\s*-->/g, '');
+    // Keep checkbox markers as spans so the UI can attach Planner links
+    next = next.replace(
+      /<!--\s*synapse:cb:([a-zA-Z0-9_-]+)\s*-->/g,
+      '<span class="synapse-cb-marker" data-marker-id="$1" hidden></span>'
+    );
 
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
       const t = String(target).trim();

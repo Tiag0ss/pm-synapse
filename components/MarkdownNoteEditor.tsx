@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { renderSynapseMarkdown, type NoteIndexEntry } from '@/lib/renderMarkdown';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
+import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import ImageLightbox from '@/components/ImageLightbox';
 
 type ViewMode = 'edit' | 'split' | 'preview';
@@ -11,6 +12,7 @@ interface MarkdownNoteEditorProps {
   value: string;
   onChange: (value: string) => void;
   vaultId?: string;
+  noteId?: number;
   notes?: NoteIndexEntry[];
   onOpenNote?: (id: number) => void;
   /** Called when a missing wikilink is clicked (preview). */
@@ -19,6 +21,8 @@ interface MarkdownNoteEditorProps {
   placeholder?: string;
   /** When true, force preview and hide editing chrome. */
   readOnly?: boolean;
+  /** Preloaded Planner links (e.g. public wiki). When omitted, fetched via vault/note APIs. */
+  plannerLinks?: PlannerLinkItem[];
 }
 
 type WrapSpec =
@@ -98,6 +102,91 @@ function applySpec(value: string, start: number, end: number, spec: WrapSpec): {
   return { next, selectStart: lineStart, selectEnd: lineStart + replaced.length };
 }
 
+type ListContinue =
+  | { kind: 'continue'; insert: string }
+  | { kind: 'exit'; removePrefixLen: number }
+  | null;
+
+/** Detect bullet / numbered / task list on the current line for Enter continuation. */
+function listContinueForLine(line: string): ListContinue {
+  // Task: "- [ ] " / "- [x] " (also * +)
+  const task = line.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+(.*)$/);
+  if (task) {
+    const indent = task[1];
+    const bullet = task[2];
+    const body = task[4];
+    if (!body.trim()) {
+      return { kind: 'exit', removePrefixLen: line.length };
+    }
+    return { kind: 'continue', insert: `\n${indent}${bullet} [ ] ` };
+  }
+
+  // Numbered: "1. "
+  const numbered = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
+  if (numbered) {
+    const indent = numbered[1];
+    const n = Number(numbered[2]);
+    const body = numbered[3];
+    if (!body.trim()) {
+      return { kind: 'exit', removePrefixLen: line.length };
+    }
+    return { kind: 'continue', insert: `\n${indent}${n + 1}. ` };
+  }
+
+  // Bullet: "- " / "* " / "+ " (not a task — already handled)
+  const bullet = line.match(/^(\s*)([-*+])\s+(.*)$/);
+  if (bullet) {
+    const indent = bullet[1];
+    const mark = bullet[2];
+    const body = bullet[3];
+    // Avoid treating "- [ ]" partials already matched; bare "- [" without close is still a bullet
+    if (!body.trim()) {
+      return { kind: 'exit', removePrefixLen: line.length };
+    }
+    return { kind: 'continue', insert: `\n${indent}${mark} ` };
+  }
+
+  // Quote continuation (same UX as lists)
+  const quote = line.match(/^(\s*)>\s?(.*)$/);
+  if (quote) {
+    const indent = quote[1];
+    const body = quote[2];
+    if (!body.trim()) {
+      return { kind: 'exit', removePrefixLen: line.length };
+    }
+    return { kind: 'continue', insert: `\n${indent}> ` };
+  }
+
+  return null;
+}
+
+function applyListEnter(
+  value: string,
+  caret: number
+): { next: string; select: number } | null {
+  const lineStart = value.lastIndexOf('\n', Math.max(0, caret - 1)) + 1;
+  const lineEndIdx = value.indexOf('\n', caret);
+  const lineEnd = lineEndIdx === -1 ? value.length : lineEndIdx;
+  // Only continue when caret is on this line (not mid-selection across lines)
+  const line = value.slice(lineStart, lineEnd);
+  const action = listContinueForLine(line);
+  if (!action) return null;
+
+  if (action.kind === 'exit') {
+    // Empty list item → blank line (exit list)
+    const next = value.slice(0, lineStart) + value.slice(lineEnd);
+    return { next, select: lineStart };
+  }
+
+  // Insert continuation after current line; keep any text after caret on the new line's body
+  const afterCaretOnLine = value.slice(caret, lineEnd);
+  const next =
+    value.slice(0, caret) + action.insert + afterCaretOnLine + value.slice(lineEnd);
+  const select = caret + action.insert.length;
+  return { next, select };
+}
+
+
 function fileToBase64Payload(file: File): Promise<{ mimeType: string; dataBase64: string; fileName: string }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -120,12 +209,14 @@ export default function MarkdownNoteEditor({
   value,
   onChange,
   vaultId,
+  noteId,
   notes = [],
   onOpenNote,
   onCreateNoteFromWikilink,
   onStatus,
   placeholder,
   readOnly = false,
+  plannerLinks,
 }: MarkdownNoteEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
@@ -136,6 +227,7 @@ export default function MarkdownNoteEditor({
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
+  const [fetchedPlannerLinks, setFetchedPlannerLinks] = useState<PlannerLinkItem[]>([]);
 
   useEffect(() => {
     valueRef.current = value;
@@ -146,6 +238,52 @@ export default function MarkdownNoteEditor({
   }, [readOnly]);
 
   const html = useMemo(() => renderSynapseMarkdown(value, notes), [value, notes]);
+
+  useEffect(() => {
+    if (plannerLinks) {
+      setFetchedPlannerLinks(plannerLinks);
+      return;
+    }
+    if (!vaultId || !noteId) {
+      setFetchedPlannerLinks([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes`, {
+            credentials: 'include',
+          });
+          const data = await res.json();
+          if (cancelled || !res.ok) return;
+          const payload = data.data;
+          const list = Array.isArray(payload) ? payload : payload?.items || [];
+          setFetchedPlannerLinks(
+            list.map(
+              (i: { markerId?: string | null; openUrl?: string | null; pmTaskId?: number | null }) => ({
+                markerId: i.markerId ?? null,
+                openUrl: i.openUrl ?? null,
+                pmTaskId: i.pmTaskId ?? null,
+              })
+            )
+          );
+        } catch {
+          if (!cancelled) setFetchedPlannerLinks([]);
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [vaultId, noteId, plannerLinks, value]);
+
+  useEffect(() => {
+    const root = previewRef.current;
+    if (!root || mode === 'edit') return;
+    applyPlannerButtons(root, fetchedPlannerLinks);
+  }, [html, fetchedPlannerLinks, mode]);
 
   const uploadImages = useCallback(
     async (files: File[]) => {
@@ -268,6 +406,20 @@ export default function MarkdownNoteEditor({
     return () => root.removeEventListener('click', onClick);
   }, [onOpenNote, onCreateNoteFromWikilink, html]);
 
+  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+    const el = e.currentTarget;
+    if (el.selectionStart !== el.selectionEnd) return;
+    const result = applyListEnter(value, el.selectionStart);
+    if (!result) return;
+    e.preventDefault();
+    onChange(result.next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(result.select, result.select);
+    });
+  };
+
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -380,6 +532,7 @@ export default function MarkdownNoteEditor({
               }`}
               value={value}
               onChange={(e) => onChange(e.target.value)}
+              onKeyDown={onEditorKeyDown}
               onPaste={onPaste}
               onDragEnter={(e) => {
                 e.preventDefault();
@@ -413,8 +566,9 @@ export default function MarkdownNoteEditor({
           <aside className="overflow-auto border-l border-[var(--border)] bg-[var(--panel)]/60 p-4 text-xs">
             <h3 className="mb-1 text-sm font-semibold text-[var(--text)]">Markdown guide</h3>
             <p className="mb-3 leading-relaxed text-[var(--muted)]">
-              Toolbar inserts syntax for you. Shortcuts: Ctrl/Cmd+B, I, K. Paste or drop images into the editor.
-              Wikilinks turn blue when the note exists; red dashed means missing — click to create it.
+              Toolbar inserts syntax for you. Shortcuts: Ctrl/Cmd+B, I, K. Enter continues lists
+              and tasks (empty item exits). Paste or drop images into the editor. Wikilinks turn
+              blue when the note exists; red dashed means missing — click to create it.
             </p>
             <ul className="space-y-2.5">
               {LEGEND.map((row) => (

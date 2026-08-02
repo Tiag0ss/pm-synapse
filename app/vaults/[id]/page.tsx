@@ -9,10 +9,13 @@ import QuickSwitcher from '@/components/QuickSwitcher';
 import NoteGraphMindmap from '@/components/NoteGraphMindmap';
 import RevisionDiffModal, { type RevisionSnapshot } from '@/components/RevisionDiffModal';
 import VaultOptionsModal from '@/components/VaultOptionsModal';
+import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
 import NoteTasksPanel from '@/components/NoteTasksPanel';
 import NotesFolderTree from '@/components/NotesFolderTree';
+import NoteIconPicker from '@/components/NoteIconPicker';
 import VaultSwitcher, { rememberLastVault } from '@/components/VaultSwitcher';
 import { noteLeafName } from '@/lib/notePaths';
+import { normalizeNoteIcon, type NoteIconId } from '@/lib/noteIcons';
 import { templateBody, type NoteTemplateId } from '@/lib/noteTemplates';
 import ConfirmModal from '@/components/ConfirmModal';
 
@@ -22,6 +25,7 @@ interface NoteListItem {
   Title: string;
   Visibility?: string | null;
   PmTaskId?: number | null;
+  Icon?: string | null;
 }
 
 interface Revision {
@@ -106,6 +110,7 @@ export default function VaultWorkspacePage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [noteIcon, setNoteIcon] = useState<NoteIconId | null>(null);
   const [visibility, setVisibility] = useState<string>('');
   const [revisions, setRevisions] = useState<Revision[]>([]);
   const [backlinks, setBacklinks] = useState<Backlink[]>([]);
@@ -137,12 +142,21 @@ export default function VaultWorkspacePage() {
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffRestoring, setDiffRestoring] = useState(false);
   const [diffRevision, setDiffRevision] = useState<RevisionSnapshot | null>(null);
+  const [pmTasksOpen, setPmTasksOpen] = useState(false);
+  const [vaultOptionsTab, setVaultOptionsTab] = useState<
+    'links' | 'share' | 'pm' | 'vault' | 'trash' | undefined
+  >(undefined);
   const [diffRevNumber, setDiffRevNumber] = useState<number | null>(null);
   const [zipImporting, setZipImporting] = useState(false);
   const [zipOverwriteOpen, setZipOverwriteOpen] = useState(false);
   const [pendingZipBase64, setPendingZipBase64] = useState<string | null>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
-  const [savedSnapshot, setSavedSnapshot] = useState({ title: '', body: '', visibility: '' });
+  const [savedSnapshot, setSavedSnapshot] = useState({
+    title: '',
+    body: '',
+    visibility: '',
+    icon: null as NoteIconId | null,
+  });
   const [saveState, setSaveState] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle');
   const [pendingSwitchId, setPendingSwitchId] = useState<number | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -175,7 +189,8 @@ export default function VaultWorkspacePage() {
     canEdit &&
     (title !== savedSnapshot.title ||
       body !== savedSnapshot.body ||
-      visibility !== savedSnapshot.visibility);
+      visibility !== savedSnapshot.visibility ||
+      noteIcon !== savedSnapshot.icon);
 
   useEffect(() => {
     if (!dirty) {
@@ -243,10 +258,13 @@ export default function VaultWorkspacePage() {
     setTitle(n.Title);
     setBody(n.BodyMarkdown || '');
     setVisibility(n.Visibility || '');
+    const icon = normalizeNoteIcon(n.Icon);
+    setNoteIcon(icon);
     setSavedSnapshot({
       title: String(n.Title || ''),
       body: String(n.BodyMarkdown || ''),
       visibility: String(n.Visibility || ''),
+      icon,
     });
     setSaveState('idle');
     setCenterMode('editor');
@@ -286,6 +304,7 @@ export default function VaultWorkspacePage() {
       title,
       bodyMarkdown: body,
       visibility: visibility || null,
+      icon: noteIcon,
     };
     const res = await fetch(`/api/vaults/${vaultId}/notes/${selectedId}`, {
       method: 'PUT',
@@ -303,6 +322,7 @@ export default function VaultWorkspacePage() {
       title,
       body,
       visibility,
+      icon: noteIcon,
     });
     setSaveState('saved');
     setStatus(reason === 'auto' ? 'Autosaved' : 'Saved');
@@ -331,7 +351,7 @@ export default function VaultWorkspacePage() {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, body, visibility, selectedId, canEdit, dirty]);
+  }, [title, body, visibility, noteIcon, selectedId, canEdit, dirty]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -353,7 +373,7 @@ export default function VaultWorkspacePage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canEdit, selectedId, title, body, visibility, quickOpen]);
+  }, [canEdit, selectedId, title, body, visibility, noteIcon, quickOpen]);
 
   // Debounce title/path/body search filter
   useEffect(() => {
@@ -431,6 +451,7 @@ export default function VaultWorkspacePage() {
           Title: newTitle,
           Visibility: null,
           PmTaskId: null,
+          Icon: null,
         },
       ];
     });
@@ -458,8 +479,9 @@ export default function VaultWorkspacePage() {
       setSelectedId(null);
       setTitle('');
       setBody('');
+      setNoteIcon(null);
       setVisibility('');
-      setSavedSnapshot({ title: '', body: '', visibility: '' });
+      setSavedSnapshot({ title: '', body: '', visibility: '', icon: null });
       setSaveState('idle');
       setRevisions([]);
       setBacklinks([]);
@@ -529,6 +551,16 @@ export default function VaultWorkspacePage() {
       return;
     }
     void loadGraph().then(() => setCenterMode('mindmap'));
+  };
+
+  const openPmTasks = () => {
+    if (!vaultMeta.PmProjectId) {
+      setStatus('Link a PM project in Vault options first');
+      setVaultOptionsTab('pm');
+      setVaultOptionsOpen(true);
+      return;
+    }
+    setPmTasksOpen(true);
   };
 
   const runZipImport = async (dataBase64: string, overwrite: boolean) => {
@@ -706,6 +738,20 @@ export default function VaultWorkspacePage() {
           >
             {centerMode === 'mindmap' ? 'Back to editor' : 'Full mindmap'}
           </button>
+          {canEdit && (
+            <button
+              type="button"
+              className="btn-ghost py-1.5"
+              onClick={() => openPmTasks()}
+              title={
+                vaultMeta.PmProjectId
+                  ? 'View vault checkbox tasks and create them in Project Management'
+                  : 'Link a PM project in Vault options first'
+              }
+            >
+              PM tasks
+            </button>
+          )}
           {(status || saveState === 'dirty' || saveState === 'saving' || saveState === 'saved') && (
             <span className="max-w-[220px] truncate rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--muted)]">
               {saveState === 'saving'
@@ -749,6 +795,11 @@ export default function VaultWorkspacePage() {
           ) : selectedId ? (
             <>
               <div className="flex flex-wrap items-center gap-2">
+                <NoteIconPicker
+                  value={noteIcon}
+                  onChange={setNoteIcon}
+                  disabled={!canEdit}
+                />
                 <input
                   className="input min-w-[12rem] flex-1 py-2 text-base font-semibold tracking-tight"
                   value={title}
@@ -804,6 +855,7 @@ export default function VaultWorkspacePage() {
                 value={body}
                 onChange={setBody}
                 vaultId={vaultId}
+                noteId={selectedId}
                 notes={noteIndex}
                 onOpenNote={(id) => void openNote(id)}
                 onCreateNoteFromWikilink={
@@ -869,6 +921,7 @@ export default function VaultWorkspacePage() {
                 <NoteTasksPanel
                   vaultId={vaultId}
                   noteId={selectedId}
+                  noteTitle={title}
                   body={body}
                   hasProject={!!vaultMeta.PmProjectId}
                   onBodyChange={setBody}
@@ -1070,7 +1123,11 @@ export default function VaultWorkspacePage() {
         defaultVisibility={vaultMeta.DefaultVisibility || 'private'}
         pmProjectId={vaultMeta.PmProjectId}
         pmOrganizationId={vaultMeta.PmOrganizationId}
-        onClose={() => setVaultOptionsOpen(false)}
+        initialTab={vaultOptionsTab || 'links'}
+        onClose={() => {
+          setVaultOptionsOpen(false);
+          setVaultOptionsTab(undefined);
+        }}
         onChanged={() => {
           void loadVault();
           void loadNotes();
@@ -1078,10 +1135,28 @@ export default function VaultWorkspacePage() {
         }}
         onOpenNote={(id) => {
           setVaultOptionsOpen(false);
+          setVaultOptionsTab(undefined);
           void openNote(id);
         }}
         onCreateMissingNote={async (wikilinkTitle, linkFromNoteId) => {
           await createNote(wikilinkTitle, { linkFromNoteId, skipOpen: true });
+        }}
+      />
+
+      <VaultPmSettingsModal
+        open={pmTasksOpen}
+        vaultId={vaultId}
+        vaultName={vaultMeta.Name || `Vault #${vaultId}`}
+        pmProjectId={vaultMeta.PmProjectId}
+        pmOrganizationId={vaultMeta.PmOrganizationId}
+        onClose={() => setPmTasksOpen(false)}
+        onChanged={() => {
+          void loadVault();
+          void loadNotes();
+        }}
+        onOpenNote={(id) => {
+          setPmTasksOpen(false);
+          void openNote(id);
         }}
       />
     </div>

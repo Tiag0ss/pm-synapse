@@ -204,7 +204,10 @@ export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] =
     let next = chunk.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });
-    next = next.replace(/<!--\s*synapse:cb:[a-zA-Z0-9_-]+\s*-->/g, '');
+    next = next.replace(
+      /<!--\s*synapse:cb:([a-zA-Z0-9_-]+)\s*-->/g,
+      '<span class="synapse-cb-marker" data-marker-id="$1" hidden></span>'
+    );
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
       const t = String(target).trim();
       const label = String(alias ?? t).trim();
@@ -237,7 +240,7 @@ export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): s
     allowedAttributes: {
       ...sanitizeHtml.defaults.allowedAttributes,
       a: ['href', 'name', 'target', 'rel', 'class', 'data-note-title', 'data-note-id'],
-      span: ['class'],
+      span: ['class', 'data-marker-id', 'hidden'],
       aside: ['class', 'aria-label'],
       div: ['class'],
       img: ['src', 'alt', 'title', 'class'],

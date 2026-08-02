@@ -6,6 +6,7 @@ import { pool, RowDataPacket } from '../config/database';
 import { optionalAuthenticateSession, AuthRequest } from '../middleware/auth';
 import { accessibleVault } from '../services/vaultAccess';
 import { getSettingBool, SETTING_KEYS } from '../services/appSettings';
+import { buildPmTaskOpenUrl } from '../services/pmClient';
 
 const router = Router();
 
@@ -169,7 +170,7 @@ router.get('/:slug', async (req: AuthRequest, res: Response) => {
   const isAuthed = Boolean(req.user?.userId);
   const hasVaultAccess = await vaultAccessFor(Number(vault.Id), req.user?.userId);
   const [allNotes] = await pool.execute<RowDataPacket[]>(
-    `SELECT Id, Path, Title, Visibility, UpdatedAt
+    `SELECT Id, Path, Title, Visibility, UpdatedAt, Icon
      FROM Notes
      WHERE VaultId = ? AND DeletedAt IS NULL
      ORDER BY Path ASC`,
@@ -189,6 +190,13 @@ router.get('/:slug', async (req: AuthRequest, res: Response) => {
       },
       notes,
       authenticated: isAuthed,
+      user: isAuthed
+        ? {
+            userId: req.user!.userId,
+            username: req.user!.username,
+            email: req.user!.email,
+          }
+        : null,
       canOpenVault: hasVaultAccess,
       robots: 'index,follow',
     },
@@ -247,6 +255,32 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     `/api/public/${String(vault.slug)}/media/$1`
   );
 
+  let checkboxTasks: Array<{
+    markerId: string | null;
+    pmTaskId: number | null;
+    openUrl: string | null;
+  }> = [];
+  if (isAuthed) {
+    const noteId = Number(note.Id);
+    const [linkRows] = await pool.execute<RowDataPacket[]>(
+      `SELECT MarkerId, PmTaskId, PmProjectId FROM NoteCheckboxTasks
+       WHERE NoteId = ? AND PmTaskId IS NOT NULL`,
+      [noteId]
+    );
+    checkboxTasks = linkRows.map((l) => {
+      const pmTaskId = l.PmTaskId != null ? Number(l.PmTaskId) : null;
+      const projectId = Number(l.PmProjectId || vault.PmProjectId || 0);
+      return {
+        markerId: l.MarkerId ? String(l.MarkerId) : null,
+        pmTaskId,
+        openUrl:
+          pmTaskId && projectId
+            ? buildPmTaskOpenUrl(projectId, pmTaskId)
+            : null,
+      };
+    });
+  }
+
   const [incoming] = await pool.execute<RowDataPacket[]>(
     `SELECT n.Id, n.Title, n.Path, l.Kind
      FROM NoteLinks l
@@ -292,6 +326,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       visibility,
       backlinks: prefer(incoming),
       references: prefer(outgoing),
+      checkboxTasks: isAuthed ? checkboxTasks : [],
     },
   });
 });

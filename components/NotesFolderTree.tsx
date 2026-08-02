@@ -8,8 +8,9 @@ import {
   type NoteTreeNode,
   type NoteTreeNote,
 } from '@/lib/notePaths';
+import NoteIcon from '@/components/NoteIcon';
 
-type NoteRow = { Id: number; Title: string; Path: string };
+type NoteRow = { Id: number; Title: string; Path: string; Icon?: string | null };
 
 interface NotesFolderTreeProps {
   notes: NoteRow[];
@@ -92,7 +93,7 @@ function NoteRowButton({
       style={{ paddingLeft: `${0.5 + depth * 0.75}rem`, paddingRight: '0.625rem' }}
     >
       <span className="mt-0.5 text-[var(--accent-soft)]" aria-hidden>
-        ⌘
+        <NoteIcon icon={note.icon} size={14} />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{note.name}</span>

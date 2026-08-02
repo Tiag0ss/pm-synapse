@@ -8,12 +8,18 @@ export interface ParsedCheckbox {
   markerId: string | null;
   lineIndex: number;
   rawLine: string;
+  /** Leading whitespace width (tabs count as 2) for nest → PM subtask hierarchy */
+  indent: number;
 }
 
 const LINE_RE = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/;
 
 function newMarkerId(): string {
   return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function leadingIndentWidth(leadingWs: string): number {
+  return String(leadingWs || '').replace(/\t/g, '  ').length;
 }
 
 export function parseCheckboxes(markdown: string): ParsedCheckbox[] {
@@ -34,6 +40,7 @@ export function parseCheckboxes(markdown: string): ParsedCheckbox[] {
       markerId: markerMatch?.[1] || null,
       lineIndex,
       rawLine,
+      indent: leadingIndentWidth(m[1]),
     });
     index += 1;
   }

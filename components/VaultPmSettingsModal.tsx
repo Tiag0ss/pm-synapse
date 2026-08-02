@@ -10,6 +10,7 @@ export interface VaultCheckboxItem {
   text: string;
   checked: boolean;
   markerId: string | null;
+  indent?: number;
   pmTaskId: number | null;
   openUrl: string | null;
 }
@@ -490,7 +491,8 @@ export default function VaultPmSettingsModal({
             </div>
             <p className="mb-3 text-xs text-[var(--muted)]">
               From notes with <code className="text-[var(--accent-soft)]">- [ ]</code> lines. Create a PM task
-              per checkbox, or create all missing in one click.
+              per checkbox, or create all missing in one click. Indented checkboxes become Planner subtasks;
+              create a note task from the note sidebar to nest top-level checkboxes under the note.
             </p>
             {bulkProgress && (
               <div
@@ -543,6 +545,9 @@ export default function VaultPmSettingsModal({
                   <li
                     key={`${item.noteId}-${item.index}-${item.markerId || item.text}`}
                     className="flex flex-wrap items-start gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 px-3 py-2.5"
+                    style={{
+                      marginLeft: `${Math.min(item.indent || 0, 12) * 0.45}rem`,
+                    }}
                   >
                     <span
                       className={`mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs ${

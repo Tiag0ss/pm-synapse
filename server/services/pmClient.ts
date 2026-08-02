@@ -242,6 +242,8 @@ export async function createPmTask(
     description?: string;
     status: number;
     priority: number;
+    /** When set, creates a Planner subtask under this parent task */
+    parentTaskId?: number | null;
     synapseVaultId?: number;
     synapseNoteId?: number;
     synapseMarkerId?: string;
