@@ -14,6 +14,7 @@ import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import AppUserMenu from '@/components/AppUserMenu';
+import { useIsLgUp } from '@/lib/useMediaQuery';
 
 interface WikiLinkRow {
   Id: number;
@@ -35,6 +36,9 @@ export default function PublicWikiPage() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [q, setQ] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const isLgUp = useIsLgUp();
   const [backlinks, setBacklinks] = useState<WikiLinkRow[]>([]);
   const [references, setReferences] = useState<WikiLinkRow[]>([]);
   const [graph, setGraph] = useState<{
@@ -87,6 +91,8 @@ export default function PublicWikiPage() {
       }
       setError('');
       setActiveId(id);
+      setNotesOpen(false);
+      setContextOpen(false);
       setTitle(data.data.title);
       setHtml(data.data.html);
       setBacklinks(data.data.backlinks || []);
@@ -238,59 +244,202 @@ export default function PublicWikiPage() {
   }
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden">
-      <header className="relative z-40 flex shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-2.5 backdrop-blur-md">
-        <div className="min-w-0">
-          {canOpenVault && vaultId != null ? (
-            <Link
-              href={activeId ? `/vaults/${vaultId}?note=${activeId}` : `/vaults/${vaultId}`}
-              className="text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-soft)] no-underline hover:underline"
-              title="Open this vault in Synapse"
+    <main className="flex h-dvh flex-col overflow-hidden">
+      <header className="relative z-40 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-md">
+        {/* Mobile */}
+        <div className="lg:hidden">
+          <div className="flex h-12 items-center gap-1.5 px-2.5 pt-[env(safe-area-inset-top)]">
+            <button
+              type="button"
+              className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+                notesOpen
+                  ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+              }`}
+              aria-label="Notes"
+              aria-pressed={notesOpen}
+              onClick={() => {
+                setNotesOpen((v) => !v);
+                setContextOpen(false);
+              }}
             >
-              PM Synapse
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path
+                  d="M4 7h16M4 12h16M4 17h10"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            <div className="min-w-0 flex-1 px-1">
+              <p className="truncate text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                {canOpenVault && vaultId != null ? (
+                  <Link
+                    href={activeId ? `/vaults/${vaultId}?note=${activeId}` : `/vaults/${vaultId}`}
+                    className="text-[var(--accent-soft)] no-underline hover:underline"
+                    title="Open this vault in Synapse"
+                  >
+                    PM Synapse
+                  </Link>
+                ) : (
+                  'Public wiki'
+                )}
+              </p>
+              <h1 className="truncate text-[15px] font-semibold tracking-tight">
+                {vaultName || slug}
+              </h1>
+            </div>
+            <button
+              type="button"
+              className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+                contextOpen
+                  ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+              }`}
+              aria-label="Info"
+              aria-pressed={contextOpen}
+              onClick={() => {
+                setContextOpen((v) => !v);
+                setNotesOpen(false);
+              }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+                <path
+                  d="M12 11v5M12 8h.01"
+                  stroke="currentColor"
+                  strokeWidth="1.75"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+            <div className="pl-0.5">
+              <AppUserMenu dense showSignInWhenGuest />
+            </div>
+          </div>
+          <div className="flex items-center gap-1 border-t border-[var(--border)] bg-[var(--surface)]/40 px-2 py-1.5">
+            <button
+              type="button"
+              className="inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium text-[var(--muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+              onClick={() => setQuickOpen(true)}
+            >
+              Jump
+            </button>
+            <Link
+              href={`/w/${slug}/map`}
+              className="inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium text-[var(--muted)] no-underline transition hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+            >
+              Mindmap
             </Link>
-          ) : (
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              Public wiki
-            </span>
-          )}
-          <h1 className="truncate text-sm font-semibold tracking-tight">{vaultName || slug}</h1>
+            <Link
+              href="/w"
+              className="inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium text-[var(--muted)] no-underline transition hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+            >
+              All wikis
+            </Link>
+          </div>
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-          <Link href="/w" className="text-[var(--muted)] no-underline hover:text-[var(--accent-soft)] hover:underline">
-            All wikis
-          </Link>
-          <input
-            className="input w-44 py-1.5"
-            placeholder="Filter notes…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            title="Filters the note list by title or path"
-          />
-          <button
-            type="button"
-            className="btn-ghost py-1.5"
-            onClick={() => setQuickOpen(true)}
-            title="Search notes including body (Ctrl/Cmd+O)"
-          >
-            Jump…
-          </button>
-          <Link href={`/w/${slug}/map`} className="text-[var(--accent-soft)] no-underline hover:underline">
-            Full mindmap
-          </Link>
-          <span>{notes.length} notes</span>
-          <div className="border-l border-[var(--border)] pl-2">
-            <AppUserMenu dense showSignInWhenGuest />
+
+        {/* Desktop */}
+        <div className="hidden items-center gap-3 px-4 py-2.5 lg:flex">
+          <div className="min-w-0">
+            {canOpenVault && vaultId != null ? (
+              <Link
+                href={activeId ? `/vaults/${vaultId}?note=${activeId}` : `/vaults/${vaultId}`}
+                className="text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-soft)] no-underline hover:underline"
+                title="Open this vault in Synapse"
+              >
+                PM Synapse
+              </Link>
+            ) : (
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                Public wiki
+              </span>
+            )}
+            <h1 className="truncate text-sm font-semibold tracking-tight">{vaultName || slug}</h1>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+            <Link
+              href="/w"
+              className="text-[var(--muted)] no-underline hover:text-[var(--accent-soft)] hover:underline"
+            >
+              All wikis
+            </Link>
+            <input
+              className="input w-44 py-1.5"
+              placeholder="Filter notes…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              title="Filters the note list by title or path"
+            />
+            <button
+              type="button"
+              className="btn-ghost py-1.5"
+              onClick={() => setQuickOpen(true)}
+              title="Search notes including body (Ctrl/Cmd+O)"
+            >
+              Jump…
+            </button>
+            <Link
+              href={`/w/${slug}/map`}
+              className="text-[var(--accent-soft)] no-underline hover:underline"
+            >
+              Mindmap
+            </Link>
+            <span>{notes.length} notes</span>
+            <div className="border-l border-[var(--border)] pl-2">
+              <AppUserMenu dense showSignInWhenGuest />
+            </div>
           </div>
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_300px]">
-        <aside className="min-h-0 overflow-auto border-r border-[var(--border)] bg-[var(--panel)]/40 p-3">
-          <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-            Notes · {filteredNotes.length}
-            {q.trim() ? ` / ${notes.length}` : ''}
-          </p>
+      <div
+        className={`relative grid min-h-0 flex-1 ${
+          isLgUp ? 'grid-cols-[260px_minmax(0,1fr)_300px]' : 'grid-cols-1'
+        }`}
+      >
+        {!isLgUp && (notesOpen || contextOpen) && (
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/55 lg:hidden"
+            aria-label="Close panel"
+            onClick={() => {
+              setNotesOpen(false);
+              setContextOpen(false);
+            }}
+          />
+        )}
+
+        <aside
+          className={`min-h-0 overflow-auto border-[var(--border)] bg-[var(--panel)] p-3 ${
+            isLgUp
+              ? 'border-r bg-[var(--panel)]/40'
+              : `fixed inset-y-0 left-0 z-50 w-[min(100%,18rem)] border-r shadow-2xl transition-transform duration-200 ease-out ${
+                  notesOpen ? 'translate-x-0' : '-translate-x-full'
+                } pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]`
+          }`}
+        >
+          <div className="mb-2 flex items-center justify-between gap-2 px-2 lg:block">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+              Notes · {filteredNotes.length}
+              {q.trim() ? ` / ${notes.length}` : ''}
+            </p>
+            <button
+              type="button"
+              className="btn-ghost py-1 text-xs lg:hidden"
+              onClick={() => setNotesOpen(false)}
+            >
+              Close
+            </button>
+          </div>
+          <input
+            className="input mb-3 w-full py-1.5 lg:hidden"
+            placeholder="Filter notes…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
           <NotesFolderTree
             notes={filteredNotes}
             selectedId={activeId}
@@ -299,7 +448,7 @@ export default function PublicWikiPage() {
           />
         </aside>
 
-        <section className="min-h-0 overflow-auto px-5 py-5 lg:px-8 lg:py-6">
+        <section className="min-h-0 overflow-auto px-4 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
           {error && (
             <p className="mb-3 text-sm text-[var(--danger)]">
               {error}{' '}
@@ -318,12 +467,35 @@ export default function PublicWikiPage() {
               )}
             </h2>
           ) : (
-            <p className="text-[var(--muted)]">Select a public note</p>
+            <div className="space-y-3">
+              <p className="text-[var(--muted)]">Select a public note</p>
+              <button
+                type="button"
+                className="btn-ghost lg:hidden"
+                onClick={() => setNotesOpen(true)}
+              >
+                Browse notes
+              </button>
+            </div>
           )}
           <div ref={articleRef} className="synapse-md-preview" />
         </section>
 
-        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--panel)]/40">
+        <aside
+          className={`flex min-h-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--panel)] ${
+            isLgUp
+              ? 'border-l bg-[var(--panel)]/40'
+              : `fixed inset-y-0 right-0 z-50 w-[min(100%,20rem)] border-l shadow-2xl transition-transform duration-200 ease-out ${
+                  contextOpen ? 'translate-x-0' : 'translate-x-full'
+                } pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]`
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-3 py-2 lg:hidden">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">Info</p>
+            <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setContextOpen(false)}>
+              Close
+            </button>
+          </div>
           <div className="shrink-0 border-b border-[var(--border)] p-3">
             <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
               Focused mindmap

@@ -103,11 +103,11 @@ export default function RevisionDiffModal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
       <div
         role="dialog"
         aria-modal="true"
-        className="flex h-[min(880px,92vh)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/50"
+        className="flex h-[min(880px,100dvh)] w-full max-w-6xl flex-col overflow-hidden rounded-t-2xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/50 sm:h-[min(880px,92vh)] sm:rounded-2xl pb-[env(safe-area-inset-bottom)]"
       >
         <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
           <div>
@@ -152,7 +152,7 @@ export default function RevisionDiffModal({
           </div>
         ) : (
           <>
-            <div className="grid shrink-0 grid-cols-2 gap-3 border-b border-[var(--border)] px-5 py-3">
+            <div className="grid shrink-0 grid-cols-1 gap-3 border-b border-[var(--border)] px-5 py-3 sm:grid-cols-2">
               <div>
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
                   Revision #{revision.RevisionNumber}
@@ -188,8 +188,8 @@ export default function RevisionDiffModal({
               </div>
             </div>
 
-            <div className="grid min-h-0 flex-1 grid-cols-2">
-              <div className="flex min-h-0 flex-col border-r border-[var(--border)]">
+            <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-2">
+              <div className="flex min-h-0 flex-col border-b border-[var(--border)] md:border-b-0 md:border-r">
                 <div className="shrink-0 border-b border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[11px] font-medium text-[var(--muted)]">
                   Revision body
                 </div>

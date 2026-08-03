@@ -23,6 +23,8 @@ interface MarkdownNoteEditorProps {
   placeholder?: string;
   /** When true, force preview and hide editing chrome. */
   readOnly?: boolean;
+  /** Narrow viewport: default to edit (not split), hide split toggle, stack legend. */
+  compact?: boolean;
   /** Preloaded Planner links (e.g. public wiki). When omitted, fetched via vault/note APIs. */
   plannerLinks?: PlannerLinkItem[];
 }
@@ -267,13 +269,14 @@ export default function MarkdownNoteEditor({
   onStatus,
   placeholder,
   readOnly = false,
+  compact = false,
   plannerLinks,
 }: MarkdownNoteEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const valueRef = useRef(value);
-  const [mode, setMode] = useState<ViewMode>(readOnly ? 'preview' : 'split');
+  const [mode, setMode] = useState<ViewMode>(readOnly ? 'preview' : compact ? 'edit' : 'split');
   const [showLegend, setShowLegend] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -288,6 +291,11 @@ export default function MarkdownNoteEditor({
   useEffect(() => {
     if (readOnly) setMode('preview');
   }, [readOnly]);
+
+  useEffect(() => {
+    if (readOnly) return;
+    if (compact && mode === 'split') setMode('edit');
+  }, [compact, readOnly, mode]);
 
   const html = useMemo(() => renderSynapseMarkdown(value, notes), [value, notes]);
 
@@ -575,15 +583,19 @@ export default function MarkdownNoteEditor({
             />
           </>
         )}
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex flex-wrap items-center gap-1">
           {uploading && <span className="px-2 text-[11px] text-[var(--muted)]">Uploading…</span>}
-          {(readOnly ? (['preview'] as ViewMode[]) : (['edit', 'split', 'preview'] as ViewMode[])).map(
-            (m) => (
+          {(readOnly
+            ? (['preview'] as ViewMode[])
+            : compact
+              ? (['edit', 'preview'] as ViewMode[])
+              : (['edit', 'split', 'preview'] as ViewMode[])
+          ).map((m) => (
             <button
               key={m}
               type="button"
               onClick={() => setMode(m)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize transition ${
+              className={`min-h-9 rounded-md px-2.5 py-1.5 text-xs font-medium capitalize transition sm:min-h-0 sm:py-1 ${
                 mode === m
                   ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
                   : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
@@ -591,12 +603,11 @@ export default function MarkdownNoteEditor({
             >
               {m}
             </button>
-          )
-          )}
+          ))}
           <button
             type="button"
             onClick={() => setShowLegend((v) => !v)}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+            className={`min-h-9 rounded-md px-2.5 py-1.5 text-xs font-medium transition sm:min-h-0 sm:py-1 ${
               showLegend
                 ? 'bg-[var(--surface-2)] text-[var(--text)]'
                 : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
@@ -608,8 +619,20 @@ export default function MarkdownNoteEditor({
         </div>
       </div>
 
-      <div className={`grid min-h-0 flex-1 ${showLegend ? 'grid-cols-[1fr_220px]' : 'grid-cols-1'}`}>
-        <div className={`grid min-h-0 ${mode === 'split' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+      <div
+        className={`grid min-h-0 flex-1 ${
+          showLegend
+            ? compact
+              ? 'grid-cols-1 grid-rows-[1fr_auto]'
+              : 'grid-cols-[1fr_220px]'
+            : 'grid-cols-1'
+        }`}
+      >
+        <div
+          className={`grid min-h-0 ${
+            mode === 'split' && !compact ? 'grid-cols-2' : 'grid-cols-1'
+          }`}
+        >
           {(mode === 'edit' || mode === 'split') && (
             <textarea
               ref={textareaRef}
@@ -646,7 +669,13 @@ export default function MarkdownNoteEditor({
         </div>
 
         {showLegend && (
-          <aside className="overflow-auto border-l border-[var(--border)] bg-[var(--panel)]/60 p-4 text-xs">
+          <aside
+            className={`overflow-auto bg-[var(--panel)]/60 p-4 text-xs ${
+              compact
+                ? 'max-h-[40vh] border-t border-[var(--border)]'
+                : 'border-l border-[var(--border)]'
+            }`}
+          >
             <h3 className="mb-1 text-sm font-semibold text-[var(--text)]">Markdown guide</h3>
             <p className="mb-4 leading-relaxed text-[var(--muted)]">
               Toolbar + Ctrl/Cmd+B, I, K. Enter continues lists and tasks. Paste or drop images

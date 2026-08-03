@@ -20,6 +20,7 @@ import { normalizeNoteIcon, type NoteIconId } from '@/lib/noteIcons';
 import { applyNoteTemplateBody } from '@/lib/noteTemplates';
 import ConfirmModal from '@/components/ConfirmModal';
 import AppUserMenu from '@/components/AppUserMenu';
+import { useIsLgUp } from '@/lib/useMediaQuery';
 
 interface NoteListItem {
   Id: number;
@@ -139,6 +140,11 @@ export default function VaultWorkspacePage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [centerMode, setCenterMode] = useState<CenterMode>('editor');
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const isLgUp = useIsLgUp();
+  const mindmapFull = centerMode === 'mindmap';
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -271,6 +277,9 @@ export default function VaultWorkspacePage() {
     });
     setSaveState('idle');
     setCenterMode('editor');
+    setNotesOpen(false);
+    setContextOpen(false);
+    setMoreOpen(false);
     setHistoryExpanded(false);
     const [revRes, blRes] = await Promise.all([
       fetch(`/api/vaults/${vaultId}/notes/${id}/revisions`, { credentials: 'include' }),
@@ -627,159 +636,398 @@ export default function VaultWorkspacePage() {
   };
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="relative z-40 flex shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-2.5 backdrop-blur-md">
-        <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold tracking-tight">{vaultMeta.Name || `Vault #${vaultId}`}</h1>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--muted)]">
-            {vaultMeta.slug && <span>/{vaultMeta.slug}</span>}
-            {accessRole !== 'owner' && (
-              <>
-                <span aria-hidden>·</span>
-                <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 capitalize text-[var(--accent-soft)]">
-                  {accessRole} access
-                </span>
-              </>
+    <div className="flex h-dvh flex-col">
+      <header className="relative z-40 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-md">
+        {/* Mobile: identity row + action strip */}
+        <div className="lg:hidden">
+          <div className="flex h-12 items-center gap-1.5 px-2.5 pt-[env(safe-area-inset-top)]">
+            {!mindmapFull && (
+              <button
+                type="button"
+                className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+                  notesOpen
+                    ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                    : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+                }`}
+                aria-label="Notes"
+                aria-pressed={notesOpen}
+                onClick={() => {
+                  setNotesOpen((v) => !v);
+                  setContextOpen(false);
+                  setMoreOpen(false);
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path
+                    d="M4 7h16M4 12h16M4 17h10"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
             )}
-            {vaultMeta.slug && Number(vaultMeta.AllowPublicPages) === 1 && (
-              <>
-                <span aria-hidden>·</span>
-                <Link
-                  href={`/w/${vaultMeta.slug}`}
-                  className="text-[var(--accent-soft)] no-underline hover:underline"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Public wiki
-                </Link>
-                {isOwner && (
-                  <>
-                    <span aria-hidden>·</span>
+            <div className="min-w-0 flex-1 px-1">
+              <h1 className="truncate text-[15px] font-semibold tracking-tight">
+                {vaultMeta.Name || `Vault #${vaultId}`}
+              </h1>
+              {(accessRole !== 'owner' || saveState === 'dirty' || saveState === 'saving') && (
+                <p className="truncate text-[11px] text-[var(--muted)]">
+                  {saveState === 'saving'
+                    ? 'Saving…'
+                    : saveState === 'dirty'
+                      ? 'Unsaved'
+                      : `${accessRole} access`}
+                </p>
+              )}
+            </div>
+            {!mindmapFull && (
+              <button
+                type="button"
+                className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+                  contextOpen
+                    ? 'bg-[var(--accent)] text-[var(--accent-fg)]'
+                    : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+                }`}
+                aria-label="Info"
+                aria-pressed={contextOpen}
+                onClick={() => {
+                  setContextOpen((v) => !v);
+                  setNotesOpen(false);
+                  setMoreOpen(false);
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+                  <path
+                    d="M12 11v5M12 8h.01"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            )}
+            <div className="relative">
+              <button
+                type="button"
+                className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
+                  moreOpen
+                    ? 'bg-[var(--surface-2)] text-[var(--text)]'
+                    : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+                }`}
+                aria-label="More actions"
+                aria-expanded={moreOpen}
+                onClick={() => {
+                  setMoreOpen((v) => !v);
+                  setNotesOpen(false);
+                  setContextOpen(false);
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <circle cx="6" cy="12" r="1.6" />
+                  <circle cx="12" cy="12" r="1.6" />
+                  <circle cx="18" cy="12" r="1.6" />
+                </svg>
+              </button>
+              {moreOpen && (
+                <div className="absolute right-0 top-[calc(100%+6px)] z-50 min-w-[12.5rem] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] py-1 shadow-2xl shadow-black/40">
+                  {vaultMeta.slug && Number(vaultMeta.AllowPublicPages) === 1 && (
+                    <Link
+                      href={`/w/${vaultMeta.slug}`}
+                      className="block px-3.5 py-2.5 text-sm text-[var(--text)] no-underline hover:bg-[var(--surface-2)]"
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => setMoreOpen(false)}
+                    >
+                      Open public wiki
+                    </Link>
+                  )}
+                  {isOwner && (
                     <button
                       type="button"
-                      className="text-[var(--muted)] hover:text-[var(--danger)] hover:underline"
+                      className="block w-full px-3.5 py-2.5 text-left text-sm hover:bg-[var(--surface-2)]"
                       onClick={async () => {
+                        setMoreOpen(false);
+                        const enable = Number(vaultMeta.AllowPublicPages) !== 1;
                         const res = await fetch(`/api/vaults/${vaultId}`, {
                           method: 'PATCH',
                           credentials: 'include',
                           headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ allowPublicPages: false }),
+                          body: JSON.stringify({ allowPublicPages: enable }),
                         });
-                        setStatus(res.ok ? 'Public wiki disabled' : 'Failed to disable public wiki');
+                        setStatus(
+                          res.ok
+                            ? enable
+                              ? 'Public wiki enabled'
+                              : 'Public wiki disabled'
+                            : 'Failed to update public wiki'
+                        );
                         await loadVault();
                       }}
                     >
-                      Disable
+                      {Number(vaultMeta.AllowPublicPages) === 1
+                        ? 'Disable public wiki'
+                        : 'Enable public wiki'}
                     </button>
-                  </>
-                )}
-              </>
-            )}
-            {vaultMeta.slug && Number(vaultMeta.AllowPublicPages) !== 1 && isOwner && (
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="block w-full px-3.5 py-2.5 text-left text-sm hover:bg-[var(--surface-2)]"
+                      disabled={zipImporting}
+                      onClick={() => {
+                        setMoreOpen(false);
+                        zipInputRef.current?.click();
+                      }}
+                    >
+                      {zipImporting ? 'Importing…' : 'Import ZIP'}
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="block w-full px-3.5 py-2.5 text-left text-sm hover:bg-[var(--surface-2)]"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        openPmTasks();
+                      }}
+                    >
+                      PM tasks
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="pl-0.5">
+              <AppUserMenu dense />
+            </div>
+          </div>
+          <div className="flex items-center gap-1 border-t border-[var(--border)] bg-[var(--surface)]/40 px-2 py-1.5">
+            <button
+              type="button"
+              className="inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium text-[var(--muted)] transition hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+              onClick={() => setQuickOpen(true)}
+            >
+              Jump
+            </button>
+            {canEdit && (
               <button
                 type="button"
-                className="text-[var(--accent-soft)] hover:underline"
-                onClick={async () => {
-                  const res = await fetch(`/api/vaults/${vaultId}`, {
-                    method: 'PATCH',
-                    credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ allowPublicPages: true }),
-                  });
-                  setStatus(res.ok ? 'Public wiki enabled' : 'Failed to enable public wiki');
-                  await loadVault();
-                }}
+                className="inline-flex h-9 flex-1 items-center justify-center rounded-lg bg-[var(--accent)] text-xs font-semibold text-[var(--accent-fg)]"
+                onClick={() => setCreateOpen(true)}
               >
-                Enable public wiki
+                New note
               </button>
             )}
+            <button
+              type="button"
+              className={`inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium transition ${
+                centerMode === 'mindmap'
+                  ? 'bg-[var(--surface-2)] text-[var(--accent-soft)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+              }`}
+              onClick={() => {
+                setNotesOpen(false);
+                setContextOpen(false);
+                setMoreOpen(false);
+                void toggleFullMindmap();
+              }}
+            >
+              {centerMode === 'mindmap' ? 'Editor' : 'Mindmap'}
+            </button>
           </div>
         </div>
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <input
-            className="input w-44 py-1.5"
-            placeholder="Filter notes…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            title="Filters by title, path, or body"
-          />
-          <button
-            type="button"
-            className="btn-ghost py-1.5"
-            onClick={() => setQuickOpen(true)}
-            title="Jump to note (Ctrl/Cmd+O)"
-          >
-            Jump…
-          </button>
-          {canEdit && (
-            <button type="button" className="btn-primary py-1.5" onClick={() => setCreateOpen(true)}>
-              New note
-            </button>
-          )}
-          {canEdit && (
-          <button
-            type="button"
-            className="btn-ghost py-1.5"
-            disabled={zipImporting}
-            onClick={() => zipInputRef.current?.click()}
-            title="Import Markdown notes from a ZIP (folders become note paths)"
-          >
-            {zipImporting ? 'Importing…' : 'Import ZIP'}
-          </button>
-          )}
-          <input
-            ref={zipInputRef}
-            type="file"
-            accept=".zip,application/zip"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0] || null;
-              e.target.value = '';
-              void onZipFileChosen(file);
-            }}
-          />
-          <button
-            type="button"
-            className={`py-1.5 ${centerMode === 'mindmap' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => void toggleFullMindmap()}
-            title="Show full vault mindmap in the editor area"
-          >
-            {centerMode === 'mindmap' ? 'Back to editor' : 'Full mindmap'}
-          </button>
-          {canEdit && (
+        {/* Desktop */}
+        <div className="hidden items-center gap-3 px-4 py-2.5 lg:flex">
+          <div className="min-w-0">
+            <h1 className="truncate text-sm font-semibold tracking-tight">
+              {vaultMeta.Name || `Vault #${vaultId}`}
+            </h1>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[var(--muted)]">
+              {vaultMeta.slug && <span>/{vaultMeta.slug}</span>}
+              {accessRole !== 'owner' && (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 capitalize text-[var(--accent-soft)]">
+                    {accessRole} access
+                  </span>
+                </>
+              )}
+              {vaultMeta.slug && Number(vaultMeta.AllowPublicPages) === 1 && (
+                <>
+                  <span aria-hidden>·</span>
+                  <Link
+                    href={`/w/${vaultMeta.slug}`}
+                    className="text-[var(--accent-soft)] no-underline hover:underline"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Public wiki
+                  </Link>
+                  {isOwner && (
+                    <>
+                      <span aria-hidden>·</span>
+                      <button
+                        type="button"
+                        className="text-[var(--muted)] hover:text-[var(--danger)] hover:underline"
+                        onClick={async () => {
+                          const res = await fetch(`/api/vaults/${vaultId}`, {
+                            method: 'PATCH',
+                            credentials: 'include',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ allowPublicPages: false }),
+                          });
+                          setStatus(res.ok ? 'Public wiki disabled' : 'Failed to disable public wiki');
+                          await loadVault();
+                        }}
+                      >
+                        Disable
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+              {isOwner && Number(vaultMeta.AllowPublicPages) !== 1 && (
+                <button
+                  type="button"
+                  className="text-[var(--accent-soft)] hover:underline"
+                  onClick={async () => {
+                    const res = await fetch(`/api/vaults/${vaultId}`, {
+                      method: 'PATCH',
+                      credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ allowPublicPages: true }),
+                    });
+                    setStatus(res.ok ? 'Public wiki enabled' : 'Failed to enable public wiki');
+                    await loadVault();
+                  }}
+                >
+                  Enable public wiki
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <input
+              className="input w-44 py-1.5"
+              placeholder="Filter notes…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              title="Filters by title, path, or body"
+            />
             <button
               type="button"
               className="btn-ghost py-1.5"
-              onClick={() => openPmTasks()}
-              title={
-                vaultMeta.PmProjectId
-                  ? 'View vault checkbox tasks and create them in Project Management'
-                  : 'Link a PM project in Vault options first'
-              }
+              onClick={() => setQuickOpen(true)}
+              title="Jump to note (Ctrl/Cmd+O)"
             >
-              PM tasks
+              Jump…
             </button>
-          )}
-          {(status || saveState === 'dirty' || saveState === 'saving' || saveState === 'saved') && (
-            <span className="max-w-[220px] truncate rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--muted)]">
-              {saveState === 'saving'
-                ? 'Saving…'
-                : saveState === 'dirty'
-                  ? 'Unsaved changes'
-                  : status || (saveState === 'saved' ? 'Saved' : '')}
-            </span>
-          )}
-          <AppUserMenu dense />
+            {canEdit && (
+              <button type="button" className="btn-primary py-1.5" onClick={() => setCreateOpen(true)}>
+                New note
+              </button>
+            )}
+            <button
+              type="button"
+              className={`py-1.5 ${centerMode === 'mindmap' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => void toggleFullMindmap()}
+              title="Show full vault mindmap in the editor area"
+            >
+              {centerMode === 'mindmap' ? 'Back to editor' : 'Full mindmap'}
+            </button>
+            {canEdit && (
+              <button
+                type="button"
+                className="btn-ghost py-1.5"
+                disabled={zipImporting}
+                onClick={() => zipInputRef.current?.click()}
+                title="Import Markdown notes from a ZIP"
+              >
+                {zipImporting ? 'Importing…' : 'Import ZIP'}
+              </button>
+            )}
+            {canEdit && (
+              <button type="button" className="btn-ghost py-1.5" onClick={() => openPmTasks()}>
+                PM tasks
+              </button>
+            )}
+            {(status || saveState === 'dirty' || saveState === 'saving' || saveState === 'saved') && (
+              <span className="max-w-[220px] truncate rounded-full bg-[var(--surface-2)] px-2.5 py-1 text-[11px] text-[var(--muted)]">
+                {saveState === 'saving'
+                  ? 'Saving…'
+                  : saveState === 'dirty'
+                    ? 'Unsaved changes'
+                    : status || (saveState === 'saved' ? 'Saved' : '')}
+              </span>
+            )}
+            <AppUserMenu dense />
+          </div>
         </div>
+
+        <input
+          ref={zipInputRef}
+          type="file"
+          accept=".zip,application/zip"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0] || null;
+            e.target.value = '';
+            void onZipFileChosen(file);
+          }}
+        />
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr_300px]">
-        <aside className="flex min-h-0 flex-col border-r border-[var(--border)] bg-[var(--panel)]/40">
+      <div
+        className={`relative grid min-h-0 flex-1 ${
+          isLgUp && !mindmapFull ? 'grid-cols-[260px_1fr_300px]' : 'grid-cols-1'
+        }`}
+      >
+        {!isLgUp && !mindmapFull && (notesOpen || contextOpen) && (
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/55 lg:hidden"
+            aria-label="Close panel"
+            onClick={() => {
+              setNotesOpen(false);
+              setContextOpen(false);
+            }}
+          />
+        )}
+
+        <aside
+          className={`flex min-h-0 flex-col border-[var(--border)] bg-[var(--panel)] ${
+            isLgUp && !mindmapFull
+              ? 'border-r bg-[var(--panel)]/40'
+              : mindmapFull
+                ? 'hidden'
+                : `fixed inset-y-0 left-0 z-50 w-[min(100%,18rem)] border-r shadow-2xl transition-transform duration-200 ease-out ${
+                    notesOpen ? 'translate-x-0' : '-translate-x-full'
+                  } pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]`
+          }`}
+        >
           <div className="min-h-0 flex-1 overflow-auto p-3">
-            <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              Notes · {notes.length}
-            </p>
+            <div className="mb-2 flex items-center justify-between gap-2 px-2 lg:block">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                Notes · {notes.length}
+              </p>
+              <button
+                type="button"
+                className="btn-ghost py-1 text-xs lg:hidden"
+                onClick={() => setNotesOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+            <input
+              className="input mb-3 w-full py-1.5 lg:hidden"
+              placeholder="Filter notes…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
             <NotesFolderTree
               notes={notes}
               selectedId={selectedId}
@@ -793,7 +1041,7 @@ export default function VaultWorkspacePage() {
           />
         </aside>
 
-        <section className="flex min-h-0 flex-col gap-3 p-4">
+        <section className="flex min-h-0 flex-col gap-3 p-3 sm:p-4">
           {centerMode === 'mindmap' && graph ? (
             <FullMindmapPane
               graph={graph}
@@ -804,14 +1052,96 @@ export default function VaultWorkspacePage() {
             />
           ) : selectedId ? (
             <>
-              <div className="flex flex-wrap items-center gap-2">
-                <NoteIconPicker
-                  value={noteIcon}
-                  onChange={setNoteIcon}
-                  disabled={!canEdit}
-                />
+              {/* Mobile note chrome: title first, then compact actions */}
+              <div className="space-y-2 lg:hidden">
+                <div className="flex items-center gap-2">
+                  <NoteIconPicker value={noteIcon} onChange={setNoteIcon} disabled={!canEdit} />
+                  <input
+                    className="input min-w-0 flex-1 py-2 text-base font-semibold tracking-tight"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    aria-label="Note title"
+                    placeholder="meta/risks"
+                    title="Use folder/name for nesting (e.g. meta/risks)"
+                    disabled={!canEdit}
+                  />
+                </div>
+                {title.includes('/') && (
+                  <p className="truncate pl-12 text-[11px] text-[var(--muted)]">
+                    → {noteLeafName(title)} in folder
+                  </p>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <select
+                    className="input min-w-0 flex-1 py-1.5 text-xs"
+                    value={visibility}
+                    onChange={(e) => setVisibility(e.target.value)}
+                    aria-label="Visibility"
+                    disabled={!canEdit}
+                  >
+                    <option value="">
+                      Default ({(vaultMeta.DefaultVisibility || 'private').toLowerCase()})
+                    </option>
+                    <option value="private">Private</option>
+                    <option value="authenticated">Authenticated</option>
+                    <option value="unlisted">Unlisted</option>
+                    <option value="public">Public</option>
+                  </select>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="btn-primary shrink-0 px-3 py-1.5 text-sm"
+                      disabled={saveState === 'saving'}
+                      onClick={() => void saveNote({ reason: 'manual' })}
+                      title="Save (Ctrl/Cmd+S)"
+                    >
+                      {saveState === 'saving' ? '…' : dirty ? 'Save*' : 'Save'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
+                    onClick={() => setExportOpen(true)}
+                    title="Export this note as DOCX"
+                    aria-label="Export"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path
+                        d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"
+                        stroke="currentColor"
+                        strokeWidth="1.75"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      className="btn-danger shrink-0 px-2.5 py-1.5 text-sm"
+                      onClick={() => setDeleteOpen(true)}
+                      title="Move this note to trash"
+                      aria-label="Delete"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path
+                          d="M4 7h16M9 7V5h6v2m-8 0v12a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V7"
+                          stroke="currentColor"
+                          strokeWidth="1.75"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Desktop note chrome */}
+              <div className="hidden flex-wrap items-center gap-2 lg:flex">
+                <NoteIconPicker value={noteIcon} onChange={setNoteIcon} disabled={!canEdit} />
                 <input
-                  className="input min-w-[12rem] flex-1 py-2 text-base font-semibold tracking-tight"
+                  className="input min-w-0 flex-1 py-2 text-base font-semibold tracking-tight"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   aria-label="Note title"
@@ -820,12 +1150,12 @@ export default function VaultWorkspacePage() {
                   disabled={!canEdit}
                 />
                 {title.includes('/') && (
-                  <span className="hidden text-[11px] text-[var(--muted)] sm:inline">
+                  <span className="text-[11px] text-[var(--muted)]">
                     → {noteLeafName(title)} in folder
                   </span>
                 )}
                 <select
-                  className="input"
+                  className="input max-w-full"
                   value={visibility}
                   onChange={(e) => setVisibility(e.target.value)}
                   aria-label="Visibility"
@@ -845,7 +1175,7 @@ export default function VaultWorkspacePage() {
                     className="btn-primary"
                     disabled={saveState === 'saving'}
                     onClick={() => void saveNote({ reason: 'manual' })}
-                    title="Save (Ctrl/Cmd+S) — also autosaves after a short pause"
+                    title="Save (Ctrl/Cmd+S)"
                   >
                     {saveState === 'saving' ? 'Saving…' : dirty ? 'Save*' : 'Save'}
                   </button>
@@ -854,9 +1184,9 @@ export default function VaultWorkspacePage() {
                   type="button"
                   className="btn-ghost"
                   onClick={() => setExportOpen(true)}
-                  title="Export this note as DOCX using a Word template"
+                  title="Export this note as DOCX"
                 >
-                  Export DOCX
+                  Export
                 </button>
                 {canEdit && (
                   <button
@@ -884,35 +1214,59 @@ export default function VaultWorkspacePage() {
                 }
                 onStatus={setStatus}
                 readOnly={!canEdit}
+                compact={!isLgUp}
               />
             </>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)]/30 px-8 text-center">
+            <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)]/30 px-6 text-center sm:px-8">
               <p className="text-lg font-semibold tracking-tight">Select a note</p>
               <p className="mt-2 max-w-md text-sm text-[var(--muted)]">
-                Or create one. The editor formats Markdown for you — wikilinks like{' '}
+                Or create one. Wikilinks like{' '}
                 <code className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-[var(--accent-soft)]">
                   [[Note title]]
                 </code>{' '}
                 resolve in the live preview.
               </p>
-              {canEdit && (
-                <button type="button" className="btn-primary mt-5" onClick={() => setCreateOpen(true)}>
-                  New note
+              <div className="mt-5 flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost lg:hidden"
+                  onClick={() => setNotesOpen(true)}
+                >
+                  Browse notes
                 </button>
-              )}
+                {canEdit && (
+                  <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
+                    New note
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </section>
 
-        <aside className="flex min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--panel)]/40">
+        <aside
+          className={`flex min-h-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--panel)] ${
+            isLgUp && !mindmapFull
+              ? 'border-l bg-[var(--panel)]/40'
+              : mindmapFull
+                ? 'hidden'
+                : `fixed inset-y-0 right-0 z-50 w-[min(100%,20rem)] border-l shadow-2xl transition-transform duration-200 ease-out ${
+                    contextOpen ? 'translate-x-0' : 'translate-x-full'
+                  } pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]`
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-3 py-2 lg:hidden">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">Info</p>
+            <button type="button" className="btn-ghost py-1 text-xs" onClick={() => setContextOpen(false)}>
+              Close
+            </button>
+          </div>
           <div className="shrink-0 border-b border-[var(--border)] p-3">
             <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
               Focused mindmap
             </h2>
-            <p className="mt-0.5 text-[11px] text-[var(--muted)]">
-              Current note + direct links
-            </p>
+            <p className="mt-0.5 text-[11px] text-[var(--muted)]">Current note + direct links</p>
             <div className="mt-2">
               {graph ? (
                 <NoteGraphMindmap

@@ -41,27 +41,30 @@ export default function PublicGraphPage() {
   }, [graph, error]);
 
   return (
-    <main className="flex h-screen flex-col overflow-hidden">
-      <header className="relative z-40 flex shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-2.5 backdrop-blur-md">
-        <div className="min-w-0">
-          <Link
-            href={`/w/${slug}`}
-            className="text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-soft)] no-underline hover:underline"
-          >
-            ← Wiki
-          </Link>
-          <h1 className="truncate text-sm font-semibold tracking-tight">Mindmap</h1>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-          <Link href="/w" className="text-[var(--muted)] no-underline hover:text-[var(--accent-soft)] hover:underline">
-            All wikis
-          </Link>
-          {graph && (
-            <span>
-              {graph.nodes.length} notes · {graph.edges.length} connections
-            </span>
-          )}
-          <div className="border-l border-[var(--border)] pl-2">
+    <main className="flex h-dvh flex-col overflow-hidden">
+      <header className="relative z-40 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-md">
+        <div className="flex h-12 items-center gap-2 px-3 pt-[env(safe-area-inset-top)] lg:h-auto lg:px-4 lg:py-2.5 lg:pt-[max(0.625rem,env(safe-area-inset-top))]">
+          <div className="min-w-0 flex-1">
+            <Link
+              href={`/w/${slug}`}
+              className="text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-soft)] no-underline hover:underline"
+            >
+              ← Wiki
+            </Link>
+            <h1 className="truncate text-[15px] font-semibold tracking-tight lg:text-sm">Mindmap</h1>
+          </div>
+          <div className="ml-auto flex items-center gap-2 text-xs text-[var(--muted)]">
+            <Link
+              href="/w"
+              className="hidden text-[var(--muted)] no-underline hover:text-[var(--accent-soft)] hover:underline sm:inline"
+            >
+              All wikis
+            </Link>
+            {graph && (
+              <span className="hidden sm:inline">
+                {graph.nodes.length} notes · {graph.edges.length} connections
+              </span>
+            )}
             <AppUserMenu dense showSignInWhenGuest />
           </div>
         </div>
