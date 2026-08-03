@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import MarkdownNoteEditor from '@/components/MarkdownNoteEditor';
-import CreateNoteModal from '@/components/CreateNoteModal';
+import CreateNoteModal, { type SelectedTemplate } from '@/components/CreateNoteModal';
 import QuickSwitcher from '@/components/QuickSwitcher';
 import NoteGraphMindmap from '@/components/NoteGraphMindmap';
 import RevisionDiffModal, { type RevisionSnapshot } from '@/components/RevisionDiffModal';
@@ -16,8 +16,9 @@ import NoteIconPicker from '@/components/NoteIconPicker';
 import VaultSwitcher, { rememberLastVault } from '@/components/VaultSwitcher';
 import { noteLeafName } from '@/lib/notePaths';
 import { normalizeNoteIcon, type NoteIconId } from '@/lib/noteIcons';
-import { templateBody, type NoteTemplateId } from '@/lib/noteTemplates';
+import { applyNoteTemplateBody } from '@/lib/noteTemplates';
 import ConfirmModal from '@/components/ConfirmModal';
+import AppUserMenu from '@/components/AppUserMenu';
 
 interface NoteListItem {
   Id: number;
@@ -385,7 +386,11 @@ export default function VaultWorkspacePage() {
 
   const createNote = async (
     name: string,
-    opts?: { linkFromNoteId?: number | null; skipOpen?: boolean; templateId?: NoteTemplateId }
+    opts?: {
+      linkFromNoteId?: number | null;
+      skipOpen?: boolean;
+      template?: SelectedTemplate;
+    }
   ) => {
     setCreateOpen(false);
     const trimmed = name.trim();
@@ -393,7 +398,9 @@ export default function VaultWorkspacePage() {
 
     const linkFromNoteId = opts?.linkFromNoteId ?? null;
     const skipOpen = Boolean(opts?.skipOpen);
-    const bodyMarkdown = templateBody(opts?.templateId || 'blank', noteLeafName(trimmed));
+    const bodyMarkdown = opts?.template
+      ? applyNoteTemplateBody(opts.template.bodyMarkdown, noteLeafName(trimmed))
+      : applyNoteTemplateBody(`# {{title}}\n\n`, noteLeafName(trimmed));
 
     const rebuildSourceGraph = async () => {
       if (!linkFromNoteId) return;
@@ -761,6 +768,7 @@ export default function VaultWorkspacePage() {
                   : status || (saveState === 'saved' ? 'Saved' : '')}
             </span>
           )}
+          <AppUserMenu dense />
         </div>
       </header>
 
@@ -1030,7 +1038,7 @@ export default function VaultWorkspacePage() {
       <CreateNoteModal
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
-        onConfirm={(v, templateId) => void createNote(v, { templateId })}
+        onConfirm={(v, template) => void createNote(v, { template })}
       />
 
       <QuickSwitcher

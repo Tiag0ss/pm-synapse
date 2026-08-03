@@ -449,6 +449,7 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
         email: String(row.Email),
         isAdmin: Number(row.IsAdmin) === 1,
         pmUserId: row.PmUserId != null ? Number(row.PmUserId) : null,
+        hasPassword: Boolean(row.PasswordHash),
         authMethods: {
           local: Boolean(row.PasswordHash),
           sso: row.PmUserId != null,
@@ -463,6 +464,128 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
   } catch (error) {
     logger.error('/me failed', { error });
     res.status(500).json({ success: false, message: 'Failed to load profile' });
+  }
+});
+
+/** Update own profile (username / email / password). SSO-linked email is not editable. */
+router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response) => {
+  try {
+    const row = await fetchUserById(req.user!.userId);
+    if (!row || Number(row.IsActive) !== 1) {
+      return res.status(401).json({ success: false, message: 'Authentication required' });
+    }
+
+    const minLen = await getSettingInt(SETTING_KEYS.minPasswordLength, 8);
+    const ssoLinked = row.PmUserId != null;
+    const schema = z.object({
+      username: z.string().trim().min(2).max(64).optional(),
+      email: z.string().trim().email().max(255).optional(),
+      currentPassword: z.string().min(1).optional(),
+      newPassword: z.string().min(minLen).max(200).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid profile data (password min ${minLen} characters when set)`,
+      });
+    }
+
+    const sets: string[] = [];
+    const params: Array<string | number> = [];
+
+    if (parsed.data.username != null && parsed.data.username !== String(row.Username)) {
+      sets.push('Username = ?');
+      params.push(parsed.data.username);
+    }
+
+    if (parsed.data.email != null) {
+      const nextEmail = normalizeEmail(parsed.data.email);
+      if (nextEmail !== normalizeEmail(String(row.Email))) {
+        if (ssoLinked) {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Email is managed by Project Management SSO and cannot be changed here',
+          });
+        }
+        sets.push('Email = ?');
+        params.push(nextEmail);
+      }
+    }
+
+    if (parsed.data.newPassword != null) {
+      const hasLocal = Boolean(row.PasswordHash);
+      if (hasLocal) {
+        if (!parsed.data.currentPassword) {
+          return res.status(400).json({
+            success: false,
+            message: 'Current password is required to set a new password',
+          });
+        }
+        const ok = await bcrypt.compare(
+          parsed.data.currentPassword,
+          String(row.PasswordHash)
+        );
+        if (!ok) {
+          return res.status(400).json({ success: false, message: 'Current password is incorrect' });
+        }
+      }
+      const hash = await bcrypt.hash(parsed.data.newPassword, BCRYPT_ROUNDS);
+      sets.push('PasswordHash = ?');
+      params.push(hash);
+    }
+
+    if (!sets.length) {
+      return res.status(400).json({ success: false, message: 'No changes to save' });
+    }
+
+    params.push(row.Id);
+    try {
+      await pool.execute(`UPDATE Users SET ${sets.join(', ')} WHERE Id = ?`, params);
+    } catch (error: unknown) {
+      const code = (error as { code?: string })?.code;
+      if (code === 'ER_DUP_ENTRY') {
+        return res.status(409).json({
+          success: false,
+          message: 'Username or email already in use',
+        });
+      }
+      throw error;
+    }
+
+    const updated = await fetchUserById(req.user!.userId);
+    if (!updated) {
+      return res.status(500).json({ success: false, message: 'Profile updated but reload failed' });
+    }
+
+    const user: SynapseUser = {
+      userId: Number(updated.Id),
+      username: String(updated.Username),
+      email: String(updated.Email),
+      isAdmin: Number(updated.IsAdmin) === 1,
+    };
+    setSessionCookie(res, user);
+
+    res.json({
+      success: true,
+      message: 'Profile updated',
+      data: {
+        userId: user.userId,
+        username: user.username,
+        email: user.email,
+        isAdmin: user.isAdmin,
+        pmUserId: updated.PmUserId != null ? Number(updated.PmUserId) : null,
+        hasPassword: Boolean(updated.PasswordHash),
+        authMethods: {
+          local: Boolean(updated.PasswordHash),
+          sso: updated.PmUserId != null,
+        },
+      },
+    });
+  } catch (error) {
+    logger.error('PATCH /me failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to update profile' });
   }
 });
 

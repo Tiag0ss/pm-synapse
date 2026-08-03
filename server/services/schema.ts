@@ -162,6 +162,23 @@ const STATEMENTS = [
     KEY idx_vm_user (PmUserId),
     CONSTRAINT fk_vm_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS NoteTemplates (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    Slug VARCHAR(64) NULL,
+    Label VARCHAR(255) NOT NULL,
+    Description VARCHAR(512) NULL,
+    BodyMarkdown MEDIUMTEXT NOT NULL,
+    Kind ENUM('system', 'global', 'user') NOT NULL,
+    OwnerUserId INT NULL,
+    ShareStatus ENUM('private', 'pending', 'published') NOT NULL DEFAULT 'private',
+    SortOrder INT NOT NULL DEFAULT 0,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_note_template_slug (Slug),
+    KEY idx_note_template_kind_share (Kind, ShareStatus),
+    KEY idx_note_template_owner (OwnerUserId),
+    CONSTRAINT fk_note_template_owner FOREIGN KEY (OwnerUserId) REFERENCES Users(Id) ON DELETE CASCADE
+  )`,
 ];
 
 const ALTERS = [
@@ -264,6 +281,19 @@ async function seedDefaultAppSettings(): Promise<void> {
   }
 }
 
+/** Seed built-in templates; INSERT IGNORE so new code templates appear without overwriting edits. */
+async function seedSystemNoteTemplates(): Promise<void> {
+  const { SYSTEM_NOTE_TEMPLATE_SEEDS } = await import('./systemNoteTemplates');
+  for (const t of SYSTEM_NOTE_TEMPLATE_SEEDS) {
+    await pool.execute(
+      `INSERT IGNORE INTO NoteTemplates
+        (Slug, Label, Description, BodyMarkdown, Kind, OwnerUserId, ShareStatus, SortOrder)
+       VALUES (?, ?, ?, ?, 'system', NULL, 'published', ?)`,
+      [t.slug, t.label, t.description, t.bodyTemplate, t.sortOrder]
+    );
+  }
+}
+
 export async function ensureSchema(): Promise<void> {
   for (const sql of STATEMENTS) {
     await pool.execute(sql);
@@ -282,6 +312,7 @@ export async function ensureSchema(): Promise<void> {
   await migrateUserProfilesToUsers();
   await migrateSsoTokensIfNeeded();
   await seedDefaultAppSettings();
+  await seedSystemNoteTemplates();
 
   logger.info('PM Synapse schema ready');
 }

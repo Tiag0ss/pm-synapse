@@ -13,6 +13,7 @@ import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
+import AppUserMenu from '@/components/AppUserMenu';
 
 interface WikiLinkRow {
   Id: number;
@@ -28,8 +29,6 @@ export default function PublicWikiPage() {
   const [vaultName, setVaultName] = useState('');
   const [vaultId, setVaultId] = useState<number | null>(null);
   const [canOpenVault, setCanOpenVault] = useState(false);
-  const [authenticated, setAuthenticated] = useState(false);
-  const [authUser, setAuthUser] = useState<{ username: string; email: string } | null>(null);
   const [error, setError] = useState('');
   const [html, setHtml] = useState('');
   const [title, setTitle] = useState('');
@@ -120,12 +119,6 @@ export default function PublicWikiPage() {
       }
       setVaultName(data.data.vault.name);
       setVaultId(Number(data.data.vault.id) || null);
-      setAuthenticated(Boolean(data.data.authenticated));
-      setAuthUser(
-        data.data.user
-          ? { username: String(data.data.user.username || ''), email: String(data.data.user.email || '') }
-          : null
-      );
       setCanOpenVault(Boolean(data.data.canOpenVault));
       const list = data.data.notes || [];
       setNotes(list);
@@ -246,7 +239,7 @@ export default function PublicWikiPage() {
 
   return (
     <main className="flex h-screen flex-col overflow-hidden">
-      <header className="flex shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-2.5 backdrop-blur-md">
+      <header className="relative z-40 flex shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-2.5 backdrop-blur-md">
         <div className="min-w-0">
           {canOpenVault && vaultId != null ? (
             <Link
@@ -286,31 +279,9 @@ export default function PublicWikiPage() {
             Full mindmap
           </Link>
           <span>{notes.length} notes</span>
-          {authenticated && authUser ? (
-            <div className="flex items-center gap-2 border-l border-[var(--border)] pl-2">
-              <span className="max-w-[10rem] truncate text-[var(--text)]" title={authUser.email}>
-                {authUser.username || authUser.email}
-              </span>
-              <button
-                type="button"
-                className="btn-ghost py-1.5"
-                onClick={async () => {
-                  await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-                  window.location.reload();
-                }}
-              >
-                Log out
-              </button>
-            </div>
-          ) : (
-            <Link
-              href="/"
-              className="btn-ghost py-1.5 no-underline hover:no-underline border-l border-[var(--border)] pl-2"
-              title="Sign in to see authenticated notes and Planner links"
-            >
-              Sign in
-            </Link>
-          )}
+          <div className="border-l border-[var(--border)] pl-2">
+            <AppUserMenu dense showSignInWhenGuest />
+          </div>
         </div>
       </header>
 

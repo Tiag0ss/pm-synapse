@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import AppUserMenu from '@/components/AppUserMenu';
 import ConfirmModal from '@/components/ConfirmModal';
 import PromptModal from '@/components/PromptModal';
 
-type Tab = 'general' | 'auth' | 'email' | 'pm' | 'users';
+type Tab = 'general' | 'auth' | 'email' | 'pm' | 'templates' | 'users';
 
 interface SettingsData {
   general: { siteName: string; allowPublicWikiDirectory: boolean };
@@ -76,6 +77,20 @@ export default function SettingsPage() {
   const [syncConfirmOpen, setSyncConfirmOpen] = useState(false);
   const [syncBusy, setSyncBusy] = useState(false);
 
+  const [pendingTemplates, setPendingTemplates] = useState<
+    Array<{
+      id: number;
+      label: string;
+      description: string | null;
+      ownerUsername?: string | null;
+      bodyMarkdown: string;
+    }>
+  >([]);
+  const [globalLabel, setGlobalLabel] = useState('');
+  const [globalDescription, setGlobalDescription] = useState('');
+  const [globalBody, setGlobalBody] = useState('# {{title}}\n\n');
+  const [templatesBusy, setTemplatesBusy] = useState(false);
+
   const loadSettings = useCallback(async () => {
     const res = await fetch('/api/settings/general', { credentials: 'include' });
     if (res.status === 401 || res.status === 403) {
@@ -120,6 +135,17 @@ export default function SettingsPage() {
   useEffect(() => {
     if (tab === 'users' && !forbidden) void loadUsers();
   }, [tab, forbidden, loadUsers]);
+
+  const loadPendingTemplates = useCallback(async () => {
+    const res = await fetch('/api/templates/pending', { credentials: 'include' });
+    if (!res.ok) return;
+    const json = await res.json();
+    setPendingTemplates(json.data || []);
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'templates' && !forbidden) void loadPendingTemplates();
+  }, [tab, forbidden, loadPendingTemplates]);
 
   const save = async (extra: Record<string, unknown> = {}) => {
     setStatus('');
@@ -220,11 +246,62 @@ export default function SettingsPage() {
     );
   }
 
+  const approveTemplate = async (id: number, approve: boolean) => {
+    setTemplatesBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/templates/${id}/${approve ? 'approve' : 'reject'}`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.message || 'Action failed');
+        return;
+      }
+      setStatus(approve ? 'Template published' : 'Share request rejected');
+      await loadPendingTemplates();
+    } finally {
+      setTemplatesBusy(false);
+    }
+  };
+
+  const createGlobalTemplate = async () => {
+    if (!globalLabel.trim()) return;
+    setTemplatesBusy(true);
+    setError('');
+    try {
+      const res = await fetch('/api/templates', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: globalLabel.trim(),
+          description: globalDescription.trim() || null,
+          bodyMarkdown: globalBody,
+          kind: 'global',
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.message || 'Failed to create global template');
+        return;
+      }
+      setGlobalLabel('');
+      setGlobalDescription('');
+      setGlobalBody('# {{title}}\n\n');
+      setStatus('Global template created');
+    } finally {
+      setTemplatesBusy(false);
+    }
+  };
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'auth', label: 'Authentication' },
     { id: 'email', label: 'Email' },
     { id: 'pm', label: 'Project Management' },
+    { id: 'templates', label: 'Templates' },
     { id: 'users', label: 'Users' },
   ];
 
@@ -237,9 +314,12 @@ export default function SettingsPage() {
           </p>
           <h1 className="mt-1 text-3xl font-semibold tracking-tight">Settings</h1>
         </div>
-        <Link href="/" className="btn-ghost no-underline hover:no-underline">
-          ← Vaults
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/" className="btn-ghost no-underline hover:no-underline">
+            ← Vaults
+          </Link>
+          <AppUserMenu dense />
+        </div>
       </header>
 
       <nav className="mb-6 flex flex-wrap gap-1 border-b border-[var(--border)] pb-2">
@@ -432,6 +512,97 @@ export default function SettingsPage() {
           <button type="button" className="btn-primary" onClick={() => void save()}>
             Save
           </button>
+        </section>
+      )}
+
+      {tab === 'templates' && (
+        <section className="space-y-6">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold">Pending share requests</h2>
+              <Link href="/templates" className="text-xs text-[var(--accent-soft)] no-underline hover:underline">
+                Open templates page
+              </Link>
+            </div>
+            {pendingTemplates.length === 0 ? (
+              <p className="text-sm text-[var(--muted)]">No pending requests.</p>
+            ) : (
+              <ul className="space-y-3">
+                {pendingTemplates.map((t) => (
+                  <li
+                    key={t.id}
+                    className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 px-3 py-3"
+                  >
+                    <div className="flex flex-wrap items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-[var(--text)]">{t.label}</p>
+                        <p className="text-[11px] text-[var(--muted)]">
+                          by {t.ownerUsername || 'user'}
+                          {t.description ? ` · ${t.description}` : ''}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn-primary py-1 text-xs"
+                        disabled={templatesBusy}
+                        onClick={() => void approveTemplate(t.id, true)}
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost py-1 text-xs"
+                        disabled={templatesBusy}
+                        onClick={() => void approveTemplate(t.id, false)}
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5">
+            <h2 className="text-sm font-semibold">Create global template</h2>
+            <p className="text-xs text-[var(--muted)]">
+              Available to all users when creating notes. Use {'{{title}}'} in the body for the note
+              title.
+            </p>
+            <label className="block text-sm">
+              Label
+              <input
+                className="input mt-1 w-full"
+                value={globalLabel}
+                onChange={(e) => setGlobalLabel(e.target.value)}
+              />
+            </label>
+            <label className="block text-sm">
+              Description
+              <input
+                className="input mt-1 w-full"
+                value={globalDescription}
+                onChange={(e) => setGlobalDescription(e.target.value)}
+              />
+            </label>
+            <label className="block text-sm">
+              Body
+              <textarea
+                className="input mt-1 min-h-[10rem] w-full font-mono text-sm"
+                value={globalBody}
+                onChange={(e) => setGlobalBody(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={templatesBusy || !globalLabel.trim()}
+              onClick={() => void createGlobalTemplate()}
+            >
+              Create global
+            </button>
+          </div>
         </section>
       )}
 

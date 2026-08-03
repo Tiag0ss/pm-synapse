@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import AppUserMenu from '@/components/AppUserMenu';
 
 interface PublicWikiItem {
   id: number;
@@ -78,19 +79,13 @@ export default function PublicWikisDirectoryPage() {
             everyone, authenticated for signed-in users, and full contents if you have vault access.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {authenticated ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {authenticated && (
             <Link href="/" className="btn-ghost no-underline hover:no-underline">
               Your vaults
             </Link>
-          ) : (
-            <a
-              href="/api/auth/sso/start"
-              className="btn-primary no-underline hover:no-underline"
-            >
-              Sign in
-            </a>
           )}
+          <AppUserMenu dense showSignInWhenGuest />
         </div>
       </header>
 

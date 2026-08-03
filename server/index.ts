@@ -12,6 +12,7 @@ import vaultsRoutes from './routes/vaults';
 import publicWikiRoutes from './routes/publicWiki';
 import settingsRoutes from './routes/settings';
 import usersRoutes from './routes/users';
+import templatesRoutes from './routes/templates';
 
 dotenv.config();
 
@@ -55,6 +56,7 @@ async function main() {
   server.use('/api/public', publicWikiRoutes);
   server.use('/api/settings', settingsRoutes);
   server.use('/api/users', usersRoutes);
+  server.use('/api/templates', templatesRoutes);
 
   server.use((req, res) => handle(req, res));
 

@@ -1,28 +1,14 @@
-export type NoteTemplateSlug =
-  | 'blank'
-  | 'meeting'
-  | 'risk'
-  | 'decision'
-  | 'plan'
-  | 'feature';
-
-/** @deprecated use NoteTemplateSlug — kept for older call sites */
-export type NoteTemplateId = NoteTemplateSlug;
-
+/**
+ * Built-in note templates for DB seed (keep in sync with lib/noteTemplates.ts SYSTEM_NOTE_TEMPLATE_SEEDS).
+ */
 export type SystemNoteTemplateSeed = {
-  slug: NoteTemplateSlug;
+  slug: string;
   label: string;
   description: string;
-  /** Body with literal `{{title}}` placeholder */
   bodyTemplate: string;
   sortOrder: number;
 };
 
-export function applyNoteTemplateBody(bodyTemplate: string, leafTitle: string): string {
-  return String(bodyTemplate || '').split('{{title}}').join(leafTitle);
-}
-
-/** Built-in templates seeded into NoteTemplates on startup (INSERT IGNORE by Slug). */
 export const SYSTEM_NOTE_TEMPLATE_SEEDS: SystemNoteTemplateSeed[] = [
   {
     slug: 'blank',
@@ -184,23 +170,3 @@ todos:
 `,
   },
 ];
-
-export interface NoteTemplate {
-  id: NoteTemplateSlug;
-  label: string;
-  description: string;
-  body: (leafTitle: string) => string;
-}
-
-/** Client-side convenience list (mirrors seeds). Prefer DB catalog when available. */
-export const NOTE_TEMPLATES: NoteTemplate[] = SYSTEM_NOTE_TEMPLATE_SEEDS.map((s) => ({
-  id: s.slug,
-  label: s.label,
-  description: s.description,
-  body: (leaf) => applyNoteTemplateBody(s.bodyTemplate, leaf),
-}));
-
-export function templateBody(id: NoteTemplateId | string | undefined, leafTitle: string): string {
-  const t = NOTE_TEMPLATES.find((x) => x.id === id) || NOTE_TEMPLATES[0];
-  return t.body(leafTitle);
-}
