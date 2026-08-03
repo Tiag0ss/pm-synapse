@@ -7,12 +7,15 @@ interface WordExportHelpModalProps {
 
 const BUILTIN_FIELDS: Array<[string, string]> = [
   ['{d.title}', 'Note title'],
-  ['{d.path}', 'Note path (e.g. meta/risks)'],
-  ['{d.body}', 'Note body as plain text (Markdown stripped)'],
+  ['{d.path}', 'Note path'],
+  ['{d.body}', 'Note Markdown body (see Body section below)'],
   ['{d.vaultName}', 'Vault name'],
   ['{d.exportedAt}', 'Export timestamp (ISO)'],
   ['{d.author}', 'Exporter username'],
   ['{d.authorEmail}', 'Exporter email'],
+  ['{d.fm.<key>}', 'Any frontmatter scalar, e.g. {d.fm.status}'],
+  ['{d.<key>}', 'Frontmatter scalar flattened on the root when it does not collide'],
+  ['{d.<list>[i].<field>}', 'One cell in a repeating table row (see Grids)'],
 ];
 
 export default function WordExportHelpModal({ open, onClose }: WordExportHelpModalProps) {
@@ -32,7 +35,7 @@ export default function WordExportHelpModal({ open, onClose }: WordExportHelpMod
               How to create a Word template
             </h2>
             <p className="mt-0.5 text-xs text-[var(--muted)]">
-              Carbone markers in a .docx file, filled from the note and its frontmatter
+              Generic Carbone .docx guide — markers are filled from the note and its frontmatter
             </p>
           </div>
           <button type="button" className="btn-ghost py-1" onClick={onClose}>
@@ -42,29 +45,94 @@ export default function WordExportHelpModal({ open, onClose }: WordExportHelpMod
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
           <ol className="list-decimal space-y-2 pl-5 text-sm text-[var(--muted)]">
+            <li>Design the layout in Word (styles, headers, tables). Save as .docx.</li>
             <li>
-              Open Microsoft Word (or LibreOffice Writer) and design the layout — headers, logos,
-              tables, styles.
+              Insert Carbone markers such as{' '}
+              <code className="font-mono text-[11px] text-[var(--accent-soft)]">{'{d.title}'}</code>{' '}
+              as a single unbroken run (do not bold only part of the marker).
             </li>
-            <li>
-              Where values should appear, type Carbone markers exactly as below (including curly
-              braces). Save as <span className="text-[var(--text)]">.docx</span>.
-            </li>
-            <li>
-              Upload the file under Word export, then use{' '}
-              <span className="text-[var(--text)]">Export DOCX</span> on a note in the vault.
-            </li>
+            <li>Upload the file here. Users export a note with Export DOCX in a vault.</li>
           </ol>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/50 px-3 py-3 text-sm text-[var(--muted)]">
+            <p className="font-medium text-[var(--text)]">Grids (repeating rows)</p>
+            <p className="mt-1">
+              Put field markers on <span className="text-[var(--text)]">one</span> sample data row
+              using <code className="font-mono text-[11px]">[i]</code>. Synapse adds the Carbone end
+              marker and repeats that row for each item in the matching frontmatter array. You do
+              not need to create many empty rows in advance.
+            </p>
+            <pre className="mt-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-2 text-[11px] text-[var(--accent-soft)]">{`Column A | Column B
+{d.items[i].name} | {d.items[i].value}`}</pre>
+            <p className="mt-2 text-xs">
+              The array name (<code className="font-mono">items</code> above) must match a YAML list
+              key in the note frontmatter. Style the sample row in Word; clones keep that
+              formatting.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/50 px-3 py-3 text-sm text-[var(--muted)]">
+            <p className="font-medium text-[var(--text)]">Nested / indented rows</p>
+            <p className="mt-1">
+              Add <code className="font-mono text-[11px]">indent: 1</code> (or{' '}
+              <code className="font-mono text-[11px]">level</code>) on nested list items. Synapse
+              prefixes label-like fields (<code className="font-mono text-[11px]">Task</code>,{' '}
+              <code className="font-mono text-[11px]">name</code>,{' '}
+              <code className="font-mono text-[11px]">title</code>, …) with em-spaces, so a normal{' '}
+              <code className="font-mono text-[11px] text-[var(--accent-soft)]">
+                {'{d.items[i].name}'}
+              </code>{' '}
+              cell already shows nesting. You can also use{' '}
+              <code className="font-mono text-[11px] text-[var(--accent-soft)]">
+                {'{d.items[i].indentPrefix}'}
+              </code>{' '}
+              explicitly.
+            </p>
+            <pre className="mt-2 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-2 text-[11px] text-[var(--muted)]">{`items:
+  - name: Parent group
+    indent: 0
+    value: ""
+  - name: Child row
+    indent: 1
+    value: 10`}</pre>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/50 px-3 py-3 text-sm text-[var(--muted)]">
+            <p className="font-medium text-[var(--text)]">Body and headings</p>
+            <p className="mt-1">
+              Place{' '}
+              <code className="font-mono text-[11px] text-[var(--accent-soft)]">{'{d.body}'}</code>{' '}
+              <span className="text-[var(--text)]">alone</span> in its own paragraph (nothing else in
+              that paragraph). Synapse replaces it with the note Markdown body and maps{' '}
+              <code className="font-mono">#</code>…<code className="font-mono">####</code> to the
+              template’s Word styles Heading 1–4 (so they match your theme and can feed a table of
+              contents).
+            </p>
+            <p className="mt-2 text-xs">
+              Fixed section titles that always appear in the document should be typed in Word and
+              given Heading 1 / Heading 2 styles there — Carbone only fills markers; it does not
+              invent a TOC by itself.
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-2)]/50 px-3 py-3 text-sm text-[var(--muted)]">
+            <p className="font-medium text-[var(--text)]">Table of contents</p>
+            <p className="mt-1">
+              Insert a native Word table of contents in the template (References → Table of
+              Contents). After export, open the file in Word and update the field (right-click →
+              Update field) so it picks up Heading styles from the filled body and fixed titles.
+            </p>
+          </div>
 
           <div>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--accent-soft)]">
-              Built-in fields
+              Built-in markers
             </h3>
             <div className="mt-2 overflow-x-auto rounded-xl border border-[var(--border)]">
               <table className="w-full min-w-[24rem] text-left text-xs">
                 <thead className="border-b border-[var(--border)] bg-[var(--surface-2)] text-[var(--muted)]">
                   <tr>
-                    <th className="px-3 py-2 font-medium">Marker in Word</th>
+                    <th className="px-3 py-2 font-medium">Marker</th>
                     <th className="px-3 py-2 font-medium">Value</th>
                   </tr>
                 </thead>
@@ -82,70 +150,10 @@ export default function WordExportHelpModal({ open, onClose }: WordExportHelpMod
             </div>
           </div>
 
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--accent-soft)]">
-              Frontmatter
-            </h3>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              YAML keys on the note become fields. Prefer a dedicated prefix to avoid clashes:
-            </p>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--muted)]">
-              <li>
-                <code className="rounded bg-[var(--surface-2)] px-1 font-mono text-[11px] text-[var(--accent-soft)]">
-                  {'{d.fm.client}'}
-                </code>{' '}
-                — always safe (under <code className="font-mono text-[11px]">fm</code>)
-              </li>
-              <li>
-                <code className="rounded bg-[var(--surface-2)] px-1 font-mono text-[11px] text-[var(--accent-soft)]">
-                  {'{d.client}'}
-                </code>{' '}
-                — flattened on the root when the key does not collide with built-ins
-              </li>
-            </ul>
-            <pre className="mt-3 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface)]/50 p-3 text-[11px] leading-relaxed text-[var(--muted)]">{`---
-client: Acme Corp
-status: draft
-tags:
-  - risk
-  - q1
-todos:
-  - content: Follow up with legal
-    status: pending
----
-Note body here…`}</pre>
-          </div>
-
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--accent-soft)]">
-              Lists and tables
-            </h3>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              Carbone repeats a Word table row or paragraph with array syntax:
-            </p>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--muted)]">
-              <li>
-                Tags:{' '}
-                <code className="rounded bg-[var(--surface-2)] px-1 font-mono text-[11px] text-[var(--accent-soft)]">
-                  {'{d.tags[i]}'}
-                </code>
-              </li>
-              <li>
-                Todos:{' '}
-                <code className="rounded bg-[var(--surface-2)] px-1 font-mono text-[11px] text-[var(--accent-soft)]">
-                  {'{d.todos[i].content}'}
-                </code>
-                ,{' '}
-                <code className="rounded bg-[var(--surface-2)] px-1 font-mono text-[11px] text-[var(--accent-soft)]">
-                  {'{d.todos[i].status}'}
-                </code>
-              </li>
-            </ul>
-            <p className="mt-3 text-xs text-[var(--muted)]">
-              Tip: type each marker as one continuous run in Word (avoid splitting formatting). If a
-              field stays blank, check the frontmatter key matches. Output is DOCX only for now.
-            </p>
-          </div>
+          <p className="text-xs text-[var(--muted)]">
+            Frontmatter example (generic): define any keys your template markers expect — scalars
+            under <code className="font-mono">{'{d.fm.*}'}</code>, lists for table loops.
+          </p>
         </div>
 
         <footer className="flex shrink-0 justify-end border-t border-[var(--border)] px-5 py-3">

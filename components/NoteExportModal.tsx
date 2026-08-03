@@ -143,8 +143,9 @@ export default function NoteExportModal({
             </label>
           )}
           <p className="text-[11px] text-[var(--muted)]">
-            Markers in the .docx use Carbone syntax, e.g. {'{d.title}'}, {'{d.body}'},{' '}
-            {'{d.client}'} (frontmatter), {'{d.todos[i].content}'}.
+            Use Carbone markers such as {'{d.title}'}, {'{d.body}'}, {'{d.fm.<key>}'}, and{' '}
+            {'{d.<list>[i].<field>}'} for grids. See Settings → Word export → How to create
+            templates.
           </p>
         </div>
 
