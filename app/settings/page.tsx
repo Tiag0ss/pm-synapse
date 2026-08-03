@@ -5,8 +5,9 @@ import Link from 'next/link';
 import AppUserMenu from '@/components/AppUserMenu';
 import ConfirmModal from '@/components/ConfirmModal';
 import PromptModal from '@/components/PromptModal';
+import WordExportHelpModal from '@/components/WordExportHelpModal';
 
-type Tab = 'general' | 'auth' | 'email' | 'pm' | 'templates' | 'users';
+type Tab = 'general' | 'auth' | 'email' | 'pm' | 'templates' | 'export' | 'users';
 
 interface SettingsData {
   general: { siteName: string; allowPublicWikiDirectory: boolean };
@@ -91,6 +92,24 @@ export default function SettingsPage() {
   const [globalBody, setGlobalBody] = useState('# {{title}}\n\n');
   const [templatesBusy, setTemplatesBusy] = useState(false);
 
+  const [exportTemplates, setExportTemplates] = useState<
+    Array<{
+      id: number;
+      label: string;
+      description: string | null;
+      originalName: string;
+      sizeBytes: number;
+      createdAt: string;
+    }>
+  >([]);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportLabel, setExportLabel] = useState('');
+  const [exportDescription, setExportDescription] = useState('');
+  const [exportFileBase64, setExportFileBase64] = useState<string | null>(null);
+  const [exportFileName, setExportFileName] = useState('');
+  const [exportDeleteId, setExportDeleteId] = useState<number | null>(null);
+  const [exportHelpOpen, setExportHelpOpen] = useState(false);
+
   const loadSettings = useCallback(async () => {
     const res = await fetch('/api/settings/general', { credentials: 'include' });
     if (res.status === 401 || res.status === 403) {
@@ -146,6 +165,75 @@ export default function SettingsPage() {
   useEffect(() => {
     if (tab === 'templates' && !forbidden) void loadPendingTemplates();
   }, [tab, forbidden, loadPendingTemplates]);
+
+  const loadExportTemplates = useCallback(async () => {
+    const res = await fetch('/api/export-templates', { credentials: 'include' });
+    if (!res.ok) return;
+    const json = await res.json();
+    setExportTemplates(json.data || []);
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'export' && !forbidden) void loadExportTemplates();
+  }, [tab, forbidden, loadExportTemplates]);
+
+  const uploadExportTemplate = async () => {
+    if (!exportLabel.trim() || !exportFileBase64) {
+      setError('Label and .docx file are required');
+      return;
+    }
+    setExportBusy(true);
+    setError('');
+    setStatus('');
+    try {
+      const res = await fetch('/api/export-templates', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          label: exportLabel.trim(),
+          description: exportDescription.trim() || null,
+          dataBase64: exportFileBase64,
+          fileName: exportFileName || 'template.docx',
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.message || 'Upload failed');
+        return;
+      }
+      setStatus('Word export template uploaded');
+      setExportLabel('');
+      setExportDescription('');
+      setExportFileBase64(null);
+      setExportFileName('');
+      await loadExportTemplates();
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const deleteExportTemplate = async () => {
+    if (exportDeleteId == null) return;
+    setExportBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`/api/export-templates/${exportDeleteId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.message || 'Delete failed');
+        return;
+      }
+      setStatus('Template deleted');
+      setExportDeleteId(null);
+      await loadExportTemplates();
+    } finally {
+      setExportBusy(false);
+    }
+  };
 
   const save = async (extra: Record<string, unknown> = {}) => {
     setStatus('');
@@ -302,6 +390,7 @@ export default function SettingsPage() {
     { id: 'email', label: 'Email' },
     { id: 'pm', label: 'Project Management' },
     { id: 'templates', label: 'Templates' },
+    { id: 'export', label: 'Word export' },
     { id: 'users', label: 'Users' },
   ];
 
@@ -606,6 +695,110 @@ export default function SettingsPage() {
         </section>
       )}
 
+      {tab === 'export' && (
+        <section className="space-y-6">
+          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5">
+            <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h2 className="text-sm font-semibold">Uploaded templates</h2>
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  App-level .docx templates for note export (Carbone markers).
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost py-1.5 text-xs"
+                onClick={() => setExportHelpOpen(true)}
+              >
+                How to create templates
+              </button>
+            </div>
+            {exportTemplates.length === 0 ? (
+              <p className="mt-4 text-sm text-[var(--muted)]">No templates uploaded.</p>
+            ) : (
+              <ul className="mt-4 space-y-2">
+                {exportTemplates.map((t) => (
+                  <li
+                    key={t.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 px-3 py-2.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-[var(--text)]">{t.label}</p>
+                      <p className="text-[11px] text-[var(--muted)]">
+                        {t.originalName} · {(t.sizeBytes / 1024).toFixed(1)} KB
+                        {t.description ? ` · ${t.description}` : ''}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-ghost py-1 text-xs text-red-300"
+                      disabled={exportBusy}
+                      onClick={() => setExportDeleteId(t.id)}
+                    >
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5">
+            <h2 className="text-sm font-semibold">Upload .docx template</h2>
+            <label className="block text-sm">
+              Label
+              <input
+                className="input mt-1 w-full"
+                value={exportLabel}
+                onChange={(e) => setExportLabel(e.target.value)}
+                placeholder="Meeting minutes"
+              />
+            </label>
+            <label className="block text-sm">
+              Description
+              <input
+                className="input mt-1 w-full"
+                value={exportDescription}
+                onChange={(e) => setExportDescription(e.target.value)}
+                placeholder="Optional"
+              />
+            </label>
+            <label className="block text-sm">
+              Word file (.docx)
+              <input
+                className="mt-1 block w-full text-sm text-[var(--muted)]"
+                type="file"
+                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setExportFileName(file.name);
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const result = String(reader.result || '');
+                    const b64 = result.includes(',') ? result.split(',')[1] : result;
+                    setExportFileBase64(b64 || null);
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+              {exportFileName && (
+                <span className="mt-1 block text-[11px] text-[var(--muted)]">{exportFileName}</span>
+              )}
+            </label>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={exportBusy || !exportLabel.trim() || !exportFileBase64}
+              onClick={() => void uploadExportTemplate()}
+            >
+              {exportBusy ? 'Uploading…' : 'Upload template'}
+            </button>
+          </div>
+        </section>
+      )}
+
       {tab === 'users' && (
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -854,6 +1047,21 @@ export default function SettingsPage() {
           }
         }}
       />
+
+      <ConfirmModal
+        open={exportDeleteId != null}
+        title="Delete Word template"
+        message="This removes the uploaded .docx from the app. Existing notes are not affected."
+        confirmLabel={exportBusy ? 'Deleting…' : 'Delete'}
+        cancelLabel="Cancel"
+        danger
+        onCancel={() => {
+          if (!exportBusy) setExportDeleteId(null);
+        }}
+        onConfirm={() => void deleteExportTemplate()}
+      />
+
+      <WordExportHelpModal open={exportHelpOpen} onClose={() => setExportHelpOpen(false)} />
     </main>
   );
 }

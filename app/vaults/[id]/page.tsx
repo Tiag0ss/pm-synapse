@@ -11,6 +11,7 @@ import RevisionDiffModal, { type RevisionSnapshot } from '@/components/RevisionD
 import VaultOptionsModal from '@/components/VaultOptionsModal';
 import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
 import NoteTasksPanel from '@/components/NoteTasksPanel';
+import NoteExportModal from '@/components/NoteExportModal';
 import NotesFolderTree from '@/components/NotesFolderTree';
 import NoteIconPicker from '@/components/NoteIconPicker';
 import VaultSwitcher, { rememberLastVault } from '@/components/VaultSwitcher';
@@ -144,6 +145,7 @@ export default function VaultWorkspacePage() {
   const [diffRestoring, setDiffRestoring] = useState(false);
   const [diffRevision, setDiffRevision] = useState<RevisionSnapshot | null>(null);
   const [pmTasksOpen, setPmTasksOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const [vaultOptionsTab, setVaultOptionsTab] = useState<
     'links' | 'share' | 'pm' | 'vault' | 'trash' | undefined
   >(undefined);
@@ -848,6 +850,14 @@ export default function VaultWorkspacePage() {
                     {saveState === 'saving' ? 'Saving…' : dirty ? 'Save*' : 'Save'}
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setExportOpen(true)}
+                  title="Export this note as DOCX using a Word template"
+                >
+                  Export DOCX
+                </button>
                 {canEdit && (
                   <button
                     type="button"
@@ -1166,6 +1176,14 @@ export default function VaultWorkspacePage() {
           setPmTasksOpen(false);
           void openNote(id);
         }}
+      />
+
+      <NoteExportModal
+        open={exportOpen}
+        vaultId={vaultId}
+        noteId={selectedId}
+        noteTitle={title}
+        onClose={() => setExportOpen(false)}
       />
     </div>
   );

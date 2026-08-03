@@ -33,6 +33,7 @@ import {
 import { readVaultMedia, saveVaultImage } from '../services/vaultMedia';
 import { importVaultZip } from '../services/vaultZipImport';
 import { exportVaultZip } from '../services/vaultZipExport';
+import { renderNoteDocx } from '../services/carboneExport';
 import {
   frontmatterJsonString,
   frontmatterTodoIdFromMarker,
@@ -722,6 +723,64 @@ router.get('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
   );
   if (!rows.length) return res.status(404).json({ success: false, message: 'Note not found' });
   res.json({ success: true, data: rows[0] });
+});
+
+/** Fill an app-level Word (.docx) export template with this note + frontmatter (Carbone). */
+router.post('/:vaultId/notes/:noteId/export-docx', async (req: AuthRequest, res: Response) => {
+  try {
+    const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
+    if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+    const schema = z.object({
+      exportTemplateId: z.number().int().positive(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'exportTemplateId is required' });
+    }
+
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT Id, Path, Title, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE}`,
+      [req.params.noteId, vault.Id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: 'Note not found' });
+    const note = rows[0];
+
+    const [userRows] = await pool.execute<RowDataPacket[]>(
+      'SELECT Username, Email FROM Users WHERE Id = ?',
+      [req.user!.userId]
+    );
+    const user = userRows[0];
+
+    const result = await renderNoteDocx({
+      exportTemplateId: parsed.data.exportTemplateId,
+      source: {
+        title: String(note.Title || ''),
+        path: String(note.Path || ''),
+        bodyMarkdown: String(note.BodyMarkdown || ''),
+        vaultName: String(vault.Name || ''),
+        authorUsername: user ? String(user.Username) : null,
+        authorEmail: user ? String(user.Email) : null,
+      },
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${result.fileName.replace(/"/g, '')}"`
+    );
+    res.setHeader('X-Synapse-Export-Template', result.templateLabel);
+    res.send(result.buffer);
+  } catch (error) {
+    const status = (error as { status?: number })?.status || 500;
+    const message =
+      error instanceof Error ? error.message : 'Failed to export note as DOCX';
+    if (status >= 500) logger.error('Note DOCX export failed', { error });
+    res.status(status).json({ success: false, message });
+  }
 });
 
 router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) => {

@@ -179,6 +179,21 @@ const STATEMENTS = [
     KEY idx_note_template_owner (OwnerUserId),
     CONSTRAINT fk_note_template_owner FOREIGN KEY (OwnerUserId) REFERENCES Users(Id) ON DELETE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS ExportTemplates (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    Label VARCHAR(255) NOT NULL,
+    Description VARCHAR(512) NULL,
+    OriginalName VARCHAR(512) NOT NULL,
+    StorageName VARCHAR(128) NOT NULL,
+    MimeType VARCHAR(128) NOT NULL DEFAULT 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    SizeBytes INT NOT NULL,
+    UploadedByUserId INT NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_export_template_storage (StorageName),
+    KEY idx_export_template_label (Label),
+    CONSTRAINT fk_export_template_uploader FOREIGN KEY (UploadedByUserId) REFERENCES Users(Id) ON DELETE SET NULL
+  )`,
 ];
 
 const ALTERS = [

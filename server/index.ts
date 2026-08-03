@@ -13,6 +13,7 @@ import publicWikiRoutes from './routes/publicWiki';
 import settingsRoutes from './routes/settings';
 import usersRoutes from './routes/users';
 import templatesRoutes from './routes/templates';
+import exportTemplatesRoutes from './routes/exportTemplates';
 
 dotenv.config();
 
@@ -57,6 +58,7 @@ async function main() {
   server.use('/api/settings', settingsRoutes);
   server.use('/api/users', usersRoutes);
   server.use('/api/templates', templatesRoutes);
+  server.use('/api/export-templates', exportTemplatesRoutes);
 
   server.use((req, res) => handle(req, res));
 
