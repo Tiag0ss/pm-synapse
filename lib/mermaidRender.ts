@@ -1,90 +1,12 @@
 'use client';
 
+import { mermaidSynapseInit, withElkConfig } from './mermaidTheme';
+
 type MermaidApi = typeof import('mermaid').default;
 
 let renderGeneration = 0;
 let initialized = false;
 let mermaidApi: MermaidApi | null = null;
-
-/** Synapse palette from app/globals.css :root — keep in sync. */
-const SYNAPSE = {
-  bg: '#0a0e13',
-  panel: '#111820',
-  surface: '#0e141c',
-  surface2: '#1a2430',
-  border: '#243041',
-  borderStrong: '#334155',
-  text: '#e8eef6',
-  muted: '#8b98a8',
-  accent: '#14b8a6',
-  accentSoft: '#5eead4',
-  fontSans: '"DM Sans", ui-sans-serif, system-ui, sans-serif',
-} as const;
-
-function baseInit() {
-  return {
-    startOnLoad: false as const,
-    securityLevel: 'loose' as const,
-    logLevel: 'fatal' as const,
-    theme: 'base' as const,
-    darkMode: true,
-    fontFamily: SYNAPSE.fontSans,
-    htmlLabels: true,
-    layout: 'elk' as const,
-    elk: {
-      mergeEdges: false,
-      nodePlacementStrategy: 'BRANDES_KOEPF' as const,
-    },
-    flowchart: {
-      htmlLabels: true,
-      // ELK overrides edge drawing to orthogonal+rounded; this is a harmless default
-      curve: 'linear' as const,
-      padding: 12,
-      nodeSpacing: 50,
-      rankSpacing: 55,
-      diagramPadding: 10,
-      wrappingWidth: 220,
-      useMaxWidth: true,
-    },
-    themeVariables: {
-      darkMode: true,
-      background: 'transparent',
-      fontFamily: SYNAPSE.fontSans,
-      // Nodes
-      primaryColor: SYNAPSE.surface2,
-      primaryTextColor: SYNAPSE.text,
-      primaryBorderColor: SYNAPSE.accent,
-      secondaryColor: SYNAPSE.panel,
-      secondaryTextColor: SYNAPSE.text,
-      secondaryBorderColor: SYNAPSE.borderStrong,
-      tertiaryColor: SYNAPSE.surface,
-      tertiaryTextColor: SYNAPSE.text,
-      tertiaryBorderColor: SYNAPSE.border,
-      mainBkg: SYNAPSE.surface2,
-      nodeBorder: SYNAPSE.accent,
-      clusterBkg: SYNAPSE.panel,
-      clusterBorder: SYNAPSE.borderStrong,
-      // Edges / labels
-      lineColor: SYNAPSE.accentSoft,
-      textColor: SYNAPSE.text,
-      titleColor: SYNAPSE.text,
-      edgeLabelBackground: SYNAPSE.panel,
-      // Misc diagram chrome
-      noteBkgColor: SYNAPSE.panel,
-      noteTextColor: SYNAPSE.text,
-      noteBorderColor: SYNAPSE.borderStrong,
-      actorBkg: SYNAPSE.surface2,
-      actorBorder: SYNAPSE.accent,
-      actorTextColor: SYNAPSE.text,
-      signalColor: SYNAPSE.accentSoft,
-      signalTextColor: SYNAPSE.text,
-      labelBoxBkgColor: SYNAPSE.panel,
-      labelBoxBorderColor: SYNAPSE.border,
-      labelTextColor: SYNAPSE.muted,
-      fontSize: '14px',
-    },
-  };
-}
 
 /** Lazy-load Mermaid/ELK only in the browser so Next SSR does not emit fragile vendor-chunks. */
 async function ensureMermaidElk(): Promise<MermaidApi> {
@@ -98,7 +20,7 @@ async function ensureMermaidElk(): Promise<MermaidApi> {
     throw new Error('@mermaid-js/layout-elk export is empty');
   }
   mermaid.registerLayoutLoaders(elkLayouts);
-  mermaid.initialize(baseInit());
+  mermaid.initialize(mermaidSynapseInit({ useMaxWidth: true, background: 'transparent' }));
   mermaidApi = mermaid;
   initialized = true;
   return mermaid;
@@ -187,16 +109,6 @@ function showMermaidError(el: HTMLElement, source: string, error: unknown): void
   wrap.className = 'synapse-mermaid synapse-mermaid-error';
   wrap.textContent = `Mermaid/ELK error: ${formatMermaidError(error)}\n\n${source}`;
   el.replaceWith(wrap);
-}
-
-/** Ensure the diagram text asks for ELK (in addition to global init). */
-function withElkConfig(source: string): string {
-  const trimmed = source.trim();
-  if (/layout\s*:\s*elk\b/i.test(trimmed)) return trimmed;
-  if (/^\s*---/.test(trimmed)) {
-    return trimmed.replace(/^---\s*\n/, '---\nconfig:\n  layout: elk\n');
-  }
-  return `---\nconfig:\n  layout: elk\n---\n${trimmed}`;
 }
 
 type EdgePoint = { x: number; y: number };

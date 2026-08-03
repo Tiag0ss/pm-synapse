@@ -16,6 +16,7 @@ export type NoteExportSource = {
   title: string;
   path: string;
   bodyMarkdown: string;
+  vaultId: number;
   vaultName: string;
   authorUsername?: string | null;
   authorEmail?: string | null;
@@ -243,7 +244,9 @@ export async function renderNoteDocx(params: {
   const tmpPath = path.join(os.tmpdir(), `synapse-carbone-${randomUUID()}.docx`);
 
   try {
-    const prepared = await prepareDocxForExport(file.buffer, bodyMarkdown);
+    const prepared = await prepareDocxForExport(file.buffer, bodyMarkdown, {
+      vaultId: params.source.vaultId,
+    });
     await fs.writeFile(tmpPath, prepared);
     const rendered = await renderFromPath(tmpPath, data);
     const buffer = await finalizeDocxExport(rendered);

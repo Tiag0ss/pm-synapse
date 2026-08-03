@@ -93,6 +93,10 @@ pnpm run build
 NODE_ENV=production node dist/server/index.js
 ```
 
+For Word export of Mermaid diagrams, install **librsvg** so `rsvg-convert` is on `PATH`
+(e.g. Arch/`pacman -S librsvg`, Debian/`apt install librsvg2-bin`). The Docker image already
+includes it.
+
 Schema tables are created/updated on startup via `ensureSchema()`.
 
 ## Checklist

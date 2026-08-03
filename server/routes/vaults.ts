@@ -758,6 +758,7 @@ router.post('/:vaultId/notes/:noteId/export-docx', async (req: AuthRequest, res:
         title: String(note.Title || ''),
         path: String(note.Path || ''),
         bodyMarkdown: String(note.BodyMarkdown || ''),
+        vaultId: Number(vault.Id),
         vaultName: String(vault.Name || ''),
         authorUsername: user ? String(user.Username) : null,
         authorEmail: user ? String(user.Email) : null,

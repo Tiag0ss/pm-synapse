@@ -102,11 +102,11 @@ export default function WordExportHelpModal({ open, onClose }: WordExportHelpMod
             <p className="mt-1">
               Place{' '}
               <code className="font-mono text-[11px] text-[var(--accent-soft)]">{'{d.body}'}</code>{' '}
-              <span className="text-[var(--text)]">alone</span> in its own paragraph (nothing else in
-              that paragraph). Synapse replaces it with the note Markdown body and maps{' '}
-              <code className="font-mono">#</code>…<code className="font-mono">####</code> to the
-              template’s Word styles Heading 1–4 (so they match your theme and can feed a table of
-              contents).
+              <span className="text-[var(--text)]">alone</span> in its own paragraph. Synapse
+              replaces it with the note Markdown: Heading 1–4 styles, GFM tables, fenced code
+              (monospace), callouts, footnote text, math (KaTeX → readable text), vault images, and
+              Mermaid as PNG (white background, teal Synapse accents, ELK-style orthogonal edges)
+              when render succeeds.
             </p>
             <p className="mt-2 text-xs">
               Fixed section titles that always appear in the document should be typed in Word and

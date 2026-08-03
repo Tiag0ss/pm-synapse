@@ -30,6 +30,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# librsvg: Mermaid diagrams in DOCX export (rsvg-convert)
+RUN apk add --no-cache librsvg
+
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nodejs

@@ -1,84 +1,10 @@
 import JSZip from 'jszip';
+import { markdownToDocxFragment } from './mdToDocxBody';
 
 export type MdBlock =
   | { kind: 'h1' | 'h2' | 'h3' | 'h4'; text: string }
   | { kind: 'p'; text: string }
   | { kind: 'li'; text: string; ordered: boolean; num?: number };
-
-function escapeXml(s: string): string {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** Parse note body Markdown into blocks for Word paragraph styles. */
-export function markdownToBlocks(markdown: string): MdBlock[] {
-  let s = String(markdown || '').replace(/^\uFEFF/, '');
-  s = s.replace(/```[\w-]*\n?([\s\S]*?)```/g, '$1');
-  s = s.replace(/`([^`]+)`/g, '$1');
-  s = s.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
-  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-  s = s.replace(/(\*\*|__)(.*?)\1/g, '$2');
-  s = s.replace(/(\*|_)(.*?)\1/g, '$2');
-  s = s.replace(/<!--[\s\S]*?-->/g, '');
-
-  const blocks: MdBlock[] = [];
-  for (const raw of s.split(/\n/)) {
-    const line = raw.replace(/\s+$/g, '');
-    if (!line.trim()) continue;
-    const h = /^(#{1,4})\s+(.+)$/.exec(line);
-    if (h) {
-      const level = h[1].length as 1 | 2 | 3 | 4;
-      blocks.push({ kind: `h${level}` as 'h1' | 'h2' | 'h3' | 'h4', text: h[2].trim() });
-      continue;
-    }
-    const ol = /^(\d+)\.\s+(.+)$/.exec(line);
-    if (ol) {
-      blocks.push({ kind: 'li', text: ol[2].trim(), ordered: true, num: Number(ol[1]) });
-      continue;
-    }
-    const ul = /^[-*+]\s+(.+)$/.exec(line);
-    if (ul) {
-      blocks.push({ kind: 'li', text: ul[1].trim(), ordered: false });
-      continue;
-    }
-    blocks.push({
-      kind: 'p',
-      text: line.replace(/^>\s?/, '').trim(),
-    });
-  }
-  return blocks;
-}
-
-function wordParagraph(text: string, styleId?: string): string {
-  const t = escapeXml(text);
-  const pPr = styleId
-    ? `<w:pPr><w:pStyle w:val="${escapeXml(styleId)}"/></w:pPr>`
-    : '';
-  return `<w:p>${pPr}<w:r><w:t xml:space="preserve">${t}</w:t></w:r></w:p>`;
-}
-
-export function blocksToOoxml(
-  blocks: MdBlock[],
-  headingStyles: Record<1 | 2 | 3 | 4, string>
-): string {
-  if (!blocks.length) return wordParagraph('');
-  return blocks
-    .map((b) => {
-      if (b.kind === 'h1') return wordParagraph(b.text, headingStyles[1]);
-      if (b.kind === 'h2') return wordParagraph(b.text, headingStyles[2]);
-      if (b.kind === 'h3') return wordParagraph(b.text, headingStyles[3]);
-      if (b.kind === 'h4') return wordParagraph(b.text, headingStyles[4]);
-      if (b.kind === 'li') {
-        const prefix = b.ordered ? `${b.num ?? 1}. ` : '• ';
-        return wordParagraph(prefix + b.text);
-      }
-      return wordParagraph(b.text);
-    })
-    .join('');
-}
 
 /** Resolve Heading 1–4 style IDs from the template (supports localized styleId). */
 export function resolveHeadingStyleIds(stylesXml: string | null): Record<1 | 2 | 3 | 4, string> {
@@ -115,17 +41,7 @@ function paragraphPlainText(pXml: string): string {
 const BODY_MARKER_ONLY =
   /^\{d\.body(?::[A-Za-z0-9_]+)*\}$|^\{d\.bodyMarkdown(?::[A-Za-z0-9_]+)*\}$/;
 
-/**
- * Replace a paragraph whose entire text is exactly `{d.body}` (optional formatter)
- * with Markdown rendered as Word paragraphs using the template Heading styles.
- * Does not merge runs or touch any other paragraph (avoids corrupting multi-page docs).
- */
-export function injectStyledBody(
-  xml: string,
-  bodyMarkdown: string,
-  headingStyles: Record<1 | 2 | 3 | 4, string>
-): { xml: string; replaced: boolean } {
-  const ooxml = blocksToOoxml(markdownToBlocks(bodyMarkdown), headingStyles);
+export function injectBodyOoxml(xml: string, ooxml: string): { xml: string; replaced: boolean } {
   let replaced = false;
   const next = xml.replace(/<w:p\b[\s\S]*?<\/w:p>/g, (p) => {
     const text = paragraphPlainText(p).replace(/\s+/g, '');
@@ -205,16 +121,10 @@ export function ensureCarboneLoopEndRows(xml: string): string {
   return parts.join('');
 }
 
-/**
- * Sample table rows in Word often have underline on the marker run; Carbone clones
- * that to every row. Indented labels (leading em-space from indent/level) should not
- * keep that underline — strip <w:u> from those runs only.
- */
 export function stripUnderlineFromIndentedRuns(xml: string): string {
   return xml.replace(/<w:r\b[^>]*>[\s\S]*?<\/w:r>/g, (run) => {
     const textMatch = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>/.exec(run);
     if (!textMatch) return run;
-    // Decode minimal entities Word may use
     const text = textMatch[1]
       .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
       .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
@@ -230,9 +140,6 @@ export function stripUnderlineFromIndentedRuns(xml: string): string {
   });
 }
 
-/**
- * After Carbone: cleanups that need the final filled text.
- */
 export async function finalizeDocxExport(docxBuffer: Buffer): Promise<Buffer> {
   const zip = await JSZip.loadAsync(docxBuffer);
   const docFile = zip.file('word/document.xml');
@@ -243,15 +150,56 @@ export async function finalizeDocxExport(docxBuffer: Buffer): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
+function ensureContentTypeOverrides(ctXml: string, media: Array<{ path: string; contentType: string }>): string {
+  let out = ctXml;
+  const ensureDefault = (ext: string, contentType: string) => {
+    if (new RegExp(`Extension="${ext}"`, 'i').test(out)) return;
+    out = out.replace(
+      /(<Types[^>]*>)/,
+      `$1<Default Extension="${ext}" ContentType="${contentType}"/>`
+    );
+  };
+  for (const m of media) {
+    if (m.contentType === 'image/png') ensureDefault('png', 'image/png');
+    if (m.contentType === 'image/jpeg') ensureDefault('jpeg', 'image/jpeg');
+    if (m.contentType === 'image/gif') ensureDefault('gif', 'image/gif');
+    if (m.contentType === 'image/webp') ensureDefault('webp', 'image/webp');
+    const partName = '/' + m.path.replace(/^\/+/, '');
+    if (out.includes(`PartName="${partName}"`)) continue;
+    out = out.replace(
+      '</Types>',
+      `<Override PartName="${partName}" ContentType="${m.contentType}"/></Types>`
+    );
+  }
+  return out;
+}
+
+function ensureDocumentRels(relsXml: string | null, media: Array<{ path: string; relId: string }>): string {
+  const base =
+    relsXml ||
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
+  let out = base;
+  for (const m of media) {
+    if (out.includes(`Id="${m.relId}"`)) continue;
+    const target = m.path.replace(/^word\//, '');
+    out = out.replace(
+      '</Relationships>',
+      `<Relationship Id="${m.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${target}"/></Relationships>`
+    );
+  }
+  return out;
+}
+
 /**
  * Prep before Carbone:
- * - map `{d.body}` (alone in a paragraph) → Word Heading styles from Markdown
- * - otherwise keep `{d.body:convCRLF}` for line breaks
+ * - rich Markdown `{d.body}` → OOXML (headings, tables, code, Mermaid images, math text)
  * - ensure table loop end rows for `[i]`
  */
 export async function prepareDocxForExport(
   docxBuffer: Buffer,
-  bodyMarkdown: string
+  bodyMarkdown: string,
+  options: { vaultId?: number } = {}
 ): Promise<Buffer> {
   const zip = await JSZip.loadAsync(docxBuffer);
   const docFile = zip.file('word/document.xml');
@@ -261,14 +209,34 @@ export async function prepareDocxForExport(
   const stylesXml = stylesFile ? await stylesFile.async('string') : null;
   const headingStyles = resolveHeadingStyleIds(stylesXml);
 
+  const fragment = await markdownToDocxFragment(bodyMarkdown, headingStyles, {
+    vaultId: options.vaultId,
+  });
+
   let xml = await docFile.async('string');
-  const injected = injectStyledBody(xml, bodyMarkdown, headingStyles);
+  const injected = injectBodyOoxml(xml, fragment.ooxml);
   xml = injected.xml;
   if (!injected.replaced) {
     xml = patchBodyConvCrlf(xml);
   }
   xml = ensureCarboneLoopEndRows(xml);
-
   zip.file('word/document.xml', xml);
+
+  if (fragment.media.length) {
+    for (const m of fragment.media) {
+      zip.file(m.path, m.buffer);
+    }
+    const relsPath = 'word/_rels/document.xml.rels';
+    const relsFile = zip.file(relsPath);
+    const relsXml = relsFile ? await relsFile.async('string') : null;
+    zip.file(relsPath, ensureDocumentRels(relsXml, fragment.media));
+
+    const ctFile = zip.file('[Content_Types].xml');
+    if (ctFile) {
+      const ctXml = await ctFile.async('string');
+      zip.file('[Content_Types].xml', ensureContentTypeOverrides(ctXml, fragment.media));
+    }
+  }
+
   return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
