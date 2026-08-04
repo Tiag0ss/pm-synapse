@@ -42,9 +42,11 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
 COPY --from=builder /app/next.config.js ./next.config.js
+COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
 
-# Copy production dependencies
+# Copy production dependencies (includes postcss / Tailwind — required by Next at runtime)
 COPY --from=deps /app/node_modules ./node_modules
 
 # Create logs and uploads directories
