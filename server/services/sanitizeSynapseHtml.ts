@@ -1,0 +1,75 @@
+import sanitizeHtml from 'sanitize-html';
+
+/**
+ * Keep in sync with lib/sanitizeSynapseHtml.ts
+ * KaTeX CSS is loaded globally — do not allow <style> or allowVulnerableTags.
+ */
+export function sanitizeSynapseHtml(html: string): string {
+  return sanitizeHtml(html, {
+    allowedTags: [
+      ...sanitizeHtml.defaults.allowedTags,
+      'img',
+      'h1',
+      'h2',
+      'span',
+      'aside',
+      'nav',
+      'section',
+      'input',
+      'button',
+      'svg',
+      'path',
+      'rect',
+      'g',
+      'defs',
+      'use',
+      'marker',
+      'foreignObject',
+    ],
+    allowedAttributes: {
+      ...sanitizeHtml.defaults.allowedAttributes,
+      a: ['href', 'name', 'target', 'rel', 'class', 'data-note-title', 'data-note-id', 'id', 'title'],
+      span: ['class', 'data-marker-id', 'hidden', 'style', 'aria-hidden'],
+      aside: ['class', 'aria-label', 'data-callout'],
+      nav: ['class', 'aria-label'],
+      section: ['class', 'aria-label', 'id'],
+      div: ['class', 'id', 'style', 'data-mermaid-rendered'],
+      p: ['class'],
+      li: ['class', 'id'],
+      ol: ['class', 'start'],
+      ul: ['class'],
+      pre: ['class'],
+      code: ['class', 'title'],
+      img: ['src', 'alt', 'title', 'class'],
+      input: ['type', 'checked', 'disabled'],
+      button: ['type', 'class', 'aria-label', 'title', 'data-label'],
+      svg: [
+        'class',
+        'viewBox',
+        'width',
+        'height',
+        'fill',
+        'stroke',
+        'stroke-width',
+        'stroke-linecap',
+        'stroke-linejoin',
+        'aria-hidden',
+      ],
+      path: ['d', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'],
+      rect: ['x', 'y', 'width', 'height', 'rx', 'ry', 'fill', 'stroke', 'stroke-width'],
+      h1: ['id', 'class'],
+      h2: ['id', 'class'],
+      h3: ['id', 'class'],
+      h4: ['id', 'class'],
+      h5: ['id', 'class'],
+      h6: ['id', 'class'],
+      '*': ['class', 'id'],
+    },
+    allowedSchemes: ['http', 'https', 'mailto'],
+    allowedSchemesByTag: {
+      img: ['http', 'https', 'data'],
+    },
+    allowProtocolRelative: false,
+    allowedSchemesAppliedToAttributes: ['href', 'src'],
+  });
+}

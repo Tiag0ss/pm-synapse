@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { authenticateSession, AuthRequest } from '../middleware/auth';
 import { slugify, extractWikiLinks } from '../services/markdown';
-import { resolveNoteId } from '../services/notePaths';
+import { resolveNoteId, sanitizeNotePath } from '../services/notePaths';
 import {
   createPmProject,
   fetchPmOrganizations,
@@ -30,7 +30,7 @@ import {
 import {
   syncNoteCheckboxesFromPm,
 } from '../services/pmCheckboxSync';
-import { readVaultMedia, saveVaultImage } from '../services/vaultMedia';
+import { applySafeMediaHeaders, readVaultMedia, saveVaultImage } from '../services/vaultMedia';
 import { importVaultZip } from '../services/vaultZipImport';
 import { exportVaultZip } from '../services/vaultZipExport';
 import { renderNoteDocx } from '../services/carboneExport';
@@ -155,16 +155,20 @@ router.post('/:vaultId/media', async (req: AuthRequest, res: Response) => {
   }
 });
 
-/** Serve uploaded media for the vault owner. */
+/** Serve uploaded media for vault members. */
 router.get('/:vaultId/media/:mediaId', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Not found' });
   const media = await readVaultMedia(Number(vault.Id), Number(req.params.mediaId));
   if (!media) return res.status(404).json({ success: false, message: 'Not found' });
-  res.setHeader('Content-Type', media.mimeType);
-  res.setHeader('Cache-Control', 'private, max-age=86400');
-  if (media.originalName) {
-    res.setHeader('Content-Disposition', `inline; filename="${media.originalName.replace(/"/g, '')}"`);
+  if (
+    !applySafeMediaHeaders(res, {
+      mimeType: media.mimeType,
+      originalName: media.originalName,
+      cacheControl: 'private, max-age=86400',
+    })
+  ) {
+    return res.status(415).json({ success: false, message: 'Unsupported media type' });
   }
   res.send(media.buffer);
 });
@@ -194,7 +198,10 @@ router.post('/:vaultId/import-zip', async (req: AuthRequest, res: Response) => {
   } catch (error: unknown) {
     const err = error as { status?: number; message?: string };
     const status = err.status || 500;
-    if (status >= 500) logger.error('ZIP import failed', { error });
+    if (status >= 500) {
+      logger.error('ZIP import failed', { error });
+      return res.status(500).json({ success: false, message: 'Import failed' });
+    }
     res.status(status).json({ success: false, message: err.message || 'Import failed' });
   }
 });
@@ -230,10 +237,11 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 /** Search Synapse users for vault sharing. */
 router.get('/users/search', async (req: AuthRequest, res: Response) => {
   const q = String(req.query.q || '').trim();
-  if (q.length < 1) {
+  if (q.length < 2) {
     return res.json({ success: true, data: [] });
   }
-  const like = `%${q}%`;
+  const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const like = `%${escaped}%`;
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Username, Email, PmUserId FROM Users
      WHERE Id <> ?
@@ -245,13 +253,21 @@ router.get('/users/search', async (req: AuthRequest, res: Response) => {
   );
   res.json({
     success: true,
-    data: rows.map((r) => ({
-      userId: Number(r.Id),
-      pmUserId: Number(r.Id), // legacy alias for share UI
-      username: String(r.Username),
-      email: String(r.Email),
-      linkedPmUserId: r.PmUserId != null ? Number(r.PmUserId) : null,
-    })),
+    data: rows.map((r) => {
+      const email = String(r.Email);
+      const at = email.indexOf('@');
+      const masked =
+        at > 1
+          ? `${email[0]}${'*'.repeat(Math.min(at - 1, 6))}${email.slice(at)}`
+          : email;
+      return {
+        userId: Number(r.Id),
+        pmUserId: Number(r.Id), // legacy alias for share UI
+        username: String(r.Username),
+        email: masked,
+        linkedPmUserId: r.PmUserId != null ? Number(r.PmUserId) : null,
+      };
+    }),
   });
 });
 
@@ -642,7 +658,11 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
     return res.status(400).json({ success: false, message: 'Invalid note payload' });
   }
   let path = parsed.data.path || titleToPath(parsed.data.title);
-  if (!path.endsWith('.md')) path = `${path}.md`;
+  const safePath = sanitizeNotePath(path);
+  if (!safePath) {
+    return res.status(400).json({ success: false, message: 'Invalid note path' });
+  }
+  path = safePath;
   const fmJson = frontmatterJsonString(parseFrontmatter(parsed.data.bodyMarkdown).data);
   const icon =
     parsed.data.icon === undefined ? null : normalizeNoteIcon(parsed.data.icon);
@@ -777,10 +797,12 @@ router.post('/:vaultId/notes/:noteId/export-docx', async (req: AuthRequest, res:
     res.send(result.buffer);
   } catch (error) {
     const status = (error as { status?: number })?.status || 500;
-    const message =
-      error instanceof Error ? error.message : 'Failed to export note as DOCX';
-    if (status >= 500) logger.error('Note DOCX export failed', { error });
-    res.status(status).json({ success: false, message });
+    const detail = error instanceof Error ? error.message : 'Failed to export note as DOCX';
+    if (status >= 500) {
+      logger.error('Note DOCX export failed', { error });
+      return res.status(500).json({ success: false, message: 'Failed to export note as DOCX' });
+    }
+    res.status(status).json({ success: false, message: detail });
   }
 });
 
@@ -812,7 +834,11 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
   let path =
     parsed.data.path ??
     (parsed.data.title ? titleToPath(title) : String(existing.Path));
-  if (!path.endsWith('.md')) path = `${path}.md`;
+  const safePath = sanitizeNotePath(path);
+  if (!safePath) {
+    return res.status(400).json({ success: false, message: 'Invalid note path' });
+  }
+  path = safePath;
   const body = parsed.data.bodyMarkdown ?? String(existing.BodyMarkdown);
   const visibility =
     parsed.data.visibility !== undefined ? parsed.data.visibility : existing.Visibility;

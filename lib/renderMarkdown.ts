@@ -1,4 +1,5 @@
 import { marked } from 'marked';
+import { sanitizeSynapseHtml } from '@/lib/sanitizeSynapseHtml';
 import { resolveNoteId, type NoteResolveEntry } from '@/lib/notePaths';
 import { parseFrontmatter, renderFrontmatterHtml } from '@/lib/frontmatter';
 import { enhanceCodeCopyHtml } from '@/lib/codeCopy';
@@ -146,7 +147,7 @@ export function renderSynapseMarkdown(md: string, notes: NoteIndexEntry[] = []):
     const withExtras = preprocessMarkdownExtras(fm.body);
     const prepared = preprocessSynapseMarkdown(withExtras, notes);
     const html = marked.parse(prepared, { async: false, gfm: true }) as string;
-    return props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html));
+    return sanitizeSynapseHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)));
   } catch {
     return '<p class="synapse-md-error">Preview error</p>';
   }
@@ -157,7 +158,7 @@ export function renderInlineMarkdown(md: string, notes: NoteIndexEntry[] = []): 
   try {
     const fm = parseFrontmatter(md || '');
     const prepared = preprocessSynapseMarkdown(fm.body, notes);
-    return marked.parseInline(prepared, { async: false, gfm: true }) as string;
+    return sanitizeSynapseHtml(marked.parseInline(prepared, { async: false, gfm: true }) as string);
   } catch {
     return escapeHtml(md || '');
   }

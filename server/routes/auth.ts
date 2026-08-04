@@ -25,6 +25,7 @@ import {
 } from '../services/appSettings';
 import { sendPasswordResetEmail } from '../services/email';
 import { hasValidSsoToken } from '../services/pmClient';
+import { bumpSessionVersion } from '../services/sessionVersion';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -32,6 +33,8 @@ const router = Router();
 const COOKIE = 'synapse_session';
 const LAST_VAULT_COOKIE = 'synapse_last_vault';
 const BCRYPT_ROUNDS = 10;
+/** Valid bcrypt hash so missing users still take a compare (timing). */
+const DUMMY_PASSWORD_HASH = '$2b$10$Sy95sWgdHL.ifT.pMMYP2.FuRe4Kp6eSFOmnNA6.2Teov.aPDbcK2';
 
 function appBaseUrl(): string {
   return (
@@ -39,11 +42,16 @@ function appBaseUrl(): string {
   ).replace(/\/+$/, '');
 }
 
+function cookieSecure(): boolean {
+  return process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === '1';
+}
+
 function setSessionCookie(res: Response, user: SynapseUser): void {
   const session = signSession(user);
   res.cookie(COOKIE, session, {
     httpOnly: true,
     sameSite: 'lax',
+    secure: cookieSecure(),
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 }
@@ -56,11 +64,12 @@ type UserRow = {
   PmUserId: number | null;
   IsAdmin: number;
   IsActive: number;
+  SessionVersion: number;
 };
 
 async function fetchUserById(id: number): Promise<UserRow | null> {
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive FROM Users WHERE Id = ?`,
+    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive, SessionVersion FROM Users WHERE Id = ?`,
     [id]
   );
   return (rows[0] as UserRow) || null;
@@ -72,6 +81,7 @@ function toSessionUser(row: UserRow): SynapseUser {
     username: String(row.Username),
     email: String(row.Email),
     isAdmin: Number(row.IsAdmin) === 1,
+    sessionVersion: Number(row.SessionVersion ?? 0),
   };
 }
 
@@ -101,7 +111,7 @@ async function resolveUserFromSso(pm: {
   }
 
   const [byPm] = await pool.execute<RowDataPacket[]>(
-    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive FROM Users WHERE PmUserId = ?`,
+    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive, SessionVersion FROM Users WHERE PmUserId = ?`,
     [pm.id]
   );
   if (byPm[0]) {
@@ -118,7 +128,7 @@ async function resolveUserFromSso(pm: {
   }
 
   const [byEmail] = await pool.execute<RowDataPacket[]>(
-    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive FROM Users WHERE Email = ?`,
+    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive, SessionVersion FROM Users WHERE Email = ?`,
     [email]
   );
   if (byEmail[0]) {
@@ -234,19 +244,14 @@ router.post('/login', async (req, res) => {
     const login = parsed.data.login.trim();
     const emailNorm = normalizeEmail(login);
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive FROM Users
+      `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive, SessionVersion FROM Users
        WHERE Username = ? OR Email = ? LIMIT 1`,
       [login, emailNorm]
     );
     const row = rows[0] as UserRow | undefined;
-    if (!row || !row.PasswordHash) {
-      return res.status(401).json({ success: false, message: 'Invalid credentials' });
-    }
-    if (Number(row.IsActive) !== 1) {
-      return res.status(403).json({ success: false, message: 'This account is disabled' });
-    }
-    const ok = await bcrypt.compare(parsed.data.password, String(row.PasswordHash));
-    if (!ok) {
+    const hash = row?.PasswordHash ? String(row.PasswordHash) : DUMMY_PASSWORD_HASH;
+    const ok = await bcrypt.compare(parsed.data.password, hash);
+    if (!row || !row.PasswordHash || !ok || Number(row.IsActive) !== 1) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     await touchLastLogin(Number(row.Id));
@@ -325,6 +330,7 @@ router.post('/reset-password', async (req, res) => {
     }
     const hash = await bcrypt.hash(parsed.data.password, BCRYPT_ROUNDS);
     await pool.execute('UPDATE Users SET PasswordHash = ? WHERE Id = ?', [hash, tok.UserId]);
+    await bumpSessionVersion(Number(tok.UserId));
     await pool.execute('UPDATE PasswordResetTokens SET UsedAt = CURRENT_TIMESTAMP WHERE Id = ?', [
       tok.Id,
     ]);
@@ -347,7 +353,12 @@ router.get('/sso/start', async (_req, res) => {
   url.searchParams.set('redirect_uri', redirectUri);
   url.searchParams.set('state', state);
   url.searchParams.set('client_id', clientId);
-  res.cookie('sso_state', state, { httpOnly: true, sameSite: 'lax', maxAge: 10 * 60 * 1000 });
+  res.cookie('sso_state', state, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: cookieSecure(),
+    maxAge: 10 * 60 * 1000,
+  });
   res.redirect(url.toString());
 });
 
@@ -364,9 +375,11 @@ router.get('/sso/callback', async (req, res) => {
     if (!code) {
       return res.status(400).send('Missing code');
     }
-    if (expected && state && expected !== state) {
+    if (!expected || !state || expected !== state) {
+      res.clearCookie('sso_state');
       return res.status(400).send('Invalid state');
     }
+    res.clearCookie('sso_state');
 
     const redirectUri = `${appBaseUrl()}/api/auth/sso/callback`;
     const tokenRes = await fetch(`${PM_BASE_URL}/api/sso/token`, {
@@ -406,7 +419,6 @@ router.get('/sso/callback', async (req, res) => {
 
     const sessionUser = toSessionUser(resolved.user);
     setSessionCookie(res, sessionUser);
-    res.clearCookie('sso_state');
 
     const cookies = (req as AuthRequest & { cookies?: Record<string, string> }).cookies || {};
     const lastRaw = String(cookies[LAST_VAULT_COOKIE] || '').trim();
@@ -534,6 +546,7 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
       const hash = await bcrypt.hash(parsed.data.newPassword, BCRYPT_ROUNDS);
       sets.push('PasswordHash = ?');
       params.push(hash);
+      sets.push('SessionVersion = SessionVersion + 1');
     }
 
     if (!sets.length) {
@@ -558,13 +571,7 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
     if (!updated) {
       return res.status(500).json({ success: false, message: 'Profile updated but reload failed' });
     }
-
-    const user: SynapseUser = {
-      userId: Number(updated.Id),
-      username: String(updated.Username),
-      email: String(updated.Email),
-      isAdmin: Number(updated.IsAdmin) === 1,
-    };
+    const user = toSessionUser(updated);
     setSessionCookie(res, user);
 
     res.json({

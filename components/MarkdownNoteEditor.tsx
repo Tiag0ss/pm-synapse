@@ -101,7 +101,7 @@ const LEGEND_SECTIONS: LegendSection[] = [
     title: 'Callouts & structure',
     items: [
       { syntax: '> [!NOTE]', meaning: 'Callout (also tip, warning, danger, …)' },
-      { syntax: '[[toc]]', meaning: 'Table of contents from ##–######' },
+      { syntax: '[[toc]]', meaning: 'Table of contents from #–######' },
       { syntax: '[^1] / [^1]:', meaning: 'Footnote reference + definition' },
     ],
   },

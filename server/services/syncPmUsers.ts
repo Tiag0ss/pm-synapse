@@ -6,6 +6,7 @@ import {
   type PmUserSummary,
 } from './pmClient';
 import logger from '../utils/logger';
+import { bumpSessionVersion } from './sessionVersion';
 
 export type SyncPmUsersResult = {
   created: number;
@@ -68,11 +69,15 @@ async function upsertOne(
   );
   if (byPm[0]) {
     const id = Number(byPm[0].Id);
+    const wasActive = Number(byPm[0].IsActive) === 1;
     const username = await uniqueUsername(pm.username || email.split('@')[0], pm.id, id);
     await pool.execute(
       `UPDATE Users SET Username = ?, Email = ?, IsActive = ? WHERE Id = ?`,
       [username, email, pm.isActive ? 1 : 0, id]
     );
+    if (wasActive && !pm.isActive) {
+      await bumpSessionVersion(id);
+    }
     result.updated += 1;
     return;
   }

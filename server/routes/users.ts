@@ -9,6 +9,7 @@ import {
   SETTING_KEYS,
 } from '../services/appSettings';
 import { syncUsersFromPm } from '../services/syncPmUsers';
+import { bumpSessionVersion } from '../services/sessionVersion';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -176,6 +177,9 @@ router.patch('/:id', async (req: AuthRequest, res: Response) => {
         return res.status(409).json({ success: false, message: 'Username or email already in use' });
       }
       throw error;
+    }
+    if (parsed.data.password != null || parsed.data.isActive === false) {
+      await bumpSessionVersion(id);
     }
     res.json({ success: true, message: 'User updated' });
   } catch (error) {

@@ -6,6 +6,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { testConnection } from './config/database';
 import { ensureSchema } from './services/schema';
+import { assertRuntimeSecrets } from './services/secrets';
 import logger from './utils/logger';
 import authRoutes from './routes/auth';
 import vaultsRoutes from './routes/vaults';
@@ -16,11 +17,27 @@ import templatesRoutes from './routes/templates';
 import exportTemplatesRoutes from './routes/exportTemplates';
 
 dotenv.config();
+assertRuntimeSecrets();
 
 const dev = process.env.NODE_ENV !== 'production';
 const port = Number(process.env.PORT || 3010);
 const app = next({ dev, dir: process.cwd() });
 const handle = app.getRequestHandler();
+
+function allowedCorsOrigin(origin: string | undefined): boolean {
+  if (!origin) return true; // same-origin / non-browser
+  const allowed = (process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
+  if (allowed && origin === allowed) return true;
+  if (dev) {
+    try {
+      const u = new URL(origin);
+      return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
 
 async function main() {
   await app.prepare();
@@ -38,10 +55,37 @@ async function main() {
   }
 
   const server = express();
-  server.use(helmet({ contentSecurityPolicy: false }));
+  server.set('trust proxy', 1);
+  server.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          "default-src": ["'self'"],
+          "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+          "style-src": ["'self'", "'unsafe-inline'"],
+          "img-src": ["'self'", 'data:', 'blob:'],
+          "font-src": ["'self'", 'data:'],
+          "connect-src": ["'self'"],
+          "worker-src": ["'self'", 'blob:'],
+          "object-src": ["'none'"],
+          "base-uri": ["'self'"],
+          "form-action": ["'self'"],
+          "frame-ancestors": ["'none'"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+    })
+  );
   server.use(
     cors({
-      origin: true,
+      origin(origin, callback) {
+        if (allowedCorsOrigin(origin)) {
+          callback(null, true);
+          return;
+        }
+        callback(null, false);
+      },
       credentials: true,
     })
   );

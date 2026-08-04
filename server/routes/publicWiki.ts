@@ -1,7 +1,7 @@
 import { Router, Response, Request } from 'express';
 import rateLimit from 'express-rate-limit';
 import { markdownToSafeHtml } from '../services/markdown';
-import { readVaultMedia } from '../services/vaultMedia';
+import { applySafeMediaHeaders, readVaultMedia } from '../services/vaultMedia';
 import { pool, RowDataPacket } from '../config/database';
 import { optionalAuthenticateSession, AuthRequest } from '../middleware/auth';
 import {
@@ -164,7 +164,7 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   });
 });
 
-/** Public media when vault allows public pages and viewer may open the wiki. */
+/** Public media when vault allows public pages, viewer may open the wiki, and media is referenced by an openable note. */
 router.get('/:slug/media/:mediaId', async (req: AuthRequest, res: Response) => {
   const [vaults] = await pool.execute<RowDataPacket[]>(
     'SELECT * FROM Vaults WHERE slug = ? AND AllowPublicPages = 1',
@@ -178,10 +178,44 @@ router.get('/:slug/media/:mediaId', async (req: AuthRequest, res: Response) => {
   if (!ctx.wikiGate.ok) {
     return denyWikiGate(res, ctx.wikiGate.reason);
   }
-  const media = await readVaultMedia(Number(vault.Id), Number(req.params.mediaId));
+  const mediaId = Number(req.params.mediaId);
+  if (!Number.isFinite(mediaId) || mediaId <= 0) {
+    return res.status(404).json({ success: false, message: 'Not found' });
+  }
+
+  const vaultId = Number(vault.Id);
+  const needleA = `/api/vaults/${vaultId}/media/${mediaId}`;
+  const needleB = `/api/public/${String(vault.slug)}/media/${mediaId}`;
+  const [refs] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, Visibility FROM Notes
+     WHERE VaultId = ? AND DeletedAt IS NULL
+       AND (BodyMarkdown LIKE ? OR BodyMarkdown LIKE ?)`,
+    [vaultId, `%${needleA}%`, `%${needleB}%`]
+  );
+  let allowed = false;
+  for (const n of refs) {
+    const visibility = effectiveVisibility(n.Visibility, vault.DefaultVisibility);
+    const open = canOpenNoteOnWiki(visibility, ctx.isAuthed, ctx.canEditVault);
+    if (open.ok) {
+      allowed = true;
+      break;
+    }
+  }
+  if (!allowed) {
+    return res.status(404).json({ success: false, message: 'Not found' });
+  }
+
+  const media = await readVaultMedia(vaultId, mediaId);
   if (!media) return res.status(404).json({ success: false, message: 'Not found' });
-  res.setHeader('Content-Type', media.mimeType);
-  res.setHeader('Cache-Control', 'public, max-age=86400');
+  if (
+    !applySafeMediaHeaders(res, {
+      mimeType: media.mimeType,
+      originalName: media.originalName,
+      cacheControl: 'public, max-age=86400',
+    })
+  ) {
+    return res.status(415).json({ success: false, message: 'Unsupported media type' });
+  }
   res.send(media.buffer);
 });
 

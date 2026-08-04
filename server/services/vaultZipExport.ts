@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { pool, RowDataPacket } from '../config/database';
 import { readVaultMedia } from './vaultMedia';
+import { safeZipEntryName } from './notePaths';
 import logger from '../utils/logger';
 
 const MEDIA_URL_RE = /!\[([^\]]*)\]\(\/api\/vaults\/(\d+)\/media\/(\d+)\)/g;
@@ -11,10 +12,6 @@ export type ZipExportResult = {
   imageCount: number;
   fileName: string;
 };
-
-function safeZipName(name: string): string {
-  return name.replace(/[<>:"|?*\\]/g, '_').replace(/^\/+/, '');
-}
 
 /**
  * Export vault notes as Markdown paths + media files.
@@ -38,8 +35,9 @@ export async function exportVaultZip(vaultId: number, vaultName: string): Promis
   for (const m of mediaRows) {
     const id = Number(m.Id);
     const original = m.OriginalName ? String(m.OriginalName) : `image-${id}`;
-    const base = safeZipName(original).replace(/\s+/g, '_');
-    mediaRelById.set(id, `media/${id}-${base}`);
+    const base = safeZipEntryName(original).replace(/\s+/g, '_');
+    const leaf = base.includes('/') ? base.split('/').pop()! : base;
+    mediaRelById.set(id, `media/${id}-${leaf}`);
   }
 
   const zip = new JSZip();
@@ -53,7 +51,7 @@ export async function exportVaultZip(vaultId: number, vaultName: string): Promis
   }
 
   for (const note of notes) {
-    const pathName = safeZipName(String(note.Path || `${note.Title}.md`));
+    const pathName = safeZipEntryName(String(note.Path || `${note.Title}.md`));
     let body = String(note.BodyMarkdown || '');
     body = body.replace(MEDIA_URL_RE, (_full, alt: string, vId: string, mId: string) => {
       if (Number(vId) !== vaultId) return `![${alt}](/api/vaults/${vId}/media/${mId})`;
@@ -61,14 +59,22 @@ export async function exportVaultZip(vaultId: number, vaultName: string): Promis
       if (!rel) return `![${alt}](/api/vaults/${vId}/media/${mId})`;
       return `![${alt}](${rel})`;
     });
-    zip.file(pathName.endsWith('.md') || pathName.endsWith('.markdown') ? pathName : `${pathName}.md`, body);
+    zip.file(
+      pathName.endsWith('.md') || pathName.endsWith('.markdown') ? pathName : `${pathName}.md`,
+      body
+    );
   }
 
   const buffer = Buffer.from(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
-  const slug = safeZipName(vaultName || `vault-${vaultId}`)
+  const slug = safeZipEntryName(vaultName || `vault-${vaultId}`)
     .replace(/\s+/g, '-')
     .slice(0, 80);
-  logger.info('Vault ZIP export ready', { vaultId, notes: notes.length, images: imageCount, bytes: buffer.length });
+  logger.info('Vault ZIP export ready', {
+    vaultId,
+    notes: notes.length,
+    images: imageCount,
+    bytes: buffer.length,
+  });
 
   return {
     buffer,

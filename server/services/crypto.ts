@@ -1,10 +1,8 @@
 import crypto from 'crypto';
-
-const KEY_HEX = process.env.ENCRYPTION_KEY || process.env.JWT_SECRET || 'dev-only-key';
+import { encryptionKeyMaterial } from './secrets';
 
 function keyBytes(): Buffer {
-  const hash = crypto.createHash('sha256').update(KEY_HEX).digest();
-  return hash;
+  return crypto.createHash('sha256').update(encryptionKeyMaterial()).digest();
 }
 
 export function encryptSecret(plain: string): string {

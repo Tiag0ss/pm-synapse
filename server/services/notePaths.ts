@@ -58,3 +58,42 @@ export function resolveNoteId(target: string, notes: NoteResolveEntry[]): number
 
   return null;
 }
+
+/**
+ * Normalize and validate a note Path for storage / ZIP export.
+ * Rejects absolute paths, empty segments, and `..` traversal.
+ */
+export function sanitizeNotePath(raw: string): string | null {
+  let p = String(raw || '')
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .trim();
+  if (!p) return null;
+  if (p.startsWith('/') || /^[a-zA-Z]:/.test(p)) return null;
+
+  const parts = p.split('/').filter((seg) => seg.length > 0);
+  if (!parts.length) return null;
+  for (const seg of parts) {
+    if (seg === '.' || seg === '..') return null;
+    if (/[<>:"|?*\x00-\x1f]/.test(seg)) return null;
+  }
+
+  let out = parts.join('/');
+  if (!out.toLowerCase().endsWith('.md') && !out.toLowerCase().endsWith('.markdown')) {
+    out = `${out}.md`;
+  }
+  if (out.length > 1024) return null;
+  return out;
+}
+
+/** Safe entry name inside a ZIP (no traversal). */
+export function safeZipEntryName(name: string): string {
+  const cleaned = String(name || '')
+    .replace(/[<>:"|?*\\]/g, '_')
+    .replace(/\\/g, '/');
+  const parts = cleaned
+    .split('/')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && s !== '.' && s !== '..');
+  return parts.join('/') || 'note.md';
+}

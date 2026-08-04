@@ -9,11 +9,13 @@ import { frontmatterJsonString, parseFrontmatter } from './frontmatter';
 import logger from '../utils/logger';
 
 const MAX_ZIP_BYTES = 20 * 1024 * 1024;
+const MAX_UNCOMPRESSED_TOTAL = 80 * 1024 * 1024;
+const MAX_ENTRY_UNCOMPRESSED = 8 * 1024 * 1024;
 const MAX_NOTES = 500;
 const MAX_IMAGES = 200;
 
 const SKIP_NAME_RE = /(^|\/)(__MACOSX|\.git|\.obsidian|\.trash|node_modules)(\/|$)/i;
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
+const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 
 export type ZipImportResult = {
   created: number;
@@ -64,8 +66,6 @@ function mimeFromExt(ext: string): string {
       return 'image/gif';
     case '.webp':
       return 'image/webp';
-    case '.svg':
-      return 'image/svg+xml';
     default:
       return 'application/octet-stream';
   }
@@ -124,6 +124,22 @@ export async function importVaultZip(params: {
     throw Object.assign(new Error('Could not read ZIP archive'), { status: 400 });
   }
 
+  let uncompressedTotal = 0;
+  for (const file of Object.values(zip.files)) {
+    if (file.dir) continue;
+    const data = (file as JSZip.JSZipObject & { _data?: { uncompressedSize?: number } })._data;
+    const size = data?.uncompressedSize;
+    if (typeof size === 'number' && Number.isFinite(size)) {
+      if (size > MAX_ENTRY_UNCOMPRESSED) {
+        throw Object.assign(new Error('ZIP entry too large when uncompressed'), { status: 400 });
+      }
+      uncompressedTotal += size;
+      if (uncompressedTotal > MAX_UNCOMPRESSED_TOTAL) {
+        throw Object.assign(new Error('ZIP uncompressed size exceeds limit'), { status: 400 });
+      }
+    }
+  }
+
   const fileEntries: Array<{ zipKey: string; rel: string }> = [];
   for (const [key, file] of Object.entries(zip.files)) {
     if (file.dir) continue;
@@ -168,6 +184,9 @@ export async function importVaultZip(params: {
   for (const img of imageEntries) {
     try {
       const bytes = await zip.files[img.zipKey].async('nodebuffer');
+      if (bytes.length > MAX_ENTRY_UNCOMPRESSED) {
+        throw new Error('Image entry too large');
+      }
       const ext = path.posix.extname(img.rel).toLowerCase();
       const saved = await saveVaultImage({
         vaultId: params.vaultId,
@@ -189,6 +208,9 @@ export async function importVaultZip(params: {
   for (const md of mdEntries) {
     try {
       let body = await zip.files[md.zipKey].async('string');
+      if (Buffer.byteLength(body, 'utf8') > MAX_ENTRY_UNCOMPRESSED) {
+        throw new Error('Note entry too large');
+      }
       // Strip UTF-8 BOM
       if (body.charCodeAt(0) === 0xfeff) body = body.slice(1);
 

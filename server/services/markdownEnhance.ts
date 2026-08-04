@@ -178,7 +178,7 @@ export function preprocessCallouts(md: string): string {
   return out.join('\n');
 }
 
-/** `[[toc]]` or `[toc]` alone on a line → TOC from ##–###### headings. */
+/** `[[toc]]` or `[toc]` alone on a line → TOC from #–###### headings. */
 export function preprocessToc(md: string): string {
   const hasToc = /^(\[\[toc\]\]|\[toc\])\s*$/im.test(md);
   if (!hasToc) return md;
@@ -187,7 +187,7 @@ export function preprocessToc(md: string): string {
   const used = new Map<string, number>();
   mapProtectedMd(md, (chunk) => {
     for (const line of chunk.split('\n')) {
-      const hm = line.match(/^(#{2,6})\s+(.+?)\s*#*\s*$/);
+      const hm = line.match(/^(#{1,6})\s+(.+?)\s*#*\s*$/);
       if (!hm) continue;
       const level = hm[1].length;
       const text = hm[2].replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[*_`~]/g, '').trim();
@@ -224,11 +224,11 @@ export function preprocessToc(md: string): string {
   return md.replace(/^(\[\[toc\]\]|\[toc\])\s*$/gim, tocHtml);
 }
 
-/** Assign stable ids to h2–h6 so TOC links can scroll to sections. */
+/** Assign stable ids to h1–h6 so TOC links can scroll to sections. */
 export function applyHeadingIds(html: string): string {
   const used = new Map<string, number>();
   return html.replace(
-    /<(h[2-6])(\b[^>]*)>([\s\S]*?)<\/\1>/gi,
+    /<(h[1-6])(\b[^>]*)>([\s\S]*?)<\/\1>/gi,
     (_m, tag: string, attrs: string, inner: string) => {
       if (/\sid\s*=/.test(attrs)) return `<${tag}${attrs}>${inner}</${tag}>`;
       const text = inner

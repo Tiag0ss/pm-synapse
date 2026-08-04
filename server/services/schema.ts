@@ -18,6 +18,7 @@ const STATEMENTS = [
     PmUserId INT NULL,
     IsAdmin TINYINT NOT NULL DEFAULT 0,
     IsActive TINYINT NOT NULL DEFAULT 1,
+    SessionVersion INT NOT NULL DEFAULT 0,
     LastLoginAt DATETIME NULL,
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -200,6 +201,7 @@ const ALTERS = [
   'ALTER TABLE Notes ADD COLUMN DeletedAt DATETIME NULL',
   'ALTER TABLE Notes ADD KEY idx_note_deleted (VaultId, DeletedAt)',
   'ALTER TABLE Notes ADD COLUMN Icon VARCHAR(64) NULL',
+  'ALTER TABLE Users ADD COLUMN SessionVersion INT NOT NULL DEFAULT 0',
 ];
 
 /** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */

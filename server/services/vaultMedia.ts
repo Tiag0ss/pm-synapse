@@ -5,13 +5,13 @@ import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import logger from '../utils/logger';
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+/** Raster images only — SVG is an active document format (stored XSS risk). */
 const ALLOWED_MIME = new Set([
   'image/png',
   'image/jpeg',
   'image/jpg',
   'image/gif',
   'image/webp',
-  'image/svg+xml',
 ]);
 
 const MIME_EXT: Record<string, string> = {
@@ -20,8 +20,28 @@ const MIME_EXT: Record<string, string> = {
   'image/jpg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp',
-  'image/svg+xml': 'svg',
 };
+
+const ACTIVE_SVG_MIME = new Set(['image/svg+xml', 'image/svg']);
+
+/** Headers that keep media from executing as script/document on this origin. */
+export function applySafeMediaHeaders(
+  res: { setHeader: (name: string, value: string) => void },
+  opts: { mimeType: string; originalName?: string | null; cacheControl: string }
+): boolean {
+  const mime = (opts.mimeType || '').toLowerCase().split(';')[0].trim();
+  if (ACTIVE_SVG_MIME.has(mime) || (mime.endsWith('+xml') && mime.includes('svg'))) {
+    return false;
+  }
+  res.setHeader('Content-Type', mime || 'application/octet-stream');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Cache-Control', opts.cacheControl);
+  const rawName = (opts.originalName || 'image').replace(/["\r\n\\]/g, '');
+  const safeName = rawName.replace(/[^\w.\- ()[\]]+/g, '_').slice(0, 180) || 'image';
+  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  return true;
+}
 
 function uploadsRoot(): string {
   return process.env.SYNAPSE_UPLOAD_DIR || path.join(process.cwd(), 'data', 'uploads');
@@ -44,7 +64,7 @@ export async function saveVaultImage(params: {
 }): Promise<{ id: number; url: string; mimeType: string; sizeBytes: number }> {
   const mime = (params.mimeType || '').toLowerCase().split(';')[0].trim();
   if (!ALLOWED_MIME.has(mime)) {
-    throw Object.assign(new Error('Only image uploads are allowed (png, jpeg, gif, webp, svg)'), {
+    throw Object.assign(new Error('Only image uploads are allowed (png, jpeg, gif, webp)'), {
       status: 400,
     });
   }
