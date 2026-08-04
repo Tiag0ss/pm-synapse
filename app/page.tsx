@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import AppUserMenu from '@/components/AppUserMenu';
 
@@ -53,6 +53,7 @@ export default function HomePage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [createBusy, setCreateBusy] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [vaultQuery, setVaultQuery] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -83,6 +84,17 @@ export default function HomePage() {
   useEffect(() => {
     void load();
   }, []);
+
+  const filteredVaults = useMemo(() => {
+    const q = vaultQuery.trim().toLowerCase();
+    if (!q) return vaults;
+    return vaults.filter((v) => {
+      const name = v.Name.toLowerCase();
+      const slug = (v.slug || '').toLowerCase();
+      const desc = (v.Description || '').toLowerCase();
+      return name.includes(q) || slug.includes(q) || desc.includes(q);
+    });
+  }, [vaults, vaultQuery]);
 
   const createVault = async () => {
     if (!name.trim()) return;
@@ -449,62 +461,85 @@ export default function HomePage() {
           </div>
         ) : (
           <section>
-            <div className="mb-4 flex items-baseline justify-between gap-3">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--muted)]">
-                {vaults.length} {vaults.length === 1 ? 'vault' : 'vaults'}
+                {vaultQuery.trim()
+                  ? `${filteredVaults.length} of ${vaults.length} ${vaults.length === 1 ? 'vault' : 'vaults'}`
+                  : `${vaults.length} ${vaults.length === 1 ? 'vault' : 'vaults'}`}
               </h2>
+              <input
+                type="search"
+                className="input w-full sm:max-w-xs"
+                placeholder="Search vaults…"
+                value={vaultQuery}
+                onChange={(e) => setVaultQuery(e.target.value)}
+                aria-label="Search vaults"
+              />
             </div>
-            <ul className="grid gap-3 sm:grid-cols-2">
-              {vaults.map((v) => {
-                const shared = roleLabel(v.AccessRole);
-                return (
-                  <li key={v.Id}>
-                    <Link
-                      href={`/vaults/${v.Id}`}
-                      className="group flex h-full flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel)]/60 p-5 no-underline transition duration-200 hover:border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] hover:bg-[var(--surface-2)]/70 hover:no-underline hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--accent)_20%,transparent)]"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <h3 className="text-[17px] font-semibold tracking-tight text-[var(--text)] transition group-hover:text-[var(--accent-soft)]">
-                          {v.Name}
-                        </h3>
-                        <span
-                          className="mt-0.5 shrink-0 text-[var(--muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--accent-soft)]"
-                          aria-hidden
-                        >
-                          →
-                        </span>
-                      </div>
-                      {v.Description ? (
-                        <p className="mt-2 line-clamp-2 text-sm leading-snug text-[var(--muted)]">
-                          {v.Description}
-                        </p>
-                      ) : (
-                        <p className="mt-2 font-mono text-[11px] text-[var(--muted)]">/{v.slug}</p>
-                      )}
-                      <div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
-                        <span className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--muted)]">
-                          /{v.slug}
-                        </span>
-                        {v.PmProjectId ? (
-                          <span className="rounded border border-[color-mix(in_srgb,var(--accent)_35%,var(--border))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-soft)]">
-                            Planner #{v.PmProjectId}
+            {filteredVaults.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)]/30 px-6 py-12 text-center">
+                <p className="text-sm text-[var(--muted)]">No vaults match “{vaultQuery.trim()}”.</p>
+                <button
+                  type="button"
+                  className="mt-3 text-sm text-[var(--accent-soft)] hover:underline"
+                  onClick={() => setVaultQuery('')}
+                >
+                  Clear search
+                </button>
+              </div>
+            ) : (
+              <ul className="grid gap-3 sm:grid-cols-2">
+                {filteredVaults.map((v) => {
+                  const shared = roleLabel(v.AccessRole);
+                  return (
+                    <li key={v.Id}>
+                      <Link
+                        href={`/vaults/${v.Id}`}
+                        className="group flex h-full flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel)]/60 p-5 no-underline transition duration-200 hover:border-[color-mix(in_srgb,var(--accent)_45%,var(--border))] hover:bg-[var(--surface-2)]/70 hover:no-underline hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--accent)_20%,transparent)]"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="text-[17px] font-semibold tracking-tight text-[var(--text)] transition group-hover:text-[var(--accent-soft)]">
+                            {v.Name}
+                          </h3>
+                          <span
+                            className="mt-0.5 shrink-0 text-[var(--muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--accent-soft)]"
+                            aria-hidden
+                          >
+                            →
                           </span>
-                        ) : null}
-                        {shared ? (
-                          <span className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
-                            {shared}
-                          </span>
+                        </div>
+                        {v.Description ? (
+                          <p className="mt-2 line-clamp-2 text-sm leading-snug text-[var(--muted)]">
+                            {v.Description}
+                          </p>
                         ) : (
-                          <span className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
-                            Owner
-                          </span>
+                          <p className="mt-2 font-mono text-[11px] text-[var(--muted)]">/{v.slug}</p>
                         )}
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
+                        <div className="mt-auto flex flex-wrap items-center gap-2 pt-4">
+                          <span className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--muted)]">
+                            /{v.slug}
+                          </span>
+                          {v.PmProjectId ? (
+                            <span className="rounded border border-[color-mix(in_srgb,var(--accent)_35%,var(--border))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-soft)]">
+                              Planner #{v.PmProjectId}
+                            </span>
+                          ) : null}
+                          {shared ? (
+                            <span className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
+                              {shared}
+                            </span>
+                          ) : (
+                            <span className="rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--muted)]">
+                              Owner
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </section>
         )}
       </div>

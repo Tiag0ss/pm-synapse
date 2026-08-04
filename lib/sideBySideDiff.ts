@@ -111,6 +111,50 @@ export function buildSideBySideDiff(leftText: string, rightText: string): DiffRo
   return paired;
 }
 
+export interface DiffHunk {
+  /** Inclusive start index into DiffRow[]. */
+  start: number;
+  /** Exclusive end index into DiffRow[]. */
+  end: number;
+}
+
+/** Maximal contiguous runs of non-equal rows. */
+export function groupDiffHunks(rows: DiffRow[]): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    if (rows[i].op === 'equal') {
+      i++;
+      continue;
+    }
+    const start = i;
+    while (i < rows.length && rows[i].op !== 'equal') i++;
+    hunks.push({ start, end: i });
+  }
+  return hunks;
+}
+
+/**
+ * Rebuild the right-side text after taking the left (revision) side for one hunk.
+ * Other hunks keep the current (right) content.
+ */
+export function applyHunkFromLeft(rows: DiffRow[], hunk: DiffHunk): string {
+  const out: string[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const inHunk = i >= hunk.start && i < hunk.end;
+    if (inHunk) {
+      // Restore revision text for this change: keep deletes/replaces, drop inserts.
+      if (row.op === 'delete' || row.op === 'replace') {
+        if (row.left != null) out.push(row.left);
+      }
+    } else if (row.right != null) {
+      out.push(row.right);
+    }
+  }
+  return out.join('\n');
+}
+
 /** Intra-line word highlighting: returns HTML fragments for left/right when op=replace. */
 export function wordHighlight(left: string, right: string): { leftHtml: string; rightHtml: string } {
   const lw = left.split(/(\s+)/);

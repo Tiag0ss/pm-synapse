@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { renderSynapseMarkdown, type NoteIndexEntry } from '@/lib/renderMarkdown';
+import { renderSynapseMarkdown, type LinkableVaultNotes, type NoteIndexEntry } from '@/lib/renderMarkdown';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
@@ -16,9 +16,15 @@ interface MarkdownNoteEditorProps {
   vaultId?: string;
   noteId?: number;
   notes?: NoteIndexEntry[];
+  /** Cross-vault `[[@slug/…]]` resolution index */
+  linkableVaults?: LinkableVaultNotes[];
   onOpenNote?: (id: number) => void;
+  /** Open a note in another vault (from `[[@slug/…]]`). */
+  onOpenCrossVaultNote?: (vaultId: number, noteId: number) => void;
   /** Called when a missing wikilink is clicked (preview). */
   onCreateNoteFromWikilink?: (title: string) => void;
+  /** Called when a missing cross-vault `[[@slug/…]]` is clicked. */
+  onCreateCrossVaultNote?: (vaultId: number, title: string) => void;
   onStatus?: (msg: string) => void;
   placeholder?: string;
   /** When true, force preview and hide editing chrome. */
@@ -115,10 +121,15 @@ const LEGEND_SECTIONS: LegendSection[] = [
       {
         syntax: 'todos: …',
         meaning:
-          'id, status, content → Properties + note tasks; push to Planner. hours / unscheduled on create; when linked, status follows Planner status names',
+          'id, status, content → Properties + note tasks; push to Planner. hours / unscheduled on create; note: links to another note; when linked, status follows Planner status names',
       },
       { syntax: 'hours: 2.5', meaning: 'Under a todo → estimatedHours on Planner create' },
       { syntax: 'unscheduled: true', meaning: 'Under a todo → unscheduledWork on create (not implied by missing hours)' },
+      {
+        syntax: 'note: meta/risks',
+        meaning:
+          'Under a todo → link to another note (title or path; quote "[[wikilink]]" if using brackets)',
+      },
     ],
   },
   {
@@ -127,6 +138,10 @@ const LEGEND_SECTIONS: LegendSection[] = [
       { syntax: '[[Note title]]', meaning: 'Link to a note (solid underline)' },
       { syntax: '[[meta/risks]]', meaning: 'Link by folder path' },
       { syntax: '[[risks]]', meaning: 'Link by unique leaf name' },
+      {
+        syntax: '[[@vault-slug/note]]',
+        meaning: 'Link to a note in another vault (shows “no access” if you lack permission)',
+      },
       { syntax: '[[Note|label]]', meaning: 'Wikilink with custom label' },
       { syntax: 'plain Title', meaning: 'Unlinked mention (dashed)' },
       { syntax: '#tag', meaning: 'Inline tag for filtering / graph' },
@@ -264,8 +279,11 @@ export default function MarkdownNoteEditor({
   vaultId,
   noteId,
   notes = [],
+  linkableVaults = [],
   onOpenNote,
+  onOpenCrossVaultNote,
   onCreateNoteFromWikilink,
+  onCreateCrossVaultNote,
   onStatus,
   placeholder,
   readOnly = false,
@@ -297,7 +315,10 @@ export default function MarkdownNoteEditor({
     if (compact && mode === 'split') setMode('edit');
   }, [compact, readOnly, mode]);
 
-  const html = useMemo(() => renderSynapseMarkdown(value, notes), [value, notes]);
+  const html = useMemo(
+    () => renderSynapseMarkdown(value, notes, linkableVaults),
+    [value, notes, linkableVaults]
+  );
 
   useEffect(() => {
     if (plannerLinks) {
@@ -478,27 +499,52 @@ export default function MarkdownNoteEditor({
           return;
         }
       }
-      if (!onOpenNote && !onCreateNoteFromWikilink) return;
+      if (!onOpenNote && !onOpenCrossVaultNote && !onCreateNoteFromWikilink && !onCreateCrossVaultNote)
+        return;
       const target = (e.target as HTMLElement).closest(
         'a.synapse-wikilink, a.synapse-mention'
       ) as HTMLAnchorElement | null;
       if (!target) return;
       e.preventDefault();
       const id = Number(target.dataset.noteId || 0);
+      const crossVaultId = Number(target.dataset.vaultId || 0);
+      const currentVaultId = vaultId ? Number(vaultId) : 0;
+      if (
+        id &&
+        crossVaultId &&
+        currentVaultId &&
+        crossVaultId !== currentVaultId &&
+        onOpenCrossVaultNote
+      ) {
+        onOpenCrossVaultNote(crossVaultId, id);
+        return;
+      }
       if (id && onOpenNote) {
         onOpenNote(id);
         return;
       }
       if (target.classList.contains('synapse-wikilink')) {
         const missingTitle = String(target.dataset.noteTitle || '').trim();
-        if (missingTitle && onCreateNoteFromWikilink) {
+        if (!missingTitle) return;
+        if (crossVaultId && onCreateCrossVaultNote) {
+          onCreateCrossVaultNote(crossVaultId, missingTitle);
+          return;
+        }
+        if (onCreateNoteFromWikilink && !crossVaultId) {
           onCreateNoteFromWikilink(missingTitle);
         }
       }
     };
     root.addEventListener('click', onClick);
     return () => root.removeEventListener('click', onClick);
-  }, [onOpenNote, onCreateNoteFromWikilink, html]);
+  }, [
+    onOpenNote,
+    onOpenCrossVaultNote,
+    onCreateNoteFromWikilink,
+    onCreateCrossVaultNote,
+    html,
+    vaultId,
+  ]);
 
   const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;

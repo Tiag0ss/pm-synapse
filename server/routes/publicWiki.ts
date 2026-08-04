@@ -15,6 +15,7 @@ import {
   hasWikiShare,
   type VaultAccessRole,
 } from '../services/vaultAccess';
+import { listLinkableVaultNotesForWikiViewer } from '../services/linkableNotes';
 import { getSettingBool, SETTING_KEYS } from '../services/appSettings';
 import { buildPmTaskOpenUrl } from '../services/pmClient';
 
@@ -324,7 +325,16 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       path: String(n.Path || ''),
     }));
 
-  const html = markdownToSafeHtml(String(note.BodyMarkdown || ''), noteIndex).replace(
+  const linkableVaults = await listLinkableVaultNotesForWikiViewer({
+    pmUserId: req.user?.userId ?? null,
+    isAuthed: ctx.isAuthed,
+  });
+
+  const html = markdownToSafeHtml(
+    String(note.BodyMarkdown || ''),
+    noteIndex,
+    linkableVaults
+  ).replace(
     new RegExp(`/api/vaults/${Number(vault.Id)}/media/(\\d+)`, 'g'),
     `/api/public/${String(vault.slug)}/media/$1`
   );

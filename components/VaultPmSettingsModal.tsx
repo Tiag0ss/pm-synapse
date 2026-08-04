@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { resolveNoteId, type NoteResolveEntry } from '@/lib/notePaths';
 import { renderInlineMarkdown } from '@/lib/renderMarkdown';
 
 export interface VaultCheckboxItem {
@@ -12,6 +13,7 @@ export interface VaultCheckboxItem {
   markerId: string | null;
   indent?: number;
   source?: 'checkbox' | 'frontmatter';
+  linkedNote?: string | null;
   pmTaskId: number | null;
   openUrl: string | null;
 }
@@ -35,6 +37,7 @@ interface VaultPmSettingsModalProps {
   onClose: () => void;
   onChanged: () => void;
   onOpenNote?: (noteId: number) => void;
+  notes?: NoteResolveEntry[];
   /** Render as a panel inside Vault options (no overlay chrome). */
   embedded?: boolean;
 }
@@ -48,6 +51,7 @@ export default function VaultPmSettingsModal({
   onClose,
   onChanged,
   onOpenNote,
+  notes = [],
   embedded = false,
 }: VaultPmSettingsModalProps) {
   const [orgs, setOrgs] = useState<Array<{ Id: number; Name: string }>>([]);
@@ -582,6 +586,35 @@ export default function VaultPmSettingsModal({
                             __html: renderInlineMarkdown(item.text || '(empty checkbox)'),
                           }}
                         />
+                        {item.linkedNote &&
+                          (() => {
+                            const target = item.linkedNote;
+                            const linkedId = resolveNoteId(target, notes);
+                            if (linkedId && onOpenNote) {
+                              return (
+                                <button
+                                  type="button"
+                                  className="synapse-wikilink shrink-0 max-w-[9rem] truncate rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium no-underline"
+                                  title={`Open note ${target}`}
+                                  onClick={() => onOpenNote(linkedId)}
+                                >
+                                  {target}
+                                </button>
+                              );
+                            }
+                            return (
+                              <span
+                                className="synapse-wikilink is-missing shrink-0 max-w-[9rem] truncate rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium"
+                                title={
+                                  linkedId
+                                    ? `Linked note: ${target}`
+                                    : `Missing note: ${target}`
+                                }
+                              >
+                                {target}
+                              </span>
+                            );
+                          })()}
                       </div>
                       <button
                         type="button"

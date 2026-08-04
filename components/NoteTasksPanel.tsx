@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { listNoteTaskCandidates } from '@/lib/noteTasks';
+import {
+  resolveCrossVaultWikilink,
+  resolveNoteId,
+  type LinkableVaultNotes,
+  type NoteResolveEntry,
+} from '@/lib/notePaths';
 import { renderInlineMarkdown } from '@/lib/renderMarkdown';
 
 interface NoteTaskItem {
@@ -11,6 +17,7 @@ interface NoteTaskItem {
   markerId: string | null;
   indent: number;
   source: 'checkbox' | 'frontmatter';
+  linkedNote: string | null;
   pmTaskId: number | null;
   openUrl: string | null;
 }
@@ -25,6 +32,10 @@ interface NoteTasksPanelProps {
   onStatus?: (msg: string) => void;
   compact?: boolean;
   readOnly?: boolean;
+  notes?: NoteResolveEntry[];
+  linkableVaults?: LinkableVaultNotes[];
+  onOpenNote?: (noteId: number) => void;
+  onOpenCrossVaultNote?: (vaultId: number, noteId: number) => void;
 }
 
 export default function NoteTasksPanel({
@@ -37,6 +48,10 @@ export default function NoteTasksPanel({
   onStatus,
   compact = false,
   readOnly = false,
+  notes = [],
+  linkableVaults = [],
+  onOpenNote,
+  onOpenCrossVaultNote,
 }: NoteTasksPanelProps) {
   const [items, setItems] = useState<NoteTaskItem[]>([]);
   const [notePmTaskId, setNotePmTaskId] = useState<number | null>(null);
@@ -60,6 +75,7 @@ export default function NoteTasksPanel({
             markerId: string | null;
             indent?: number;
             source?: 'checkbox' | 'frontmatter';
+            linkedNote?: string | null;
             pmTaskId: number | null;
             openUrl: string | null;
           }) => ({
@@ -73,6 +89,7 @@ export default function NoteTasksPanel({
               (typeof b.markerId === 'string' && b.markerId.startsWith('fm:'))
                 ? 'frontmatter'
                 : 'checkbox',
+            linkedNote: b.linkedNote ? String(b.linkedNote) : null,
             pmTaskId: b.pmTaskId,
             openUrl: b.openUrl,
           })
@@ -393,10 +410,76 @@ export default function NoteTasksPanel({
                 className={`synapse-task-label min-w-0 flex-1 text-sm leading-snug ${
                   item.checked ? 'text-[var(--muted)] line-through' : 'text-[var(--text)]'
                 }`}
+                onClick={(e) => {
+                  const a = (e.target as HTMLElement).closest(
+                    'a.synapse-wikilink'
+                  ) as HTMLAnchorElement | null;
+                  if (!a) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const id = Number(a.dataset.noteId || 0);
+                  const crossVaultId = Number(a.dataset.vaultId || 0);
+                  if (id && crossVaultId && crossVaultId !== Number(vaultId) && onOpenCrossVaultNote) {
+                    onOpenCrossVaultNote(crossVaultId, id);
+                    return;
+                  }
+                  if (id && onOpenNote) onOpenNote(id);
+                }}
                 dangerouslySetInnerHTML={{
-                  __html: renderInlineMarkdown(item.text || '(empty)'),
+                  __html: renderInlineMarkdown(item.text || '(empty)', notes, linkableVaults),
                 }}
               />
+              {item.linkedNote &&
+                (() => {
+                  const target = item.linkedNote;
+                  const sameVaultId = resolveNoteId(target, notes);
+                  if (sameVaultId && onOpenNote) {
+                    return (
+                      <button
+                        type="button"
+                        className="synapse-wikilink shrink-0 max-w-[9rem] truncate rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium no-underline"
+                        title={`Open note ${target}`}
+                        onClick={() => onOpenNote(sameVaultId)}
+                      >
+                        {target}
+                      </button>
+                    );
+                  }
+                  const cross = target.trim().startsWith('@')
+                    ? resolveCrossVaultWikilink(target, linkableVaults)
+                    : null;
+                  if (cross?.status === 'ok' && onOpenCrossVaultNote) {
+                    return (
+                      <button
+                        type="button"
+                        className="synapse-wikilink shrink-0 max-w-[9rem] truncate rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium no-underline"
+                        title={`Open note ${cross.label}`}
+                        onClick={() => onOpenCrossVaultNote(cross.vaultId, cross.noteId)}
+                      >
+                        {cross.label}
+                      </button>
+                    );
+                  }
+                  if (cross?.status === 'locked') {
+                    return (
+                      <span
+                        className="synapse-wikilink is-locked shrink-0 max-w-[12rem] truncate rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium"
+                        title="You don't have access to this note"
+                      >
+                        {cross.label}
+                        <span className="synapse-wikilink-lock ml-1">no access</span>
+                      </span>
+                    );
+                  }
+                  return (
+                    <span
+                      className="synapse-wikilink is-missing shrink-0 max-w-[9rem] truncate rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-medium"
+                      title={`Missing note: ${target}`}
+                    >
+                      {target}
+                    </span>
+                  );
+                })()}
               {item.pmTaskId ? (
                 <a
                   href={item.openUrl || '#'}

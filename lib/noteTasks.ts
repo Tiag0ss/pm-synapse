@@ -16,6 +16,8 @@ export type NoteTaskCandidate = ParsedCheckbox & {
   taskText?: string;
   statusText?: string;
   estimate?: TaskEstimateMeta;
+  /** Frontmatter todo `note:` target (title/path), when set */
+  linkedNote?: string | null;
 };
 
 /** Markdown checkboxes first, then frontmatter todos (indent 0). */
@@ -46,6 +48,7 @@ export function listNoteTaskCandidates(markdown: string): NoteTaskCandidate[] {
     source: 'frontmatter' as const,
     statusText: t.status,
     estimate: t.estimate,
+    linkedNote: t.noteTarget,
   }));
   return [...boxes, ...fmTasks];
 }

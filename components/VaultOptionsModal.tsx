@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import VaultShareModal from '@/components/VaultShareModal';
 import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
 import ConfirmModal from '@/components/ConfirmModal';
+import type { NoteResolveEntry } from '@/lib/notePaths';
 
 type OptionsTab = 'links' | 'share' | 'pm' | 'vault' | 'trash';
 
@@ -27,12 +28,14 @@ interface VaultOptionsModalProps {
   open: boolean;
   vaultId: string;
   vaultName: string;
+  vaultSlug?: string;
   isOwner: boolean;
   canEdit: boolean;
   defaultVisibility?: string;
   pmProjectId?: number | null;
   pmOrganizationId?: number | null;
   initialTab?: OptionsTab;
+  notes?: NoteResolveEntry[];
   onClose: () => void;
   onChanged: () => void;
   onOpenNote: (noteId: number) => void;
@@ -43,12 +46,14 @@ export default function VaultOptionsModal({
   open,
   vaultId,
   vaultName,
+  vaultSlug = '',
   isOwner,
   canEdit,
   defaultVisibility = 'private',
   pmProjectId,
   pmOrganizationId,
   initialTab = 'links',
+  notes = [],
   onClose,
   onChanged,
   onOpenNote,
@@ -73,6 +78,8 @@ export default function VaultOptionsModal({
   const [trashBusy, setTrashBusy] = useState<number | null>(null);
   const [vaultDefaultVis, setVaultDefaultVis] = useState(defaultVisibility || 'private');
   const [savingVis, setSavingVis] = useState(false);
+  const [nameDraft, setNameDraft] = useState(vaultName);
+  const [savingName, setSavingName] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -80,7 +87,8 @@ export default function VaultOptionsModal({
     setVaultStatus('');
     setDeleteConfirm('');
     setVaultDefaultVis((defaultVisibility || 'private').toLowerCase());
-  }, [open, initialTab, defaultVisibility]);
+    setNameDraft(vaultName);
+  }, [open, initialTab, defaultVisibility, vaultName]);
 
   const loadBroken = async () => {
     setLoadingLinks(true);
@@ -164,6 +172,40 @@ export default function VaultOptionsModal({
       setLinksStatus('Could not create note');
     } finally {
       setBusyTarget(null);
+    }
+  };
+
+  const saveVaultName = async () => {
+    if (!isOwner) return;
+    const next = nameDraft.trim();
+    if (!next) {
+      setVaultStatus('Name cannot be empty');
+      return;
+    }
+    if (next === vaultName) {
+      setVaultStatus('Name unchanged');
+      return;
+    }
+    setSavingName(true);
+    setVaultStatus('Saving name…');
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setVaultStatus(data.message || 'Failed to rename vault');
+        return;
+      }
+      setVaultStatus(`Renamed to “${next}”`);
+      onChanged();
+    } catch {
+      setVaultStatus('Failed to rename vault');
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -498,6 +540,7 @@ export default function VaultOptionsModal({
               pmOrganizationId={pmOrganizationId}
               onClose={onClose}
               onChanged={onChanged}
+              notes={notes}
               onOpenNote={(id) => {
                 onOpenNote(id);
                 onClose();
@@ -507,6 +550,54 @@ export default function VaultOptionsModal({
 
           {tab === 'vault' && (
             <div className="space-y-4 overflow-auto p-5">
+              <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 p-4">
+                <h3 className="text-sm font-semibold">Name</h3>
+                <p className="mt-1 text-xs text-[var(--muted)]">
+                  Display name for this vault. The wiki slug
+                  {vaultSlug ? (
+                    <>
+                      {' '}
+                      (<code className="text-[var(--accent-soft)]">/w/{vaultSlug}</code>)
+                    </>
+                  ) : null}{' '}
+                  stays the same so existing links keep working.
+                </p>
+                <label className="mt-3 block text-xs font-medium uppercase tracking-wide text-[var(--muted)]">
+                  Vault name
+                  <input
+                    className="input mt-1.5 w-full max-w-sm"
+                    value={nameDraft}
+                    disabled={!isOwner || savingName}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void saveVaultName();
+                      }
+                    }}
+                    maxLength={255}
+                  />
+                </label>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={
+                      !isOwner ||
+                      savingName ||
+                      !nameDraft.trim() ||
+                      nameDraft.trim() === vaultName
+                    }
+                    onClick={() => void saveVaultName()}
+                  >
+                    {savingName ? 'Saving…' : 'Save name'}
+                  </button>
+                  {!isOwner && (
+                    <p className="text-xs text-[var(--muted)]">Only the vault owner can rename.</p>
+                  )}
+                </div>
+              </section>
+
               <section className="rounded-xl border border-[var(--border)] bg-[var(--surface)]/40 p-4">
                 <h3 className="text-sm font-semibold">Wiki audience (default visibility)</h3>
                 <p className="mt-1 text-xs text-[var(--muted)]">

@@ -30,6 +30,47 @@ export type NoteResolveEntry = {
   path: string;
 };
 
+/** Notes from one vault available for `[[@slug/…]]` resolution. */
+export type LinkableVaultNotes = {
+  vaultId: number;
+  vaultSlug: string;
+  vaultName: string;
+  notes: NoteResolveEntry[];
+};
+
+export type CrossVaultResolveResult =
+  | {
+      status: 'ok';
+      noteId: number;
+      vaultId: number;
+      vaultSlug: string;
+      label: string;
+    }
+  | {
+      status: 'missing';
+      vaultId: number;
+      vaultSlug: string;
+      label: string;
+    }
+  | { status: 'locked'; label: string };
+
+/**
+ * Parse `[[@vault-slug/note-path]]` targets.
+ * Returns null when the target is a same-vault wikilink.
+ */
+export function parseCrossVaultWikilinkTarget(
+  target: string
+): { vaultSlug: string; noteTarget: string } | null {
+  const t = String(target || '')
+    .trim()
+    .replace(/\\/g, '/');
+  const m = t.match(/^@([a-zA-Z0-9][a-zA-Z0-9_-]*)\/(.+)$/);
+  if (!m) return null;
+  const noteTarget = m[2].trim().replace(/\.md$/i, '');
+  if (!noteTarget) return null;
+  return { vaultSlug: m[1], noteTarget };
+}
+
 export function resolveNoteId(target: string, notes: NoteResolveEntry[]): number | null {
   const needle = target
     .trim()
@@ -57,6 +98,52 @@ export function resolveNoteId(target: string, notes: NoteResolveEntry[]): number
   if (leafHits.length === 1) return leafHits[0].id;
 
   return null;
+}
+
+/**
+ * Resolve `[[@vault-slug/path]]` for a viewer-scoped linkable index.
+ * Unknown / inaccessible vault slugs → locked (label kept; UI shows no-access hint).
+ */
+export function resolveCrossVaultWikilink(
+  target: string,
+  linkable: LinkableVaultNotes[],
+  alias?: string
+): CrossVaultResolveResult {
+  const parsed = parseCrossVaultWikilinkTarget(target);
+  const fallbackLabel =
+    String(alias || '').trim() ||
+    (parsed ? parsed.noteTarget : String(target || '').trim()) ||
+    String(target || '').trim();
+
+  if (!parsed) return { status: 'locked', label: fallbackLabel };
+
+  const vault = linkable.find(
+    (v) => v.vaultSlug.toLowerCase() === parsed.vaultSlug.toLowerCase()
+  );
+  if (!vault) {
+    return {
+      status: 'locked',
+      label: String(alias || '').trim() || parsed.noteTarget,
+    };
+  }
+
+  const noteId = resolveNoteId(parsed.noteTarget, vault.notes);
+  const label = String(alias ?? parsed.noteTarget).trim() || parsed.noteTarget;
+  if (noteId == null) {
+    return {
+      status: 'missing',
+      vaultId: vault.vaultId,
+      vaultSlug: vault.vaultSlug,
+      label,
+    };
+  }
+  return {
+    status: 'ok',
+    noteId,
+    vaultId: vault.vaultId,
+    vaultSlug: vault.vaultSlug,
+    label,
+  };
 }
 
 /**

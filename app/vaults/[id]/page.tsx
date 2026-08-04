@@ -2,20 +2,25 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import MarkdownNoteEditor from '@/components/MarkdownNoteEditor';
+import type { LinkableVaultNotes } from '@/lib/notePaths';
 import CreateNoteModal, { type SelectedTemplate } from '@/components/CreateNoteModal';
 import QuickSwitcher from '@/components/QuickSwitcher';
 import NoteGraphMindmap from '@/components/NoteGraphMindmap';
-import RevisionDiffModal, { type RevisionSnapshot } from '@/components/RevisionDiffModal';
+import RevisionDiffModal, {
+  type PartialRestorePatch,
+  type RevisionSnapshot,
+} from '@/components/RevisionDiffModal';
 import VaultOptionsModal from '@/components/VaultOptionsModal';
 import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
 import NoteTasksPanel from '@/components/NoteTasksPanel';
 import NoteExportModal from '@/components/NoteExportModal';
+import NoteTransferModal from '@/components/NoteTransferModal';
 import NotesFolderTree from '@/components/NotesFolderTree';
 import NoteIconPicker from '@/components/NoteIconPicker';
 import VaultSwitcher, { rememberLastVault } from '@/components/VaultSwitcher';
-import { noteLeafName } from '@/lib/notePaths';
+import { noteLeafName, resolveNoteId } from '@/lib/notePaths';
 import { normalizeNoteIcon, type NoteIconId } from '@/lib/noteIcons';
 import { applyNoteTemplateBody } from '@/lib/noteTemplates';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -35,6 +40,7 @@ interface Revision {
   RevisionNumber: number;
   Title: string;
   CreatedAt: string;
+  Source?: 'manual' | 'auto';
 }
 
 interface Backlink {
@@ -42,6 +48,10 @@ interface Backlink {
   Title: string;
   Path: string;
   Kind: string;
+  VaultId?: number;
+  VaultSlug?: string | null;
+  VaultName?: string | null;
+  Restricted?: boolean;
 }
 
 type CenterMode = 'editor' | 'mindmap';
@@ -106,10 +116,12 @@ function FullMindmapPane({
 export default function VaultWorkspacePage() {
   const params = useParams();
   const searchParams = useSearchParams();
+  const router = useRouter();
   const vaultId = String(params.id);
   const deepNoteOpenedRef = useRef(false);
 
   const [notes, setNotes] = useState<NoteListItem[]>([]);
+  const [linkableVaults, setLinkableVaults] = useState<LinkableVaultNotes[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -149,9 +161,11 @@ export default function VaultWorkspacePage() {
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffRestoring, setDiffRestoring] = useState(false);
+  const [diffApplying, setDiffApplying] = useState(false);
   const [diffRevision, setDiffRevision] = useState<RevisionSnapshot | null>(null);
   const [pmTasksOpen, setPmTasksOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
   const [vaultOptionsTab, setVaultOptionsTab] = useState<
     'links' | 'share' | 'pm' | 'vault' | 'trash' | undefined
   >(undefined);
@@ -227,6 +241,12 @@ export default function VaultWorkspacePage() {
     setNotes(data.data || []);
   }, [vaultId, q]);
 
+  const loadLinkableVaults = useCallback(async () => {
+    const res = await fetch('/api/vaults/linkable-notes', { credentials: 'include' });
+    const data = await res.json();
+    if (res.ok) setLinkableVaults(Array.isArray(data.data) ? data.data : []);
+  }, []);
+
   const loadVault = useCallback(async () => {
     const res = await fetch(`/api/vaults/${vaultId}`, { credentials: 'include' });
     const data = await res.json();
@@ -245,7 +265,8 @@ export default function VaultWorkspacePage() {
   useEffect(() => {
     void loadVault();
     void loadGraph();
-  }, [loadVault, loadGraph]);
+    void loadLinkableVaults();
+  }, [loadVault, loadGraph, loadLinkableVaults]);
 
   useEffect(() => {
     if (vaultId) rememberLastVault(vaultId);
@@ -307,16 +328,25 @@ export default function VaultWorkspacePage() {
     void openNote(noteId, { force: true });
   }, [searchParams, vaultId]);
 
-  const saveNote = async (opts?: { reason?: 'manual' | 'auto' }) => {
+  const saveNote = async (opts?: {
+    reason?: 'manual' | 'auto';
+    title?: string;
+    body?: string;
+    visibility?: string;
+  }) => {
     if (!selectedId || !canEdit) return false;
     const reason = opts?.reason || 'manual';
+    const nextTitle = opts?.title ?? title;
+    const nextBody = opts?.body ?? body;
+    const nextVisibility = opts?.visibility ?? visibility;
     setSaveState('saving');
     setStatus(reason === 'auto' ? 'Autosaving…' : 'Saving…');
     const payload = {
-      title,
-      bodyMarkdown: body,
-      visibility: visibility || null,
+      title: nextTitle,
+      bodyMarkdown: nextBody,
+      visibility: nextVisibility || null,
       icon: noteIcon,
+      revisionSource: reason,
     };
     const res = await fetch(`/api/vaults/${vaultId}/notes/${selectedId}`, {
       method: 'PUT',
@@ -331,9 +361,9 @@ export default function VaultWorkspacePage() {
       return false;
     }
     setSavedSnapshot({
-      title,
-      body,
-      visibility,
+      title: nextTitle,
+      body: nextBody,
+      visibility: nextVisibility,
       icon: noteIcon,
     });
     setSaveState('saved');
@@ -346,6 +376,28 @@ export default function VaultWorkspacePage() {
     if (revRes.ok) setRevisions((await revRes.json()).data || []);
     if (reason === 'manual') await loadGraph();
     return true;
+  };
+
+  const applyPartialRestore = async (patch: PartialRestorePatch) => {
+    if (!selectedId || !canEdit || diffApplying || diffRestoring) return;
+    const nextTitle = patch.title ?? title;
+    const nextBody = patch.bodyMarkdown ?? body;
+    const nextVisibility = patch.visibility !== undefined ? patch.visibility : visibility;
+    setDiffApplying(true);
+    try {
+      if (patch.title !== undefined) setTitle(patch.title);
+      if (patch.bodyMarkdown !== undefined) setBody(patch.bodyMarkdown);
+      if (patch.visibility !== undefined) setVisibility(patch.visibility);
+      const ok = await saveNote({
+        reason: 'manual',
+        title: nextTitle,
+        body: nextBody,
+        visibility: nextVisibility,
+      });
+      if (ok) setStatus('Restored selected change');
+    } finally {
+      setDiffApplying(false);
+    }
   };
 
   // Debounced autosave
@@ -401,6 +453,8 @@ export default function VaultWorkspacePage() {
       linkFromNoteId?: number | null;
       skipOpen?: boolean;
       template?: SelectedTemplate;
+      /** Create in another vault (e.g. missing `[[@slug/note]]`). */
+      targetVaultId?: number;
     }
   ) => {
     setCreateOpen(false);
@@ -409,6 +463,8 @@ export default function VaultWorkspacePage() {
 
     const linkFromNoteId = opts?.linkFromNoteId ?? null;
     const skipOpen = Boolean(opts?.skipOpen);
+    const destVaultId = opts?.targetVaultId ? Number(opts.targetVaultId) : Number(vaultId);
+    const isCrossVault = destVaultId !== Number(vaultId);
     const bodyMarkdown = opts?.template
       ? applyNoteTemplateBody(opts.template.bodyMarkdown, noteLeafName(trimmed))
       : applyNoteTemplateBody(`# {{title}}\n\n`, noteLeafName(trimmed));
@@ -421,31 +477,50 @@ export default function VaultWorkspacePage() {
       }).catch(() => null);
     };
 
-    const existingId = noteIndex.find(
-      (n) =>
-        n.title.replace(/\\/g, '/').toLowerCase() === trimmed.replace(/\\/g, '/').toLowerCase() ||
-        n.path.replace(/\.md$/i, '').replace(/\\/g, '/').toLowerCase() ===
-          trimmed.replace(/\.md$/i, '').replace(/\\/g, '/').toLowerCase()
-    )?.id;
-    if (existingId) {
-      await rebuildSourceGraph();
-      await loadGraph();
-      if (!skipOpen) await openNote(existingId);
-      return;
+    if (!isCrossVault) {
+      const existingId = noteIndex.find(
+        (n) =>
+          n.title.replace(/\\/g, '/').toLowerCase() === trimmed.replace(/\\/g, '/').toLowerCase() ||
+          n.path.replace(/\.md$/i, '').replace(/\\/g, '/').toLowerCase() ===
+            trimmed.replace(/\.md$/i, '').replace(/\\/g, '/').toLowerCase()
+      )?.id;
+      if (existingId) {
+        await rebuildSourceGraph();
+        await loadGraph();
+        if (!skipOpen) await openNote(existingId);
+        return;
+      }
+    } else {
+      const destNotes =
+        linkableVaults.find((v) => v.vaultId === destVaultId)?.notes || [];
+      const existingRemote = resolveNoteId(trimmed, destNotes);
+      if (existingRemote) {
+        await rebuildSourceGraph();
+        void loadLinkableVaults();
+        if (!skipOpen) router.push(`/vaults/${destVaultId}?note=${existingRemote}`);
+        return;
+      }
     }
 
-    const res = await fetch(`/api/vaults/${vaultId}/notes`, {
+    const res = await fetch(`/api/vaults/${destVaultId}/notes`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         title: trimmed,
         bodyMarkdown,
-        ...(linkFromNoteId ? { linkFromNoteId } : {}),
+        // linkFromNoteId only works inside the destination vault
+        ...(!isCrossVault && linkFromNoteId ? { linkFromNoteId } : {}),
       }),
     });
     const data = await res.json();
     if (res.status === 409 && data.data?.id) {
+      if (isCrossVault) {
+        await rebuildSourceGraph();
+        void loadLinkableVaults();
+        if (!skipOpen) router.push(`/vaults/${destVaultId}?note=${Number(data.data.id)}`);
+        return;
+      }
       await loadNotes();
       await loadGraph();
       if (!skipOpen) await openNote(Number(data.data.id));
@@ -459,6 +534,16 @@ export default function VaultWorkspacePage() {
     const newId = Number(data.data.id);
     const newPath = String(data.data.path || `${trimmed}.md`);
     const newTitle = String(data.data.title || trimmed);
+
+    if (isCrossVault) {
+      setStatus(`Created “${trimmed}” in the other vault`);
+      await rebuildSourceGraph();
+      void loadLinkableVaults();
+      await loadGraph();
+      if (!skipOpen) router.push(`/vaults/${destVaultId}?note=${newId}`);
+      return;
+    }
+
     setNotes((prev) => {
       if (prev.some((n) => n.Id === newId)) return prev;
       return [
@@ -1118,6 +1203,25 @@ export default function VaultWorkspacePage() {
                   {canEdit && (
                     <button
                       type="button"
+                      className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
+                      onClick={() => setTransferOpen(true)}
+                      title="Copy or move this note to another vault"
+                      aria-label="Send"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                        <path
+                          d="M5 12h14m0 0-5-5m5 5-5 5"
+                          stroke="currentColor"
+                          strokeWidth="1.75"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                  {canEdit && (
+                    <button
+                      type="button"
                       className="btn-danger shrink-0 px-2.5 py-1.5 text-sm"
                       onClick={() => setDeleteOpen(true)}
                       title="Move this note to trash"
@@ -1191,6 +1295,16 @@ export default function VaultWorkspacePage() {
                 {canEdit && (
                   <button
                     type="button"
+                    className="btn-ghost"
+                    onClick={() => setTransferOpen(true)}
+                    title="Copy or move this note to another vault"
+                  >
+                    Send…
+                  </button>
+                )}
+                {canEdit && (
+                  <button
+                    type="button"
                     className="btn-danger"
                     onClick={() => setDeleteOpen(true)}
                     title="Move this note to trash"
@@ -1205,11 +1319,24 @@ export default function VaultWorkspacePage() {
                 vaultId={vaultId}
                 noteId={selectedId}
                 notes={noteIndex}
+                linkableVaults={linkableVaults}
                 onOpenNote={(id) => void openNote(id)}
+                onOpenCrossVaultNote={(targetVaultId, noteId) => {
+                  router.push(`/vaults/${targetVaultId}?note=${noteId}`);
+                }}
                 onCreateNoteFromWikilink={
                   canEdit
                     ? (wikilinkTitle) =>
                         void createNote(wikilinkTitle, { linkFromNoteId: selectedId })
+                    : undefined
+                }
+                onCreateCrossVaultNote={
+                  canEdit
+                    ? (targetVaultId, wikilinkTitle) =>
+                        void createNote(wikilinkTitle, {
+                          targetVaultId,
+                          linkFromNoteId: selectedId,
+                        })
                     : undefined
                 }
                 onStatus={setStatus}
@@ -1300,6 +1427,12 @@ export default function VaultWorkspacePage() {
                   onStatus={setStatus}
                   compact
                   readOnly={!canEdit}
+                  notes={noteIndex}
+                  linkableVaults={linkableVaults}
+                  onOpenNote={(id) => void openNote(id)}
+                  onOpenCrossVaultNote={(targetVaultId, noteId) => {
+                    router.push(`/vaults/${targetVaultId}?note=${noteId}`);
+                  }}
                 />
               </div>
             )}
@@ -1312,12 +1445,30 @@ export default function VaultWorkspacePage() {
               {references.length === 0 && <p className="text-[var(--muted)]">None yet</p>}
               {references.map((b) => (
                 <button
-                  key={`ref-${b.Id}-${b.Kind}`}
+                  key={`ref-${b.Id}-${b.Kind}-${b.VaultId || vaultId}`}
                   type="button"
-                  className="block w-full rounded-lg px-2 py-1.5 text-left text-[var(--accent-soft)] transition hover:bg-[var(--surface-2)]"
-                  onClick={() => void openNote(b.Id)}
+                  className="block w-full rounded-lg px-2 py-1.5 text-left text-[var(--accent-soft)] transition hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={Boolean(b.Restricted)}
+                  title={b.Restricted ? "You don't have access to this note" : undefined}
+                  onClick={() => {
+                    if (b.Restricted) return;
+                    const targetVault = b.VaultId != null ? Number(b.VaultId) : Number(vaultId);
+                    if (targetVault !== Number(vaultId)) {
+                      router.push(`/vaults/${targetVault}?note=${b.Id}`);
+                      return;
+                    }
+                    void openNote(b.Id);
+                  }}
                 >
-                  → {b.Title}{' '}
+                  → {b.Title}
+                  {b.Restricted ? (
+                    <span className="ml-1 rounded border border-[var(--border)] px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                      No access
+                    </span>
+                  ) : null}
+                  {b.VaultName && Number(b.VaultId) !== Number(vaultId) ? (
+                    <span className="text-[11px] text-[var(--muted)]"> · {b.VaultName}</span>
+                  ) : null}{' '}
                   <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
                 </button>
               ))}
@@ -1331,45 +1482,67 @@ export default function VaultWorkspacePage() {
               {backlinks.length === 0 && <p className="text-[var(--muted)]">None yet</p>}
               {backlinks.map((b) => (
                 <button
-                  key={`bl-${b.Id}-${b.Kind}`}
+                  key={`bl-${b.Id}-${b.Kind}-${b.VaultId || vaultId}`}
                   type="button"
-                  className="block w-full rounded-lg px-2 py-1.5 text-left text-[var(--accent-soft)] transition hover:bg-[var(--surface-2)]"
-                  onClick={() => void openNote(b.Id)}
+                  className="block w-full rounded-lg px-2 py-1.5 text-left text-[var(--accent-soft)] transition hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={Boolean(b.Restricted)}
+                  title={b.Restricted ? "You don't have access to this note" : undefined}
+                  onClick={() => {
+                    if (b.Restricted) return;
+                    const targetVault = b.VaultId != null ? Number(b.VaultId) : Number(vaultId);
+                    if (targetVault !== Number(vaultId)) {
+                      router.push(`/vaults/${targetVault}?note=${b.Id}`);
+                      return;
+                    }
+                    void openNote(b.Id);
+                  }}
                 >
-                  ← {b.Title}{' '}
+                  ← {b.Title}
+                  {b.Restricted ? (
+                    <span className="ml-1 rounded border border-[var(--border)] px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                      No access
+                    </span>
+                  ) : null}
+                  {b.VaultName && Number(b.VaultId) !== Number(vaultId) ? (
+                    <span className="text-[11px] text-[var(--muted)]"> · {b.VaultName}</span>
+                  ) : null}{' '}
                   <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
                 </button>
               ))}
             </div>
 
-            <h2 className="mb-2 mt-6 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-              History
-            </h2>
-            {revisions.length === 0 && <p className="text-[var(--muted)]">No revisions</p>}
-            {visibleRevisions.map((r) => (
-              <div key={r.RevisionNumber} className="mb-2 flex items-center justify-between gap-2">
-                <span className="text-[11px] text-[var(--muted)]">
-                  #{r.RevisionNumber} · {new Date(r.CreatedAt).toLocaleString()}
-                </span>
-                <button
-                  type="button"
-                  className="text-[11px] font-medium text-[var(--accent-soft)]"
-                  onClick={() => void openRevisionDiff(r.RevisionNumber)}
-                >
-                  Compare
-                </button>
-              </div>
-            ))}
-            {revisions.length > HISTORY_PREVIEW && (
-              <button
-                type="button"
-                className="mt-1 text-[11px] font-medium text-[var(--accent-soft)]"
-                onClick={() => setHistoryExpanded((v) => !v)}
-              >
-                {historyExpanded
-                  ? 'Show less'
-                  : `Show ${revisions.length - HISTORY_PREVIEW} older…`}
-              </button>
+            {revisions.length > 0 && (
+              <>
+                <h2 className="mb-2 mt-6 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                  History
+                </h2>
+                {visibleRevisions.map((r) => (
+                  <div key={r.RevisionNumber} className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-[var(--muted)]">
+                      #{r.RevisionNumber} · {r.Source === 'auto' ? 'Autosave' : 'Manual'} ·{' '}
+                      {new Date(r.CreatedAt).toLocaleString()}
+                    </span>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-[var(--accent-soft)]"
+                      onClick={() => void openRevisionDiff(r.RevisionNumber)}
+                    >
+                      Compare
+                    </button>
+                  </div>
+                ))}
+                {revisions.length > HISTORY_PREVIEW && (
+                  <button
+                    type="button"
+                    className="mt-1 text-[11px] font-medium text-[var(--accent-soft)]"
+                    onClick={() => setHistoryExpanded((v) => !v)}
+                  >
+                    {historyExpanded
+                      ? 'Show less'
+                      : `Show ${revisions.length - HISTORY_PREVIEW} older…`}
+                  </button>
+                )}
+              </>
             )}
 
             {selectedId && (
@@ -1475,8 +1648,9 @@ export default function VaultWorkspacePage() {
           visibility,
         }}
         restoring={diffRestoring}
+        applying={diffApplying}
         onClose={() => {
-          if (diffRestoring) return;
+          if (diffRestoring || diffApplying) return;
           setDiffOpen(false);
           setDiffRevision(null);
           setDiffRevNumber(null);
@@ -1484,18 +1658,23 @@ export default function VaultWorkspacePage() {
         onRestore={() => {
           if (diffRevNumber != null) void restore(diffRevNumber);
         }}
+        onApplyPartial={(patch) => {
+          void applyPartialRestore(patch);
+        }}
       />
 
       <VaultOptionsModal
         open={vaultOptionsOpen}
         vaultId={vaultId}
         vaultName={vaultMeta.Name || `Vault #${vaultId}`}
+        vaultSlug={vaultMeta.slug || ''}
         isOwner={isOwner}
         canEdit={canEdit}
         defaultVisibility={vaultMeta.DefaultVisibility || 'private'}
         pmProjectId={vaultMeta.PmProjectId}
         pmOrganizationId={vaultMeta.PmOrganizationId}
         initialTab={vaultOptionsTab || 'links'}
+        notes={noteIndex}
         onClose={() => {
           setVaultOptionsOpen(false);
           setVaultOptionsTab(undefined);
@@ -1530,6 +1709,7 @@ export default function VaultWorkspacePage() {
           setPmTasksOpen(false);
           void openNote(id);
         }}
+        notes={noteIndex}
       />
 
       <NoteExportModal
@@ -1539,6 +1719,32 @@ export default function VaultWorkspacePage() {
         noteTitle={title}
         onClose={() => setExportOpen(false)}
       />
+
+      {selectedId != null && (
+        <NoteTransferModal
+          open={transferOpen}
+          vaultId={vaultId}
+          noteId={selectedId}
+          noteTitle={title}
+          onClose={() => setTransferOpen(false)}
+          onDone={(result) => {
+            setTransferOpen(false);
+            setStatus(
+              result.mode === 'move'
+                ? 'Note moved to destination vault'
+                : 'Note copied to destination vault'
+            );
+            if (result.mode === 'move') {
+              setSelectedId(null);
+              setBody('');
+              setTitle('');
+              void loadNotes();
+              void loadGraph();
+            }
+            router.push(`/vaults/${result.vaultId}?note=${result.noteId}`);
+          }}
+        />
+      )}
     </div>
   );
 }

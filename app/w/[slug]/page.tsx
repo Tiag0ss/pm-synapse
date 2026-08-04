@@ -212,6 +212,11 @@ export default function PublicWikiPage() {
       e.preventDefault();
       e.stopPropagation();
       const byId = Number(target.dataset.noteId || 0);
+      const crossVaultSlug = String(target.dataset.vaultSlug || '').trim();
+      if (byId && crossVaultSlug && crossVaultSlug !== slug) {
+        window.location.href = `/w/${encodeURIComponent(crossVaultSlug)}?n=${byId}`;
+        return;
+      }
       if (byId) {
         void openNote(byId);
         return;

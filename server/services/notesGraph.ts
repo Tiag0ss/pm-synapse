@@ -1,8 +1,15 @@
 import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { extractTags, extractWikiLinks, findMentions } from './markdown';
-import { pathStem, resolveNoteId } from './notePaths';
+import { rewriteFrontmatterTodoNoteTargets } from './frontmatter';
+import { parseCrossVaultWikilinkTarget, pathStem, resolveNoteId } from './notePaths';
 
 const MAX_REVISIONS = 50;
+
+export type RevisionSource = 'manual' | 'auto';
+
+function sameNullable(a: string | null, b: string | null): boolean {
+  return (a ?? null) === (b ?? null);
+}
 
 export async function snapshotRevision(
   noteId: number,
@@ -13,8 +20,33 @@ export async function snapshotRevision(
     bodyMarkdown: string;
     frontmatterJson: string | null;
     visibility: string | null;
+    source?: RevisionSource;
   }
-): Promise<void> {
+): Promise<boolean> {
+  const source: RevisionSource = snapshot.source === 'auto' ? 'auto' : 'manual';
+
+  const [latestRows] = await pool.execute<RowDataPacket[]>(
+    `SELECT Title, Path, BodyMarkdown, FrontmatterJson, Visibility
+     FROM NoteRevisions
+     WHERE NoteId = ?
+     ORDER BY RevisionNumber DESC
+     LIMIT 1`,
+    [noteId]
+  );
+  if (latestRows.length) {
+    const prev = latestRows[0];
+    const identical =
+      String(prev.Title) === snapshot.title &&
+      String(prev.Path) === snapshot.path &&
+      String(prev.BodyMarkdown || '') === snapshot.bodyMarkdown &&
+      sameNullable(
+        prev.FrontmatterJson != null ? String(prev.FrontmatterJson) : null,
+        snapshot.frontmatterJson
+      ) &&
+      sameNullable(prev.Visibility != null ? String(prev.Visibility) : null, snapshot.visibility);
+    if (identical) return false;
+  }
+
   const [rows] = await pool.execute<RowDataPacket[]>(
     'SELECT COALESCE(MAX(RevisionNumber), 0) AS MaxRev FROM NoteRevisions WHERE NoteId = ?',
     [noteId]
@@ -22,8 +54,8 @@ export async function snapshotRevision(
   const next = Number(rows[0]?.MaxRev || 0) + 1;
   await pool.execute(
     `INSERT INTO NoteRevisions
-      (NoteId, RevisionNumber, Title, Path, BodyMarkdown, FrontmatterJson, Visibility, CreatedByPmUserId)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (NoteId, RevisionNumber, Title, Path, BodyMarkdown, FrontmatterJson, Visibility, Source, CreatedByPmUserId)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       noteId,
       next,
@@ -32,6 +64,7 @@ export async function snapshotRevision(
       snapshot.bodyMarkdown,
       snapshot.frontmatterJson,
       snapshot.visibility,
+      source,
       pmUserId,
     ]
   );
@@ -46,6 +79,7 @@ export async function snapshotRevision(
        )`,
     [noteId, MAX_REVISIONS, noteId]
   );
+  return true;
 }
 
 export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise<void> {
@@ -78,7 +112,31 @@ export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise
 
   const wikiLinkedIds = new Set<number>();
   for (const target of wikiTargets) {
-    const toId = resolveNoteId(target, resolveIndex);
+    const cross = parseCrossVaultWikilinkTarget(target);
+    let toId: number | null = null;
+    if (cross) {
+      const [vaultRows] = await pool.execute<RowDataPacket[]>(
+        'SELECT Id FROM Vaults WHERE LOWER(slug) = LOWER(?) LIMIT 1',
+        [cross.vaultSlug]
+      );
+      if (vaultRows.length) {
+        const targetVaultId = Number(vaultRows[0].Id);
+        const [remoteNotes] = await pool.execute<RowDataPacket[]>(
+          'SELECT Id, Title, Path FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
+          [targetVaultId]
+        );
+        toId = resolveNoteId(
+          cross.noteTarget,
+          remoteNotes.map((n) => ({
+            id: Number(n.Id),
+            title: String(n.Title),
+            path: String(n.Path || ''),
+          }))
+        );
+      }
+    } else {
+      toId = resolveNoteId(target, resolveIndex);
+    }
     if (toId && toId !== noteId) {
       wikiLinkedIds.add(toId);
       await pool.execute(
@@ -126,6 +184,10 @@ export async function rewriteWikiLinksOnRename(
   const oldStem = pathStem(oldPath);
   const newStem = pathStem(newPath);
 
+  const noteFieldReplacements: Array<{ from: string; to: string }> = [];
+  if (oldTitle !== newTitle) noteFieldReplacements.push({ from: oldTitle, to: newTitle });
+  if (oldStem !== newStem) noteFieldReplacements.push({ from: oldStem, to: newStem });
+
   for (const note of notes) {
     let body = String(note.BodyMarkdown || '');
     const before = body;
@@ -143,6 +205,9 @@ export async function rewriteWikiLinksOnRename(
         `[[${newStem}|$1]]`
       );
     }
+    const rewrittenFm = rewriteFrontmatterTodoNoteTargets(body, noteFieldReplacements);
+    if (rewrittenFm) body = rewrittenFm;
+
     if (body !== before) {
       await pool.execute('UPDATE Notes SET BodyMarkdown = ? WHERE Id = ?', [body, note.Id]);
       await rebuildNoteGraph(Number(note.Id), vaultId);

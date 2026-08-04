@@ -56,6 +56,8 @@ import {
   normalizeMemberRole,
   NOTE_VISIBILITY_VALUES,
 } from '../services/vaultAccess';
+import { listLinkableVaultNotesForApp } from '../services/linkableNotes';
+import { transferNoteToVault } from '../services/noteTransfer';
 import logger from '../utils/logger';
 
 const ACTIVE_NOTE = 'DeletedAt IS NULL';
@@ -232,6 +234,17 @@ async function syncCheckboxRows(noteId: number, bodyMarkdown: string): Promise<v
 router.get('/', async (req: AuthRequest, res: Response) => {
   const rows = await listAccessibleVaults(req.user!.userId);
   res.json({ success: true, data: rows });
+});
+
+/** Notes across editable vaults for `[[@vault-slug/…]]` resolution. */
+router.get('/linkable-notes', async (req: AuthRequest, res: Response) => {
+  try {
+    const data = await listLinkableVaultNotesForApp(req.user!.userId);
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('linkable-notes failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to load linkable notes' });
+  }
 });
 
 /** Search Synapse users for vault sharing. */
@@ -483,6 +496,7 @@ router.patch('/:vaultId', async (req: AuthRequest, res: Response) => {
   const vault = await ownedVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const schema = z.object({
+    name: z.string().min(1).max(255).optional(),
     allowPublicPages: z.boolean().optional(),
     defaultVisibility: visibilityEnum.optional(),
     description: z.string().max(5000).optional().nullable(),
@@ -490,6 +504,13 @@ router.patch('/:vaultId', async (req: AuthRequest, res: Response) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: 'Invalid payload' });
+  }
+  if (parsed.data.name !== undefined) {
+    const name = parsed.data.name.trim();
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'Name cannot be empty' });
+    }
+    await pool.execute('UPDATE Vaults SET Name = ? WHERE Id = ?', [name, vault.Id]);
   }
   if (parsed.data.allowPublicPages !== undefined) {
     await pool.execute('UPDATE Vaults SET AllowPublicPages = ? WHERE Id = ?', [
@@ -823,6 +844,7 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     visibility: visibilityEnum.optional().nullable(),
     aliases: z.array(z.string()).optional(),
     icon: z.union([z.string().max(64), z.null()]).optional(),
+    revisionSource: z.enum(['manual', 'auto']).optional(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -865,6 +887,7 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     bodyMarkdown: body,
     frontmatterJson: fmJson,
     visibility: visibility ? String(visibility) : null,
+    source: parsed.data.revisionSource === 'auto' ? 'auto' : 'manual',
   });
 
   if (title !== existing.Title || path !== existing.Path) {
@@ -907,6 +930,88 @@ router.delete('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response)
   await pool.execute('DELETE FROM NoteLinks WHERE FromNoteId = ? OR ToNoteId = ?', [noteId, noteId]);
   logger.info('Note moved to trash', { vaultId: vault.Id, noteId, title: existing.Title });
   res.json({ success: true, message: 'Note moved to trash' });
+});
+
+/** Copy or move a note to another vault (or create a new vault and seed it). */
+router.post('/:vaultId/notes/:noteId/transfer', async (req: AuthRequest, res: Response) => {
+  const sourceVault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!sourceVault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+  const schema = z
+    .object({
+      mode: z.enum(['copy', 'move']),
+      targetVaultId: z.coerce.number().int().positive().optional(),
+      newVault: z
+        .object({
+          name: z.string().min(1).max(255),
+          defaultVisibility: visibilityEnum.optional(),
+        })
+        .optional(),
+    })
+    .refine((d) => Boolean(d.targetVaultId) !== Boolean(d.newVault), {
+      message: 'Provide exactly one of targetVaultId or newVault',
+    });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Invalid transfer payload' });
+  }
+
+  const noteId = Number(req.params.noteId);
+  let targetVaultId = parsed.data.targetVaultId ? Number(parsed.data.targetVaultId) : 0;
+  let createdVault: { id: number; slug: string } | undefined;
+
+  try {
+    if (parsed.data.newVault) {
+      const slug = slugify(parsed.data.newVault.name);
+      const [result] = await pool.execute<ResultSetHeader>(
+        `INSERT INTO Vaults (OwnerPmUserId, Name, slug, Description, DefaultVisibility, AllowPublicPages)
+         VALUES (?, ?, ?, NULL, ?, 0)`,
+        [
+          req.user!.userId,
+          parsed.data.newVault.name,
+          slug,
+          parsed.data.newVault.defaultVisibility || 'private',
+        ]
+      );
+      targetVaultId = result.insertId;
+      createdVault = { id: targetVaultId, slug };
+    } else {
+      const target = await editableVault(targetVaultId, req.user!.userId);
+      if (!target) {
+        return res.status(404).json({ success: false, message: 'Target vault not found' });
+      }
+      targetVaultId = Number(target.Id);
+    }
+
+    const data = await transferNoteToVault({
+      sourceVaultId: Number(sourceVault.Id),
+      sourceNoteId: noteId,
+      targetVaultId,
+      pmUserId: req.user!.userId,
+      mode: parsed.data.mode,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        ...data,
+        createdVault,
+      },
+      message:
+        parsed.data.mode === 'move'
+          ? 'Note moved to the destination vault'
+          : 'Note copied to the destination vault',
+    });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Note transfer failed', { error });
+    res.status(status).json({
+      success: false,
+      message: err.message || 'Transfer failed',
+    });
+  }
 });
 
 router.post('/:vaultId/notes/:noteId/restore', async (req: AuthRequest, res: Response) => {
@@ -959,11 +1064,19 @@ router.post('/:vaultId/notes/:noteId/rebuild-graph', async (req: AuthRequest, re
 router.get('/:vaultId/notes/:noteId/revisions', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  // Omit snapshots that match the live note (always true for the latest post-save rev).
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT r.Id, r.RevisionNumber, r.Title, r.Path, r.CreatedAt, r.CreatedByPmUserId
+    `SELECT r.Id, r.RevisionNumber, r.Title, r.Path, r.CreatedAt, r.CreatedByPmUserId, r.Source
      FROM NoteRevisions r
      INNER JOIN Notes n ON n.Id = r.NoteId
      WHERE r.NoteId = ? AND n.VaultId = ?
+       AND NOT (
+         r.Title <=> n.Title
+         AND r.Path <=> n.Path
+         AND r.BodyMarkdown <=> n.BodyMarkdown
+         AND r.FrontmatterJson <=> n.FrontmatterJson
+         AND r.Visibility <=> n.Visibility
+       )
      ORDER BY r.RevisionNumber DESC`,
     [req.params.noteId, vault.Id]
   );
@@ -1049,27 +1162,60 @@ router.get('/:vaultId/notes/:noteId/backlinks', async (req: AuthRequest, res: Re
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const noteId = Number(req.params.noteId);
+  const accessible = await listAccessibleVaults(req.user!.userId);
+  const accessibleIds = new Set(accessible.map((v) => Number(v.Id)));
+
   const [incoming] = await pool.execute<RowDataPacket[]>(
-    `SELECT n.Id, n.Title, n.Path, l.Kind
+    `SELECT n.Id, n.Title, n.Path, n.VaultId, v.Name AS VaultName, v.slug AS VaultSlug, l.Kind
      FROM NoteLinks l
      INNER JOIN Notes n ON n.Id = l.FromNoteId
-     WHERE l.ToNoteId = ? AND n.VaultId = ? AND n.DeletedAt IS NULL
+     INNER JOIN Vaults v ON v.Id = n.VaultId
+     WHERE l.ToNoteId = ? AND n.DeletedAt IS NULL
      ORDER BY n.Title ASC`,
-    [noteId, vault.Id]
+    [noteId]
   );
   const [outgoing] = await pool.execute<RowDataPacket[]>(
-    `SELECT n.Id, n.Title, n.Path, l.Kind
+    `SELECT n.Id, n.Title, n.Path, n.VaultId, v.Name AS VaultName, v.slug AS VaultSlug, l.Kind
      FROM NoteLinks l
      INNER JOIN Notes n ON n.Id = l.ToNoteId
-     WHERE l.FromNoteId = ? AND n.VaultId = ? AND n.DeletedAt IS NULL
+     INNER JOIN Vaults v ON v.Id = n.VaultId
+     WHERE l.FromNoteId = ? AND n.DeletedAt IS NULL
      ORDER BY n.Title ASC`,
-    [noteId, vault.Id]
+    [noteId]
   );
+
+  const mapRow = (row: RowDataPacket) => {
+    const targetVaultId = Number(row.VaultId);
+    const allowed = accessibleIds.has(targetVaultId);
+    if (!allowed) {
+      return {
+        Id: Number(row.Id),
+        Title: String(row.Title),
+        Path: String(row.Path || ''),
+        Kind: String(row.Kind),
+        VaultId: targetVaultId,
+        VaultSlug: row.VaultSlug != null ? String(row.VaultSlug) : null,
+        VaultName: row.VaultName != null ? String(row.VaultName) : null,
+        Restricted: true,
+      };
+    }
+    return {
+      Id: Number(row.Id),
+      Title: String(row.Title),
+      Path: String(row.Path || ''),
+      Kind: String(row.Kind),
+      VaultId: targetVaultId,
+      VaultSlug: row.VaultSlug != null ? String(row.VaultSlug) : null,
+      VaultName: row.VaultName != null ? String(row.VaultName) : null,
+      Restricted: false,
+    };
+  };
+
   res.json({
     success: true,
     data: {
-      backlinks: preferWikilinkRows(incoming),
-      references: preferWikilinkRows(outgoing),
+      backlinks: preferWikilinkRows(incoming).map(mapRow),
+      references: preferWikilinkRows(outgoing).map(mapRow),
     },
   });
 });
@@ -1119,6 +1265,8 @@ router.get('/:vaultId/broken-links', async (req: AuthRequest, res: Response) => 
     const targets = extractWikiLinks(String(note.BodyMarkdown || ''));
     const counts = new Map<string, number>();
     for (const target of targets) {
+      // Cross-vault links are resolved outside this vault — not "broken" here
+      if (target.trim().startsWith('@')) continue;
       counts.set(target, (counts.get(target) || 0) + 1);
       if (resolveNoteId(target, resolveIndex) != null) continue;
       const occurrence = counts.get(target) || 1;
@@ -1332,6 +1480,7 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
         markerId: box.markerId,
         indent: box.indent,
         source: box.source,
+        linkedNote: box.linkedNote || null,
         pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
         pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
         openUrl: link?.PmTaskId
@@ -1413,6 +1562,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
           markerId: box.markerId,
           indent: box.indent,
           source: box.source,
+          linkedNote: box.linkedNote || null,
           pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
           pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
           openUrl: link?.PmTaskId

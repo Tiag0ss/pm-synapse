@@ -1,4 +1,5 @@
 import matter from 'gray-matter';
+import { resolveNoteId, type NoteResolveEntry } from './notePaths';
 import {
   parseEstimateFromFrontmatterTodo,
   type TaskEstimateMeta,
@@ -59,6 +60,10 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/'/g, '&#39;');
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -67,22 +72,82 @@ function isScalar(value: unknown): boolean {
   return value == null || ['string', 'number', 'boolean'].includes(typeof value);
 }
 
+/**
+ * Normalize a todo `note:` value to a wikilink target.
+ * Accepts plain title/path, `[[target]]` / `[[target|alias]]` (prefer quoted in YAML),
+ * or the nested arrays YAML produces for unquoted `[[…]]`.
+ */
+export function normalizeFrontmatterTodoNoteTarget(raw: unknown): string | null {
+  if (raw == null) return null;
+
+  const flattenYaml = (v: unknown): string[] => {
+    if (Array.isArray(v)) return v.flatMap(flattenYaml);
+    if (v == null) return [];
+    return [String(v)];
+  };
+
+  let s: string;
+  if (Array.isArray(raw)) {
+    const parts = flattenYaml(raw)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (!parts.length) return null;
+    s = parts.length === 1 ? parts[0] : parts.join('/');
+  } else {
+    s = String(raw).trim();
+  }
+  if (!s) return null;
+
+  const wiki = s.match(/^\[\[([^\]|#]+)(?:\|[^\]]+)?\]\]$/);
+  if (wiki) return wiki[1].trim() || null;
+
+  // Unquoted `[[target|alias]]` often becomes the single string "target|alias"
+  const pipe = s.indexOf('|');
+  if (pipe >= 0 && !s.includes('[') && !s.includes(']')) {
+    s = s.slice(0, pipe).trim();
+  }
+  return s || null;
+}
+
 /** Prefer common plan/todo fields first when showing object rows. */
 function objectKeyOrder(obj: Record<string, unknown>): string[] {
   const keys = Object.keys(obj);
-  const preferred = ['id', 'status', 'title', 'name', 'content', 'summary', 'description'];
+  const preferred = [
+    'id',
+    'status',
+    'title',
+    'name',
+    'content',
+    'summary',
+    'description',
+    'note',
+  ];
   return [...preferred.filter((k) => keys.includes(k)), ...keys.filter((k) => !preferred.includes(k))];
 }
 
-function renderObjectHtml(obj: Record<string, unknown>): string {
+function renderNoteLinkHtml(raw: unknown, notes: NoteResolveEntry[]): string {
+  const target = normalizeFrontmatterTodoNoteTarget(raw);
+  if (!target) return '';
+  const id = resolveNoteId(target, notes);
+  const cls = id != null ? 'synapse-wikilink' : 'synapse-wikilink is-missing';
+  const href = id != null ? `#note-${id}` : `#wiki-${encodeURIComponent(target)}`;
+  return `<a class="${cls}" href="${href}" data-note-id="${id ?? ''}" data-note-title="${escapeAttr(target)}">${escapeHtml(target)}</a>`;
+}
+
+function renderObjectHtml(obj: Record<string, unknown>, notes: NoteResolveEntry[]): string {
   const rows = objectKeyOrder(obj)
     .map((key) => {
       const value = obj[key];
       if (value === undefined || value === null || value === '') return '';
+      const rendered =
+        key === 'note'
+          ? renderNoteLinkHtml(value, notes)
+          : renderValueHtml(value, notes);
+      if (!rendered) return '';
       return (
         `<div class="synapse-fm-kv">` +
         `<span class="synapse-fm-k">${escapeHtml(key)}</span>` +
-        `<span class="synapse-fm-v">${renderValueHtml(value)}</span>` +
+        `<span class="synapse-fm-v">${rendered}</span>` +
         `</div>`
       );
     })
@@ -92,7 +157,7 @@ function renderObjectHtml(obj: Record<string, unknown>): string {
 }
 
 /** HTML for a frontmatter value (scalars, lists, nested objects). */
-function renderValueHtml(value: unknown): string {
+function renderValueHtml(value: unknown, notes: NoteResolveEntry[]): string {
   if (value == null) return '';
   if (typeof value === 'boolean' || typeof value === 'number') {
     return `<code class="synapse-fm-scalar">${escapeHtml(String(value))}</code>`;
@@ -110,10 +175,10 @@ function renderValueHtml(value: unknown): string {
     const items = value
       .map((item) => {
         if (isPlainObject(item)) {
-          return `<div class="synapse-fm-item">${renderObjectHtml(item)}</div>`;
+          return `<div class="synapse-fm-item">${renderObjectHtml(item, notes)}</div>`;
         }
         if (Array.isArray(item)) {
-          return `<div class="synapse-fm-item">${renderValueHtml(item)}</div>`;
+          return `<div class="synapse-fm-item">${renderValueHtml(item, notes)}</div>`;
         }
         return `<div class="synapse-fm-item">${escapeHtml(String(item))}</div>`;
       })
@@ -121,7 +186,7 @@ function renderValueHtml(value: unknown): string {
     return `<div class="synapse-fm-list">${items}</div>`;
   }
 
-  if (isPlainObject(value)) return renderObjectHtml(value);
+  if (isPlainObject(value)) return renderObjectHtml(value, notes);
 
   try {
     return `<pre class="synapse-fm-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
@@ -131,7 +196,10 @@ function renderValueHtml(value: unknown): string {
 }
 
 /** Compact properties card for Markdown preview / public wiki. */
-export function renderFrontmatterHtml(data: FrontmatterData): string {
+export function renderFrontmatterHtml(
+  data: FrontmatterData,
+  notes: NoteResolveEntry[] = []
+): string {
   const entries = Object.entries(data || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
   if (!entries.length) return '';
 
@@ -140,7 +208,7 @@ export function renderFrontmatterHtml(data: FrontmatterData): string {
       return (
         `<div class="synapse-fm-row">` +
         `<span class="synapse-fm-key">${escapeHtml(key)}</span>` +
-        `<span class="synapse-fm-val">${renderValueHtml(value)}</span>` +
+        `<span class="synapse-fm-val">${renderValueHtml(value, notes)}</span>` +
         `</div>`
       );
     })
@@ -148,7 +216,6 @@ export function renderFrontmatterHtml(data: FrontmatterData): string {
 
   return `<aside class="synapse-frontmatter" aria-label="Note properties"><div class="synapse-fm-title">Properties</div>${rows}</aside>`;
 }
-
 /** Tags declared in frontmatter (`tags: [a, b]` or `tags: a`). */
 export function frontmatterTags(data: FrontmatterData): string[] {
   const raw = data.tags ?? data.tag;
@@ -172,6 +239,8 @@ export type FrontmatterTodo = {
   checked: boolean;
   /** Index within the todos array */
   arrayIndex: number;
+  /** Linked note title/path from YAML `note:` (normalized). */
+  noteTarget: string | null;
   estimate?: TaskEstimateMeta;
 };
 
@@ -228,12 +297,14 @@ function normalizeTodoEntry(
     const status = raw.status != null ? String(raw.status) : 'pending';
     const content = todoContentFromObj(raw, id || `todo-${arrayIndex + 1}`);
     const estimate = parseEstimateFromFrontmatterTodo(raw);
+    const noteTarget = normalizeFrontmatterTodoNoteTarget(raw.note);
     return {
       id,
       content,
       status,
       checked: todoCheckedFromStatus(raw.status),
       arrayIndex,
+      noteTarget,
       estimate:
         estimate.estimatedHours != null || estimate.unscheduledWork === true
           ? estimate
@@ -247,6 +318,7 @@ function normalizeTodoEntry(
       status: 'pending',
       checked: false,
       arrayIndex,
+      noteTarget: null,
     };
   }
   return {
@@ -255,6 +327,7 @@ function normalizeTodoEntry(
     status: 'pending',
     checked: false,
     arrayIndex,
+    noteTarget: null,
   };
 }
 
@@ -273,10 +346,57 @@ export function parseFrontmatterTodos(markdown: string): FrontmatterTodo[] {
       status: n.status,
       checked: n.checked,
       arrayIndex: i,
+      noteTarget: n.noteTarget,
       estimate: n.estimate,
     });
   }
   return out;
+}
+
+/**
+ * Rewrite frontmatter todo `note:` targets when a linked note is renamed.
+ * Returns null when nothing changed.
+ */
+export function rewriteFrontmatterTodoNoteTargets(
+  markdown: string,
+  replacements: Array<{ from: string; to: string }>
+): string | null {
+  if (!replacements.length) return null;
+  const parsed = parseFrontmatter(markdown);
+  if (!parsed.hasFrontmatter || !Array.isArray(parsed.data.todos)) return null;
+
+  const normalized = replacements
+    .map((r) => ({
+      from: String(r.from || '').trim(),
+      to: String(r.to || '').trim(),
+    }))
+    .filter((r) => r.from && r.to && r.from.toLowerCase() !== r.to.toLowerCase());
+  if (!normalized.length) return null;
+
+  let changed = false;
+  const nextData = rewriteTodosInData(parsed.data, (item) => {
+    if (!isPlainObject(item) || item.note == null) return item;
+    const raw = item.note;
+    const target = normalizeFrontmatterTodoNoteTarget(raw);
+    if (!target) return item;
+    for (const { from, to } of normalized) {
+      if (target.toLowerCase() !== from.toLowerCase()) continue;
+      changed = true;
+      const rawStr = typeof raw === 'string' ? raw.trim() : '';
+      const wiki = rawStr.match(/^\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]$/);
+      if (wiki) {
+        const alias = wiki[2];
+        return {
+          ...item,
+          note: alias != null && String(alias).trim() ? `[[${to}|${alias}]]` : `[[${to}]]`,
+        };
+      }
+      return { ...item, note: to };
+    }
+    return item;
+  });
+  if (!changed) return null;
+  return stringifyWithFrontmatter(nextData, parsed.body);
 }
 
 function rewriteTodosInData(

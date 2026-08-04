@@ -108,6 +108,7 @@ todos:
     content: Discovery and scope
     status: pending
     hours: 2
+    note: meta/risks
   - id: implementation
     content: Implementation
     status: pending
@@ -146,6 +147,7 @@ todos:
     content: Design and acceptance criteria
     status: pending
     hours: 3
+    note: meta/risks
   - id: build
     content: Build and wire up
     status: pending

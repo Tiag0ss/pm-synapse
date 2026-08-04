@@ -1,8 +1,14 @@
 import { marked } from 'marked';
-import { resolveNoteId, type NoteResolveEntry } from './notePaths';
+import {
+  resolveCrossVaultWikilink,
+  resolveNoteId,
+  type LinkableVaultNotes,
+  type NoteResolveEntry,
+} from './notePaths';
 import {
   frontmatterTags,
   parseFrontmatter,
+  parseFrontmatterTodos,
   renderFrontmatterHtml,
 } from './frontmatter';
 import { postprocessMarkdownHtml, preprocessMarkdownExtras } from './markdownEnhance';
@@ -32,12 +38,27 @@ function normalizeAtxHeadingSpaces(chunk: string): string {
 
 export function extractWikiLinks(markdown: string): string[] {
   const links: string[] = [];
+  const seen = new Set<string>();
+  const push = (target: string) => {
+    const t = target.trim();
+    if (!t) return;
+    const key = t.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    links.push(t);
+  };
+
   const body = parseFrontmatter(markdown).body;
   const re = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(body))) {
-    links.push(m[1].trim());
+    push(m[1]);
   }
+
+  for (const todo of parseFrontmatterTodos(markdown)) {
+    if (todo.noteTarget) push(todo.noteTarget);
+  }
+
   return links;
 }
 
@@ -122,6 +143,19 @@ function escapeRegExp(s: string): string {
 }
 
 export type MarkdownNoteRef = NoteResolveEntry;
+export type { LinkableVaultNotes };
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/'/g, '&#39;');
+}
 
 /** Build mention search terms for rendering (unique leaf names included). */
 export function mentionTermsForNotes(
@@ -203,14 +237,6 @@ export function slugify(input: string): string {
   );
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 function mapProtected(md: string, transform: (chunk: string) => string): string {
   const slots: string[] = [];
   const stash = (raw: string) => {
@@ -223,7 +249,11 @@ function mapProtected(md: string, transform: (chunk: string) => string): string 
 }
 
 /** Convert [[wikilinks]] and #tags before marked so public/PM HTML shows them. */
-export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] = []): string {
+export function preprocessSynapseMarkdown(
+  md: string,
+  notes: MarkdownNoteRef[] = [],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   return mapProtected(md || '', (chunk) => {
     const htmlSlots: string[] = [];
     const stashHtml = (raw: string) => {
@@ -241,11 +271,31 @@ export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] =
     );
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
       const t = String(target).trim();
-      const label = String(alias ?? t).trim();
+      const aliasLabel = alias != null ? String(alias).trim() : '';
+
+      if (t.startsWith('@')) {
+        const r = resolveCrossVaultWikilink(t, linkableVaults, aliasLabel || undefined);
+        if (r.status === 'locked') {
+          return (
+            `<span class="synapse-wikilink is-locked" title="You don't have access to this note" aria-label="${escapeAttr(r.label)} (no access)">` +
+            `${escapeHtml(r.label)}` +
+            `<span class="synapse-wikilink-lock" aria-hidden="true">no access</span>` +
+            `</span>`
+          );
+        }
+        if (r.status === 'missing') {
+          const href = `#wiki-${encodeURIComponent(`@${r.vaultSlug}/${r.label}`)}`;
+          return `<a class="synapse-wikilink is-missing" href="${href}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-id="" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
+        }
+        const href = `#note-${r.noteId}`;
+        return `<a class="synapse-wikilink" href="${href}" data-note-id="${r.noteId}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
+      }
+
+      const label = aliasLabel || t;
       const id = resolveNoteId(t, notes);
       const cls = id != null ? 'synapse-wikilink' : 'synapse-wikilink is-missing';
       const href = id != null ? `#note-${id}` : `#wiki-${encodeURIComponent(t)}`;
-      return `<a class="${cls}" href="${href}" data-note-id="${id ?? ''}" data-note-title="${escapeHtml(t)}">${escapeHtml(label)}</a>`;
+      return `<a class="${cls}" href="${href}" data-note-id="${id ?? ''}" data-note-title="${escapeAttr(t)}">${escapeHtml(label)}</a>`;
     });
 
     next = linkifyUnlinkedMentions(next, notes);
@@ -253,11 +303,15 @@ export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] =
   });
 }
 
-export function markdownToSafeHtml(md: string, notes: MarkdownNoteRef[] = []): string {
+export function markdownToSafeHtml(
+  md: string,
+  notes: MarkdownNoteRef[] = [],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   const fm = parseFrontmatter(md);
-  const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data) : '';
+  const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes) : '';
   const withExtras = preprocessMarkdownExtras(fm.body);
-  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes), {
+  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, linkableVaults), {
     async: false,
     gfm: true,
   }) as string;

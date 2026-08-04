@@ -1,13 +1,19 @@
 import { marked } from 'marked';
 import { sanitizeSynapseHtml } from '@/lib/sanitizeSynapseHtml';
-import { resolveNoteId, type NoteResolveEntry } from '@/lib/notePaths';
+import {
+  resolveCrossVaultWikilink,
+  resolveNoteId,
+  type LinkableVaultNotes,
+  type NoteResolveEntry,
+} from '@/lib/notePaths';
 import { parseFrontmatter, renderFrontmatterHtml } from '@/lib/frontmatter';
 import { enhanceCodeCopyHtml } from '@/lib/codeCopy';
 import { postprocessMarkdownHtml, preprocessMarkdownExtras } from '@/lib/markdownEnhance';
 
 export type NoteIndexEntry = NoteResolveEntry;
 
-export { resolveNoteId } from '@/lib/notePaths';
+export type { LinkableVaultNotes };
+export { resolveNoteId, resolveCrossVaultWikilink, parseCrossVaultWikilinkTarget } from '@/lib/notePaths';
 
 const STOP = new Set([
   'the', 'and', 'for', 'with', 'from', 'this', 'that', 'user', 'api', 'note', 'task', 'project',
@@ -124,7 +130,11 @@ function linkifyUnlinkedMentions(chunk: string, notes: NoteIndexEntry[]): string
 }
 
 /** Turn [[wikilinks]] and #tags into HTML-friendly Markdown. */
-export function preprocessSynapseMarkdown(md: string, notes: NoteIndexEntry[] = []): string {
+export function preprocessSynapseMarkdown(
+  md: string,
+  notes: NoteIndexEntry[] = [],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   return mapProtected(md || '', (chunk) => {
     // Protect existing HTML (TOC, callouts, math, …) so # inside href="#…" is not treated as a tag
     const htmlSlots: string[] = [];
@@ -147,7 +157,27 @@ export function preprocessSynapseMarkdown(md: string, notes: NoteIndexEntry[] = 
 
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
       const t = String(target).trim();
-      const label = String(alias ?? t).trim();
+      const aliasLabel = alias != null ? String(alias).trim() : '';
+
+      if (t.startsWith('@')) {
+        const r = resolveCrossVaultWikilink(t, linkableVaults, aliasLabel || undefined);
+        if (r.status === 'locked') {
+          return (
+            `<span class="synapse-wikilink is-locked" title="You don't have access to this note" aria-label="${escapeAttr(r.label)} (no access)">` +
+            `${escapeHtml(r.label)}` +
+            `<span class="synapse-wikilink-lock" aria-hidden="true">no access</span>` +
+            `</span>`
+          );
+        }
+        if (r.status === 'missing') {
+          const href = `#wiki-${encodeURIComponent(`@${r.vaultSlug}/${r.label}`)}`;
+          return `<a class="synapse-wikilink is-missing" href="${href}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-id="" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
+        }
+        const href = `#note-${r.noteId}`;
+        return `<a class="synapse-wikilink" href="${href}" data-note-id="${r.noteId}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
+      }
+
+      const label = aliasLabel || t;
       const id = resolveNoteId(t, notes);
       const cls = id != null ? 'synapse-wikilink' : 'synapse-wikilink is-missing';
       const href = id != null ? `#note-${id}` : `#wiki-${encodeURIComponent(t)}`;
@@ -159,12 +189,16 @@ export function preprocessSynapseMarkdown(md: string, notes: NoteIndexEntry[] = 
   });
 }
 
-export function renderSynapseMarkdown(md: string, notes: NoteIndexEntry[] = []): string {
+export function renderSynapseMarkdown(
+  md: string,
+  notes: NoteIndexEntry[] = [],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   try {
     const fm = parseFrontmatter(md);
-    const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data) : '';
+    const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes) : '';
     const withExtras = preprocessMarkdownExtras(fm.body);
-    const prepared = preprocessSynapseMarkdown(withExtras, notes);
+    const prepared = preprocessSynapseMarkdown(withExtras, notes, linkableVaults);
     const html = marked.parse(prepared, { async: false, gfm: true }) as string;
     return sanitizeSynapseHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)));
   } catch {
@@ -173,10 +207,14 @@ export function renderSynapseMarkdown(md: string, notes: NoteIndexEntry[] = []):
 }
 
 /** Inline markdown for sidebar task labels (bold, italic, code, links). */
-export function renderInlineMarkdown(md: string, notes: NoteIndexEntry[] = []): string {
+export function renderInlineMarkdown(
+  md: string,
+  notes: NoteIndexEntry[] = [],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   try {
     const fm = parseFrontmatter(md || '');
-    const prepared = preprocessSynapseMarkdown(fm.body, notes);
+    const prepared = preprocessSynapseMarkdown(fm.body, notes, linkableVaults);
     return sanitizeSynapseHtml(marked.parseInline(prepared, { async: false, gfm: true }) as string);
   } catch {
     return escapeHtml(md || '');

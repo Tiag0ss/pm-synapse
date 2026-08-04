@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { buildSideBySideDiff, wordHighlight } from '@/lib/sideBySideDiff';
+import {
+  applyHunkFromLeft,
+  buildSideBySideDiff,
+  groupDiffHunks,
+  wordHighlight,
+  type DiffHunk,
+} from '@/lib/sideBySideDiff';
 
 export interface RevisionSnapshot {
   RevisionNumber: number;
@@ -10,6 +16,12 @@ export interface RevisionSnapshot {
   BodyMarkdown: string;
   Visibility?: string | null;
   CreatedAt?: string;
+}
+
+export interface PartialRestorePatch {
+  title?: string;
+  bodyMarkdown?: string;
+  visibility?: string;
 }
 
 interface RevisionDiffModalProps {
@@ -24,10 +36,25 @@ interface RevisionDiffModalProps {
   };
   onClose: () => void;
   onRestore: () => void;
+  onApplyPartial: (patch: PartialRestorePatch) => void;
   restoring?: boolean;
+  applying?: boolean;
 }
 
-function MetaChip({ label, value, changed }: { label: string; value: string; changed?: boolean }) {
+function MetaChip({
+  label,
+  value,
+  changed,
+  onRestore,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  changed?: boolean;
+  onRestore?: () => void;
+  disabled?: boolean;
+}) {
+  const clickable = Boolean(changed && onRestore);
   return (
     <div
       className={`rounded-lg border px-2.5 py-1.5 text-xs ${
@@ -36,7 +63,20 @@ function MetaChip({ label, value, changed }: { label: string; value: string; cha
           : 'border-[var(--border)] bg-[var(--surface)] text-[var(--muted)]'
       }`}
     >
-      <div className="font-medium uppercase tracking-wide opacity-70">{label}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium uppercase tracking-wide opacity-70">{label}</div>
+        {clickable && (
+          <button
+            type="button"
+            className="text-[10px] font-medium uppercase tracking-wide text-amber-200/90 underline-offset-2 hover:underline disabled:opacity-50"
+            disabled={disabled}
+            onClick={onRestore}
+            title={`Restore ${label.toLowerCase()} from this revision`}
+          >
+            Restore
+          </button>
+        )}
+      </div>
       <div className="mt-0.5 break-all font-mono text-[11px] text-[var(--text)]">{value || '—'}</div>
     </div>
   );
@@ -49,22 +89,36 @@ export default function RevisionDiffModal({
   current,
   onClose,
   onRestore,
+  onApplyPartial,
   restoring,
+  applying,
 }: RevisionDiffModalProps) {
   const leftScroll = useRef<HTMLDivElement>(null);
   const rightScroll = useRef<HTMLDivElement>(null);
   const syncing = useRef(false);
   const [onlyChanges, setOnlyChanges] = useState(false);
 
+  const busy = Boolean(restoring || applying);
+
   const rows = useMemo(() => {
     if (!revision) return [];
     return buildSideBySideDiff(String(revision.BodyMarkdown || ''), current.bodyMarkdown || '');
   }, [revision, current.bodyMarkdown]);
 
-  const visibleRows = useMemo(
-    () => (onlyChanges ? rows.filter((r) => r.op !== 'equal') : rows),
-    [rows, onlyChanges]
-  );
+  const hunks = useMemo(() => groupDiffHunks(rows), [rows]);
+
+  const hunkByRow = useMemo(() => {
+    const map = new Map<number, DiffHunk>();
+    for (const h of hunks) {
+      for (let i = h.start; i < h.end; i++) map.set(i, h);
+    }
+    return map;
+  }, [hunks]);
+
+  const visibleRows = useMemo(() => {
+    const indexed = rows.map((row, index) => ({ row, index }));
+    return onlyChanges ? indexed.filter(({ row }) => row.op !== 'equal') : indexed;
+  }, [rows, onlyChanges]);
 
   const stats = useMemo(() => {
     let added = 0;
@@ -75,17 +129,17 @@ export default function RevisionDiffModal({
       else if (r.op === 'delete') removed++;
       else if (r.op === 'replace') changed++;
     }
-    return { added, removed, changed };
-  }, [rows]);
+    return { added, removed, changed, hunks: hunks.length };
+  }, [rows, hunks.length]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !busy) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, busy]);
 
   const syncScroll = (source: 'left' | 'right') => {
     if (syncing.current) return;
@@ -98,6 +152,11 @@ export default function RevisionDiffModal({
     requestAnimationFrame(() => {
       syncing.current = false;
     });
+  };
+
+  const restoreHunk = (hunk: DiffHunk) => {
+    if (busy || !revision) return;
+    onApplyPartial({ bodyMarkdown: applyHunkFromLeft(rows, hunk) });
   };
 
   if (!open) return null;
@@ -114,12 +173,15 @@ export default function RevisionDiffModal({
             <h2 className="text-lg font-semibold tracking-tight">Compare &amp; restore</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">
               Meld-style diff · left is revision #{revision?.RevisionNumber ?? '…'} · right is the
-              current note
+              current note · restore individual changes or the whole revision
             </p>
             <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
               <span className="text-emerald-300">+{stats.added} added</span>
               <span className="text-red-300">−{stats.removed} removed</span>
               <span className="text-amber-200">~{stats.changed} changed</span>
+              {stats.hunks > 0 && (
+                <span className="text-[var(--muted)]">{stats.hunks} change block{stats.hunks === 1 ? '' : 's'}</span>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -132,16 +194,16 @@ export default function RevisionDiffModal({
               />
               Only changes
             </label>
-            <button type="button" className="btn-ghost" onClick={onClose}>
+            <button type="button" className="btn-ghost" onClick={onClose} disabled={busy}>
               Cancel
             </button>
             <button
               type="button"
               className="btn-danger"
-              disabled={!revision || loading || restoring}
+              disabled={!revision || loading || busy}
               onClick={onRestore}
             >
-              {restoring ? 'Restoring…' : `Restore #${revision?.RevisionNumber ?? ''}`}
+              {restoring ? 'Restoring…' : `Restore all #${revision?.RevisionNumber ?? ''}`}
             </button>
           </div>
         </header>
@@ -163,6 +225,8 @@ export default function RevisionDiffModal({
                     label="Title"
                     value={revision.Title}
                     changed={revision.Title !== current.title}
+                    disabled={busy}
+                    onRestore={() => onApplyPartial({ title: revision.Title })}
                   />
                   <MetaChip
                     label="Path"
@@ -173,6 +237,10 @@ export default function RevisionDiffModal({
                     label="Visibility"
                     value={revision.Visibility || 'default'}
                     changed={(revision.Visibility || '') !== (current.visibility || '')}
+                    disabled={busy}
+                    onRestore={() =>
+                      onApplyPartial({ visibility: revision.Visibility || '' })
+                    }
                   />
                 </div>
               </div>
@@ -198,15 +266,17 @@ export default function RevisionDiffModal({
                   className="diff-pane min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5"
                   onScroll={() => syncScroll('left')}
                 >
-                  {visibleRows.map((row, idx) => {
+                  {visibleRows.map(({ row, index }) => {
                     const hl =
                       row.op === 'replace' && row.left != null && row.right != null
                         ? wordHighlight(row.left, row.right).leftHtml
                         : null;
+                    const hunk = hunkByRow.get(index);
+                    const isHunkStart = hunk != null && hunk.start === index;
                     return (
                       <div
-                        key={`L-${idx}`}
-                        className={`diff-row flex ${
+                        key={`L-${index}`}
+                        className={`diff-row group relative flex ${
                           row.op === 'delete' || row.op === 'replace'
                             ? 'diff-row-del'
                             : row.op === 'insert'
@@ -215,13 +285,24 @@ export default function RevisionDiffModal({
                         }`}
                       >
                         <span className="diff-ln">{row.leftLine ?? ''}</span>
-                        <pre className="diff-code">
+                        <pre className="diff-code min-w-0 flex-1">
                           {hl ? (
                             <span dangerouslySetInnerHTML={{ __html: hl }} />
                           ) : (
                             row.left ?? ''
                           )}
                         </pre>
+                        {isHunkStart && (
+                          <button
+                            type="button"
+                            className="diff-restore-btn"
+                            disabled={busy}
+                            title="Restore only this change into the current note"
+                            onClick={() => restoreHunk(hunk)}
+                          >
+                            {applying ? '…' : 'Restore'}
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -240,14 +321,14 @@ export default function RevisionDiffModal({
                   className="diff-pane min-h-0 flex-1 overflow-auto font-mono text-[12px] leading-5"
                   onScroll={() => syncScroll('right')}
                 >
-                  {visibleRows.map((row, idx) => {
+                  {visibleRows.map(({ row, index }) => {
                     const hl =
                       row.op === 'replace' && row.left != null && row.right != null
                         ? wordHighlight(row.left, row.right).rightHtml
                         : null;
                     return (
                       <div
-                        key={`R-${idx}`}
+                        key={`R-${index}`}
                         className={`diff-row flex ${
                           row.op === 'insert' || row.op === 'replace'
                             ? 'diff-row-ins'

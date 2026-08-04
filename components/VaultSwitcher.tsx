@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
@@ -48,10 +48,14 @@ export default function VaultSwitcher({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [vaults, setVaults] = useState<VaultRow[]>([]);
+  const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
+    setQuery('');
+    requestAnimationFrame(() => searchRef.current?.focus());
     void (async () => {
       const res = await fetch('/api/vaults', { credentials: 'include' });
       const data = await res.json();
@@ -75,6 +79,16 @@ export default function VaultSwitcher({
     };
   }, [open]);
 
+  const filteredVaults = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return vaults;
+    return vaults.filter((v) => {
+      const name = v.Name.toLowerCase();
+      const slug = (v.slug || '').toLowerCase();
+      return name.includes(q) || slug.includes(q);
+    });
+  }, [vaults, query]);
+
   const switchTo = (id: number) => {
     rememberLastVault(id);
     setOpen(false);
@@ -88,29 +102,56 @@ export default function VaultSwitcher({
           role="menu"
           className="absolute bottom-full left-2 right-2 z-30 mb-1 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/50"
         >
+          <div className="border-b border-[var(--border)] px-2 py-1.5">
+            <input
+              ref={searchRef}
+              type="search"
+              className="input w-full border-0 bg-transparent py-1.5 text-sm shadow-none focus:ring-0"
+              placeholder="Search vaults…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setOpen(false);
+                } else if (e.key === 'Enter' && filteredVaults[0]) {
+                  e.preventDefault();
+                  switchTo(filteredVaults[0].Id);
+                }
+              }}
+              aria-label="Search vaults"
+            />
+          </div>
           <ul className="max-h-56 overflow-auto py-1">
-            {vaults.map((v) => {
-              const active = String(v.Id) === String(currentVaultId);
-              return (
-                <li key={v.Id}>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-[var(--surface-2)] ${
-                      active ? 'text-[var(--text)]' : 'text-[var(--muted)]'
-                    }`}
-                    onClick={() => switchTo(v.Id)}
-                  >
-                    <span className="min-w-0 flex-1 truncate font-medium">{v.Name}</span>
-                    {active && (
-                      <span className="text-[var(--accent-soft)]" aria-label="Current vault">
-                        ✓
-                      </span>
-                    )}
-                  </button>
-                </li>
-              );
-            })}
+            {filteredVaults.length === 0 ? (
+              <li className="px-3 py-4 text-center text-sm text-[var(--muted)]">
+                {query.trim() ? 'No matches' : 'No vaults'}
+              </li>
+            ) : (
+              filteredVaults.map((v) => {
+                const active = String(v.Id) === String(currentVaultId);
+                return (
+                  <li key={v.Id}>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-[var(--surface-2)] ${
+                        active ? 'text-[var(--text)]' : 'text-[var(--muted)]'
+                      }`}
+                      onClick={() => switchTo(v.Id)}
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium">{v.Name}</span>
+                      {active && (
+                        <span className="text-[var(--accent-soft)]" aria-label="Current vault">
+                          ✓
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })
+            )}
           </ul>
           <div className="border-t border-[var(--border)] py-1">
             <Link

@@ -89,6 +89,7 @@ const STATEMENTS = [
     BodyMarkdown MEDIUMTEXT NOT NULL,
     FrontmatterJson TEXT NULL,
     Visibility VARCHAR(32) NULL,
+    Source VARCHAR(16) NOT NULL DEFAULT 'manual',
     CreatedByPmUserId INT NOT NULL,
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_note_rev (NoteId, RevisionNumber),
@@ -202,6 +203,7 @@ const ALTERS = [
   'ALTER TABLE Notes ADD KEY idx_note_deleted (VaultId, DeletedAt)',
   'ALTER TABLE Notes ADD COLUMN Icon VARCHAR(64) NULL',
   'ALTER TABLE Users ADD COLUMN SessionVersion INT NOT NULL DEFAULT 0',
+  "ALTER TABLE NoteRevisions ADD COLUMN Source VARCHAR(16) NOT NULL DEFAULT 'manual'",
 ];
 
 /** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */
