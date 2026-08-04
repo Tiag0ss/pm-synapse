@@ -29,6 +29,25 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * CommonMark needs a space after ATX hashes. Content like `#Received Requirements` or
+ * `##Technical Design` would otherwise become #tags / plain text — insert the space when
+ * the line has more than one token so marked can render real headings.
+ * Lone `#tag` lines are left unchanged.
+ */
+function normalizeAtxHeadingSpaces(chunk: string): string {
+  return chunk
+    .split('\n')
+    .map((line) => {
+      const m = line.match(/^(#{1,6})(\S)(.*)$/);
+      if (!m) return line;
+      const [, hashes, first, rest] = m;
+      if (!/\s/.test(`${first}${rest}`)) return line;
+      return `${hashes} ${first}${rest}`;
+    })
+    .join('\n');
+}
+
 /** Protect fenced/inline code so wiki/tag transforms skip them. */
 function mapProtected(md: string, transform: (chunk: string) => string): string {
   const slots: string[] = [];
@@ -113,9 +132,9 @@ export function preprocessSynapseMarkdown(md: string, notes: NoteIndexEntry[] = 
       htmlSlots.push(raw);
       return `\u0000HT${htmlSlots.length - 1}\u0000`;
     };
-    let next = chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml);
+    let next = normalizeAtxHeadingSpaces(chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml));
 
-    // Tags — only in plain text now
+    // Tags — only in plain text (heading lines already normalized to `# Title`)
     next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });

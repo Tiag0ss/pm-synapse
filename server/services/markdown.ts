@@ -12,6 +12,24 @@ const STOP = new Set([
   'the', 'and', 'for', 'with', 'from', 'this', 'that', 'user', 'api', 'note', 'task', 'project',
 ]);
 
+/**
+ * CommonMark needs a space after ATX hashes. `#Received Requirements` / `##Technical Design`
+ * would otherwise become tags or plain text — insert the space when the line has multiple tokens.
+ * Lone `#tag` lines are left unchanged. Keep in sync with lib/renderMarkdown.ts.
+ */
+function normalizeAtxHeadingSpaces(chunk: string): string {
+  return chunk
+    .split('\n')
+    .map((line) => {
+      const m = line.match(/^(#{1,6})(\S)(.*)$/);
+      if (!m) return line;
+      const [, hashes, first, rest] = m;
+      if (!/\s/.test(`${first}${rest}`)) return line;
+      return `${hashes} ${first}${rest}`;
+    })
+    .join('\n');
+}
+
 export function extractWikiLinks(markdown: string): string[] {
   const links: string[] = [];
   const body = parseFrontmatter(markdown).body;
@@ -27,9 +45,14 @@ export function extractTags(markdown: string): string[] {
   const tags = new Set<string>();
   const fm = parseFrontmatter(markdown);
   for (const t of frontmatterTags(fm.data)) tags.add(t);
+  const body = normalizeAtxHeadingSpaces(fm.body);
   const re = /(^|\s)#([a-zA-Z][\w/-]*)/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(fm.body))) {
+  while ((m = re.exec(body))) {
+    // Skip matches that are ATX heading openers (`# Title` at line start)
+    const idx = m.index;
+    const lineStart = body.lastIndexOf('\n', idx - 1) + 1;
+    if (/^#{1,6}\s/.test(body.slice(lineStart)) && idx === lineStart) continue;
     tags.add(m[2].toLowerCase());
   }
   return [...tags];
@@ -207,7 +230,7 @@ export function preprocessSynapseMarkdown(md: string, notes: MarkdownNoteRef[] =
       htmlSlots.push(raw);
       return `\u0000HT${htmlSlots.length - 1}\u0000`;
     };
-    let next = chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml);
+    let next = normalizeAtxHeadingSpaces(chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml));
 
     next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;

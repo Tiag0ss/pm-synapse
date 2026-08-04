@@ -17,7 +17,8 @@ out
 # logs & OS
 *.log
 .DS_Store
-
+.pnpm-store
 # local runtime data (uploaded media, etc.)
 /data
 /logs
+.pnpm-store/v11/index.db
