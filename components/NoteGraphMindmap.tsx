@@ -6,6 +6,13 @@ export interface GraphNode {
   Id: number;
   Title: string;
   Path?: string;
+  VaultId?: number;
+  VaultSlug?: string | null;
+  VaultName?: string | null;
+  /** True when the viewer cannot open this note's vault */
+  Restricted?: boolean;
+  /** True when the note lives outside the current vault graph */
+  External?: boolean;
 }
 
 export interface GraphEdge {
@@ -24,7 +31,7 @@ interface NoteGraphMindmapProps {
   /** Change to force a full re-layout (e.g. after save) */
   reloadToken?: string | number;
   compactLegend?: boolean;
-  onNodeClick?: (id: number) => void;
+  onNodeClick?: (id: number, node: GraphNode) => void;
 }
 
 interface SimNode {
@@ -36,6 +43,8 @@ interface SimNode {
   vy: number;
   degree: number;
   pinned?: boolean;
+  restricted?: boolean;
+  external?: boolean;
 }
 
 function kindColor(kind: string): string {
@@ -128,6 +137,8 @@ export default function NoteGraphMindmap({
           vy: 0,
           degree: degree.get(node.Id) || 0,
           pinned: true,
+          restricted: Boolean(node.Restricted),
+          external: Boolean(node.External),
         };
       }
       const idx = variant === 'focus' ? others.findIndex((o) => o.Id === node.Id) : i;
@@ -141,6 +152,8 @@ export default function NoteGraphMindmap({
         vy: 0,
         degree: degree.get(node.Id) || 0,
         pinned: false,
+        restricted: Boolean(node.Restricted),
+        external: Boolean(node.External),
       };
     });
     simRef.current = seeded;
@@ -268,7 +281,10 @@ export default function NoteGraphMindmap({
 
   const onPointerUp = (id: number, moved: boolean) => {
     setDragId(null);
-    if (!moved && onNodeClick) onNodeClick(id);
+    if (moved || !onNodeClick) return;
+    const node = nodes.find((n) => n.Id === id);
+    if (!node || node.Restricted) return;
+    onNodeClick(id, node);
   };
 
   if (!nodes.length) {
@@ -334,11 +350,33 @@ export default function NoteGraphMindmap({
         {positions.map((p) => {
           const focused = focusId === p.id;
           const r = (focused ? 14 : 9) + Math.min(8, p.degree * 1.5);
+          const restricted = Boolean(p.restricted);
+          const external = Boolean(p.external);
+          const fill = restricted
+            ? '#1a1f24'
+            : focused
+              ? '#14b8a6'
+              : external
+                ? '#1a2430'
+                : '#1a2a36';
+          const stroke = restricted
+            ? '#64748b'
+            : focused
+              ? '#5eead4'
+              : external
+                ? '#38bdf8'
+                : '#2dd4bf';
+          const label = restricted
+            ? `${p.title.length > labelMax - 6 ? `${p.title.slice(0, labelMax - 7)}…` : p.title}`
+            : p.title.length > labelMax
+              ? `${p.title.slice(0, labelMax - 1)}…`
+              : p.title;
           return (
             <g
               key={p.id}
               transform={`translate(${p.x},${p.y})`}
-              style={{ cursor: onNodeClick ? 'pointer' : 'grab' }}
+              style={{ cursor: restricted ? 'not-allowed' : onNodeClick ? 'pointer' : 'grab' }}
+              opacity={restricted ? 0.72 : 1}
               onPointerDown={(e) => {
                 dragStart.current = { x: e.clientX, y: e.clientY };
                 onPointerDown(p.id, e);
@@ -350,27 +388,53 @@ export default function NoteGraphMindmap({
                 onPointerUp(p.id, moved);
               }}
             >
+              <title>
+                {restricted
+                  ? `${p.title} — You don't have access to this note`
+                  : external
+                    ? p.title
+                    : p.title}
+              </title>
               <circle
                 r={r + 6}
-                fill={focused ? 'rgba(20,184,166,0.28)' : 'rgba(20,184,166,0.08)'}
-                filter={focused ? `url(#node-glow-${variant})` : undefined}
+                fill={
+                  restricted
+                    ? 'rgba(100,116,139,0.16)'
+                    : focused
+                      ? 'rgba(20,184,166,0.28)'
+                      : 'rgba(20,184,166,0.08)'
+                }
+                filter={focused && !restricted ? `url(#node-glow-${variant})` : undefined}
               />
               <circle
                 r={r}
-                fill={focused ? '#14b8a6' : '#1a2a36'}
-                stroke={focused ? '#5eead4' : '#2dd4bf'}
+                fill={fill}
+                stroke={stroke}
                 strokeWidth={focused ? 2.5 : 1.5}
+                strokeDasharray={restricted ? '3 2' : undefined}
               />
               <text
                 y={r + 13}
                 textAnchor="middle"
-                fill="#e8eef6"
+                fill={restricted ? '#94a3b8' : '#e8eef6'}
                 fontSize={compactLegend ? 10 : 11}
                 fontFamily="DM Sans, sans-serif"
                 fontWeight={focused ? 700 : 500}
               >
-                {p.title.length > labelMax ? `${p.title.slice(0, labelMax - 1)}…` : p.title}
+                {label}
               </text>
+              {restricted ? (
+                <text
+                  y={r + 25}
+                  textAnchor="middle"
+                  fill="#94a3b8"
+                  fontSize={9}
+                  fontFamily="DM Sans, sans-serif"
+                  fontWeight={600}
+                >
+                  No access
+                </text>
+              ) : null}
             </g>
           );
         })}
@@ -384,6 +448,10 @@ export default function NoteGraphMindmap({
           <span>
             <span className="mr-1 inline-block h-0.5 w-3 border-t border-dashed border-sky-300 align-middle" />{' '}
             Mention
+          </span>
+          <span>
+            <span className="mr-1 inline-block h-2 w-2 rounded-full border border-dashed border-slate-400 align-middle" />{' '}
+            No access
           </span>
           <span>Drag · click to open</span>
         </div>

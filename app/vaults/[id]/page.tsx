@@ -7,7 +7,7 @@ import MarkdownNoteEditor from '@/components/MarkdownNoteEditor';
 import type { LinkableVaultNotes } from '@/lib/notePaths';
 import CreateNoteModal, { type SelectedTemplate } from '@/components/CreateNoteModal';
 import QuickSwitcher from '@/components/QuickSwitcher';
-import NoteGraphMindmap from '@/components/NoteGraphMindmap';
+import NoteGraphMindmap, { type GraphNode } from '@/components/NoteGraphMindmap';
 import RevisionDiffModal, {
   type PartialRestorePatch,
   type RevisionSnapshot,
@@ -25,6 +25,8 @@ import { normalizeNoteIcon, type NoteIconId } from '@/lib/noteIcons';
 import { applyNoteTemplateBody } from '@/lib/noteTemplates';
 import ConfirmModal from '@/components/ConfirmModal';
 import AppUserMenu from '@/components/AppUserMenu';
+import AppToast from '@/components/AppToast';
+import PmSsoBanner from '@/components/PmSsoBanner';
 import { useIsLgUp } from '@/lib/useMediaQuery';
 
 interface NoteListItem {
@@ -64,13 +66,13 @@ function FullMindmapPane({
   onOpenNote,
 }: {
   graph: {
-    nodes: Array<{ Id: number; Title: string }>;
+    nodes: GraphNode[];
     edges: Array<{ FromNoteId: number; ToNoteId: number; Kind: string }>;
   };
   graphToken: number;
   selectedId: number | null;
   onBack: () => void;
-  onOpenNote: (id: number) => void;
+  onOpenNote: (id: number, node: GraphNode) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(520);
@@ -131,12 +133,17 @@ export default function VaultWorkspacePage() {
   const [backlinks, setBacklinks] = useState<Backlink[]>([]);
   const [references, setReferences] = useState<Backlink[]>([]);
   const [graph, setGraph] = useState<{
-    nodes: Array<{ Id: number; Title: string }>;
+    nodes: GraphNode[];
     edges: Array<{ FromNoteId: number; ToNoteId: number; Kind: string }>;
   } | null>(null);
   const [graphToken, setGraphToken] = useState(0);
   const [q, setQ] = useState('');
-  const [status, setStatus] = useState('');
+  const [status, setStatusState] = useState('');
+  const [statusNonce, setStatusNonce] = useState(0);
+  const setStatus = useCallback((msg: string) => {
+    setStatusState(msg);
+    if (msg.trim()) setStatusNonce((n) => n + 1);
+  }, []);
   const [vaultMeta, setVaultMeta] = useState<{
     Name?: string;
     PmProjectId?: number | null;
@@ -377,6 +384,19 @@ export default function VaultWorkspacePage() {
     if (reason === 'manual') await loadGraph();
     return true;
   };
+
+  /** Apply body written by PM ops (markers) without marking the note dirty. */
+  const applyServerBody = useCallback((next: string) => {
+    skipNextAutosaveRef.current = true;
+    setBody(next);
+    setSavedSnapshot((s) => ({ ...s, body: next }));
+  }, []);
+
+  const ensureNoteSaved = useCallback(async () => {
+    if (!selectedId || !canEdit) return true;
+    if (!dirty) return true;
+    return saveNote({ reason: 'manual' });
+  }, [selectedId, canEdit, dirty, title, body, visibility, noteIcon, vaultId]);
 
   const applyPartialRestore = async (patch: PartialRestorePatch) => {
     if (!selectedId || !canEdit || diffApplying || diffRestoring) return;
@@ -722,6 +742,7 @@ export default function VaultWorkspacePage() {
 
   return (
     <div className="flex h-dvh flex-col">
+      <AppToast message={status} nonce={statusNonce} />
       <header className="relative z-40 shrink-0 border-b border-[var(--border)] bg-[var(--panel)]/95 backdrop-blur-md">
         {/* Mobile: identity row + action strip */}
         <div className="lg:hidden">
@@ -1065,6 +1086,7 @@ export default function VaultWorkspacePage() {
           }}
         />
       </header>
+      <PmSsoBanner />
 
       <div
         className={`relative grid min-h-0 flex-1 ${
@@ -1133,7 +1155,15 @@ export default function VaultWorkspacePage() {
               graphToken={graphToken}
               selectedId={selectedId}
               onBack={() => setCenterMode('editor')}
-              onOpenNote={(id) => void openNote(id)}
+              onOpenNote={(id, node) => {
+                if (node.Restricted) return;
+                const targetVault = node.VaultId != null ? Number(node.VaultId) : Number(vaultId);
+                if (targetVault !== Number(vaultId)) {
+                  router.push(`/vaults/${targetVault}?note=${id}`);
+                  return;
+                }
+                void openNote(id);
+              }}
             />
           ) : selectedId ? (
             <>
@@ -1404,7 +1434,15 @@ export default function VaultWorkspacePage() {
                   variant="focus"
                   reloadToken={`${graphToken}-${selectedId ?? 'none'}`}
                   compactLegend
-                  onNodeClick={(id) => void openNote(id)}
+                  onNodeClick={(id, node) => {
+                    if (node.Restricted) return;
+                    const targetVault = node.VaultId != null ? Number(node.VaultId) : Number(vaultId);
+                    if (targetVault !== Number(vaultId)) {
+                      router.push(`/vaults/${targetVault}?note=${id}`);
+                      return;
+                    }
+                    void openNote(id);
+                  }}
                 />
               ) : (
                 <div className="flex h-[220px] items-center justify-center rounded-xl border border-dashed border-[var(--border)] text-xs text-[var(--muted)]">
@@ -1423,7 +1461,8 @@ export default function VaultWorkspacePage() {
                   noteTitle={title}
                   body={body}
                   hasProject={!!vaultMeta.PmProjectId}
-                  onBodyChange={setBody}
+                  onBodyChange={applyServerBody}
+                  onEnsureSaved={ensureNoteSaved}
                   onStatus={setStatus}
                   compact
                   readOnly={!canEdit}
@@ -1684,6 +1723,7 @@ export default function VaultWorkspacePage() {
           void loadNotes();
           void loadGraph();
         }}
+        onStatus={setStatus}
         onOpenNote={(id) => {
           setVaultOptionsOpen(false);
           setVaultOptionsTab(undefined);
@@ -1705,6 +1745,7 @@ export default function VaultWorkspacePage() {
           void loadVault();
           void loadNotes();
         }}
+        onStatus={setStatus}
         onOpenNote={(id) => {
           setPmTasksOpen(false);
           void openNote(id);

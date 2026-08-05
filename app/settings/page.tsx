@@ -25,9 +25,6 @@ interface SettingsData {
   projectManagement: {
     pmBaseUrl: string;
     pmIntegrationEnabled: boolean;
-    hasApiKey: boolean;
-    apiKeyPrefix: string | null;
-    apiKeyFromEnv: boolean;
   };
 }
 
@@ -65,8 +62,6 @@ export default function SettingsPage() {
   const [smtpPassword, setSmtpPassword] = useState('');
   const [clearSmtpPassword, setClearSmtpPassword] = useState(false);
   const [pmEnabled, setPmEnabled] = useState(true);
-  const [pmApiKey, setPmApiKey] = useState('');
-  const [clearPmApiKey, setClearPmApiKey] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -255,8 +250,6 @@ export default function SettingsPage() {
     };
     if (clearSmtpPassword) body.smtpPassword = '';
     else if (smtpPassword) body.smtpPassword = smtpPassword;
-    if (clearPmApiKey) body.pmApiKey = '';
-    else if (pmApiKey) body.pmApiKey = pmApiKey;
 
     const res = await fetch('/api/settings/general', {
       method: 'PUT',
@@ -272,8 +265,6 @@ export default function SettingsPage() {
     setStatus(json.message || 'Saved');
     setSmtpPassword('');
     setClearSmtpPassword(false);
-    setPmApiKey('');
-    setClearPmApiKey(false);
     await loadSettings();
   };
 
@@ -567,37 +558,14 @@ export default function SettingsPage() {
             PM base URL (from environment)
             <input className="input mt-1 w-full opacity-70" readOnly value={data?.projectManagement.pmBaseUrl || ''} />
           </label>
-          <label className="block text-sm">
-            Instance API key{' '}
-            {data?.projectManagement.hasApiKey
-              ? `(${data.projectManagement.apiKeyPrefix}${data.projectManagement.apiKeyFromEnv ? ' via env' : ''})`
-              : ''}
-            <input
-              className="input mt-1 w-full"
-              type="password"
-              placeholder={data?.projectManagement.hasApiKey ? '••••••••' : 'pt_…'}
-              value={pmApiKey}
-              onChange={(e) => {
-                setPmApiKey(e.target.value);
-                setClearPmApiKey(false);
-              }}
-            />
-          </label>
-          <p className="text-xs text-[var(--muted)]">
-            Create a personal API token in Project Management → Administration → API Tokens. Used when
-            the signed-in user has no SSO token (local login).
+          <p className="text-xs leading-relaxed text-[var(--muted)]">
+            Planner calls use each user&apos;s SSO token, or their personal{' '}
+            <code className="text-[var(--accent-soft)]">pt_…</code> token from{' '}
+            <Link href="/profile" className="text-[var(--accent-soft)]">
+              Profile
+            </Link>
+            . There is no instance-wide API key.
           </p>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={clearPmApiKey}
-              onChange={(e) => {
-                setClearPmApiKey(e.target.checked);
-                if (e.target.checked) setPmApiKey('');
-              }}
-            />
-            Clear stored API key
-          </label>
           <button type="button" className="btn-primary" onClick={() => void save()}>
             Save
           </button>
@@ -1008,7 +976,7 @@ export default function SettingsPage() {
       <ConfirmModal
         open={syncConfirmOpen}
         title="Sync users from Project Management"
-        message="Import PM users into Synapse. Matched by PM user id or email. New accounts are SSO-ready (no local password). Existing Synapse-only users are not deleted. Requires a PM admin token or API key."
+        message="Import PM users into Synapse. Matched by PM user id or email. New accounts are SSO-ready (no local password). Existing Synapse-only users are not deleted. Requires your admin SSO session or personal API token in Profile."
         confirmLabel={syncBusy ? 'Syncing…' : 'Sync now'}
         cancelLabel="Cancel"
         onCancel={() => {

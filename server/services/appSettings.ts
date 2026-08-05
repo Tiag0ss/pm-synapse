@@ -21,7 +21,7 @@ export const SETTING_KEYS = {
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];
 
-const ENCRYPTED_KEYS = new Set<string>([SETTING_KEYS.smtpPassword, SETTING_KEYS.pmApiKey]);
+const ENCRYPTED_KEYS = new Set<string>([SETTING_KEYS.smtpPassword]);
 
 const settingsCache = new Map<string, string | null>();
 let cacheLoadedAt = 0;
@@ -135,17 +135,4 @@ export async function isSmtpConfigured(): Promise<boolean> {
     getSetting(SETTING_KEYS.smtpFrom),
   ]);
   return Boolean(host && port && user && pass && from);
-}
-
-export async function getPmApiKey(): Promise<string | null> {
-  const fromDb = await getDecryptedSetting(SETTING_KEYS.pmApiKey);
-  if (fromDb) return fromDb;
-  const fromEnv = (process.env.PM_API_KEY || '').trim();
-  return fromEnv || null;
-}
-
-export function pmApiKeyPrefix(key: string | null): string | null {
-  if (!key) return null;
-  if (key.length <= 12) return key.slice(0, 4) + '…';
-  return key.slice(0, 7) + '…' + key.slice(-4);
 }

@@ -13,6 +13,11 @@ type Profile = {
   pmUserId: number | null;
   hasPassword: boolean;
   authMethods: { local: boolean; sso: boolean };
+  pmIntegration?: {
+    enabled: boolean;
+    ssoToken: boolean;
+    personalApiKey: { configured: boolean; prefix: string | null };
+  };
 };
 
 export default function ProfilePage() {
@@ -27,6 +32,8 @@ export default function ProfilePage() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [pmApiKey, setPmApiKey] = useState('');
+  const [clearPmApiKey, setClearPmApiKey] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,6 +49,8 @@ export default function ProfilePage() {
       setProfile(p);
       setUsername(p.username);
       setEmail(p.email);
+      setPmApiKey('');
+      setClearPmApiKey(false);
     } catch {
       setError('Failed to load profile');
     } finally {
@@ -81,6 +90,56 @@ export default function ProfilePage() {
       }
       setStatus('Profile saved');
       await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const savePmApiKey = async () => {
+    if (!profile) return;
+    setBusy(true);
+    setError('');
+    setStatus('');
+    try {
+      if (!clearPmApiKey && !pmApiKey.trim()) {
+        setError('Enter a personal API token or check Clear');
+        return;
+      }
+      const res = await fetch('/api/auth/me', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pmApiKey: clearPmApiKey ? null : pmApiKey.trim(),
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.message || 'Could not save API token');
+        return;
+      }
+      setStatus(clearPmApiKey ? 'Personal API token cleared' : 'Personal API token saved');
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const testPmConnection = async () => {
+    setBusy(true);
+    setError('');
+    setStatus('');
+    try {
+      const res = await fetch('/api/auth/me/pm-test', {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.message || 'Connection test failed');
+        return;
+      }
+      setStatus(json.message || 'Connected');
     } finally {
       setBusy(false);
     }
@@ -225,6 +284,90 @@ export default function ProfilePage() {
             Save profile
           </button>
         </section>
+
+        {profile.pmIntegration?.enabled !== false && (
+          <section className="mt-6 space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5">
+            <h2 className="text-sm font-semibold text-[var(--text)]">Project Management API token</h2>
+            <p className="text-xs leading-relaxed text-[var(--muted)]">
+              Personal <code className="text-[var(--accent-soft)]">pt_…</code> token from Project
+              Management → Administration → API Tokens. Used for Planner calls when you have no
+              valid SSO session. Attribution and permissions follow this token.
+            </p>
+            <div className="flex flex-wrap gap-3 text-[12px] text-[var(--muted)]">
+              <span>
+                SSO:{' '}
+                {profile.pmIntegration?.ssoToken ? (
+                  <span className="text-[var(--accent-soft)]">connected</span>
+                ) : (
+                  <span>not connected</span>
+                )}
+              </span>
+              <span>
+                Personal token:{' '}
+                {profile.pmIntegration?.personalApiKey.configured ? (
+                  <span className="font-mono text-[var(--accent-soft)]">
+                    {profile.pmIntegration.personalApiKey.prefix || 'configured'}
+                  </span>
+                ) : (
+                  <span>not set</span>
+                )}
+              </span>
+            </div>
+            {!profile.pmIntegration?.ssoToken && (
+              <a
+                href="/api/auth/sso/start"
+                className="inline-flex text-sm font-medium text-[var(--accent-soft)] no-underline hover:underline"
+              >
+                Reconnect with Project Management SSO →
+              </a>
+            )}
+            <label className="block text-sm">
+              Personal API token
+              <input
+                className="input mt-1 w-full"
+                type="password"
+                autoComplete="off"
+                placeholder={
+                  profile.pmIntegration?.personalApiKey.configured ? '••••••••' : 'pt_…'
+                }
+                value={pmApiKey}
+                onChange={(e) => {
+                  setPmApiKey(e.target.value);
+                  setClearPmApiKey(false);
+                }}
+              />
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={clearPmApiKey}
+                onChange={(e) => {
+                  setClearPmApiKey(e.target.checked);
+                  if (e.target.checked) setPmApiKey('');
+                }}
+              />
+              Clear stored personal token
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy}
+                onClick={() => void savePmApiKey()}
+              >
+                Save token
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy}
+                onClick={() => void testPmConnection()}
+              >
+                Test connection
+              </button>
+            </div>
+          </section>
+        )}
 
         <section className="mt-6 space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5">
           <h2 className="text-sm font-semibold text-[var(--text)]">

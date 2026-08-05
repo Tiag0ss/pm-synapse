@@ -62,6 +62,14 @@ import logger from '../utils/logger';
 
 const ACTIVE_NOTE = 'DeletedAt IS NULL';
 
+function pmFail(res: Response, status: number, message: string) {
+  return res.status(status).json({
+    success: false,
+    message,
+    ...(status === 401 ? { reauth: true } : {}),
+  });
+}
+
 const visibilityEnum = z.enum(NOTE_VISIBILITY_VALUES);
 
 type CheckboxLinkRow = {
@@ -1223,17 +1231,76 @@ router.get('/:vaultId/notes/:noteId/backlinks', async (req: AuthRequest, res: Re
 router.get('/:vaultId/graph', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
-  const [nodes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
-    [vault.Id]
+  const vaultId = Number(vault.Id);
+  const accessible = await listAccessibleVaults(req.user!.userId);
+  const accessibleIds = new Set(accessible.map((v) => Number(v.Id)));
+
+  const [localNotes] = await pool.execute<RowDataPacket[]>(
+    'SELECT Id, Title, Path, VaultId FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
+    [vaultId]
   );
+  const localIds = new Set(localNotes.map((n) => Number(n.Id)));
+
+  // Edges that touch this vault (outgoing or incoming), including cross-vault targets
   const [edges] = await pool.execute<RowDataPacket[]>(
     `SELECT l.FromNoteId, l.ToNoteId, l.Kind
      FROM NoteLinks l
-     INNER JOIN Notes n ON n.Id = l.FromNoteId
-     WHERE n.VaultId = ?`,
-    [vault.Id]
+     WHERE l.FromNoteId IN (SELECT Id FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL)
+        OR l.ToNoteId IN (SELECT Id FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL)`,
+    [vaultId, vaultId]
   );
+
+  const externalIds = new Set<number>();
+  for (const e of edges) {
+    const fromId = Number(e.FromNoteId);
+    const toId = Number(e.ToNoteId);
+    if (!localIds.has(fromId)) externalIds.add(fromId);
+    if (!localIds.has(toId)) externalIds.add(toId);
+  }
+
+  let externalNotes: RowDataPacket[] = [];
+  if (externalIds.size) {
+    const ids = [...externalIds];
+    const placeholders = ids.map(() => '?').join(',');
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      `SELECT n.Id, n.Title, n.Path, n.VaultId, v.Name AS VaultName, v.slug AS VaultSlug
+       FROM Notes n
+       INNER JOIN Vaults v ON v.Id = n.VaultId
+       WHERE n.Id IN (${placeholders}) AND n.DeletedAt IS NULL`,
+      ids
+    );
+    externalNotes = rows;
+  }
+
+  const mapNode = (row: RowDataPacket, isLocal: boolean) => {
+    const noteVaultId = Number(row.VaultId);
+    const restricted = !isLocal && !accessibleIds.has(noteVaultId);
+    return {
+      Id: Number(row.Id),
+      Title: String(row.Title),
+      Path: String(row.Path || ''),
+      VaultId: noteVaultId,
+      VaultSlug: row.VaultSlug != null ? String(row.VaultSlug) : null,
+      VaultName: row.VaultName != null ? String(row.VaultName) : null,
+      Restricted: restricted,
+      External: !isLocal,
+    };
+  };
+
+  const nodes = [
+    ...localNotes.map((n) =>
+      mapNode(
+        {
+          ...n,
+          VaultName: vault.Name != null ? String(vault.Name) : null,
+          VaultSlug: vault.slug != null ? String(vault.slug) : null,
+        },
+        true
+      )
+    ),
+    ...externalNotes.map((n) => mapNode(n, false)),
+  ];
+
   res.json({ success: true, data: { nodes, edges: dedupeGraphEdges(edges) } });
 });
 
@@ -1344,10 +1411,7 @@ router.post('/:vaultId/push-project', async (req: AuthRequest, res: Response) =>
     status: Number(defaultStatus.Id),
   });
   if (!result.ok) {
-    return res.status(result.status).json({
-      success: false,
-      message: result.data.message || 'Failed to create PM project',
-    });
+    return pmFail(res, result.status, result.data.message || 'Failed to create PM project');
   }
   const projectId =
     result.data.projectId ||
@@ -1430,6 +1494,7 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
       linksByNote.set(l.NoteId, list);
     }
     let taskById: Map<number, import('../services/pmClient').PmTaskSummary> | undefined;
+    let loadedProjects: Set<number> | undefined;
     let statusList: import('../services/pmClient').PmTaskStatusValue[] | undefined;
     for (const note of notes) {
       const noteId = Number(note.Id);
@@ -1446,12 +1511,14 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
         defaultProjectId: vault.PmProjectId ? Number(vault.PmProjectId) : null,
         organizationId: vault.PmOrganizationId ? Number(vault.PmOrganizationId) : null,
         taskById,
+        loadedProjects,
         statusList,
       });
       taskById = synced.taskById;
+      loadedProjects = synced.loadedProjects;
       statusList = synced.statusList || statusList;
       bodyByNoteId.set(noteId, synced.bodyMarkdown);
-      syncedCount += synced.updated;
+      syncedCount += synced.updated + synced.cleared;
     }
   }
 
@@ -1547,8 +1614,10 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
   res.json({
     success: true,
     data: {
-      bodyMarkdown: synced.updated > 0 ? body : undefined,
+      /** Always include so the sidebar can keep the editor in sync with markers. */
+      bodyMarkdown: body,
       syncedFromPm: synced.updated,
+      clearedStale: synced.cleared,
       notePmTaskId,
       noteOpenUrl:
         notePmTaskId && projectId ? buildPmTaskOpenUrl(projectId, notePmTaskId) : null,
@@ -1636,6 +1705,7 @@ router.post('/:vaultId/checkboxes/push-missing', async (req: AuthRequest, res: R
         type: 'error',
         success: false,
         message: err.message || 'Bulk push failed',
+        reauth: (err.status || 500) === 401,
       });
       res.end();
     }
@@ -1660,7 +1730,7 @@ router.post('/:vaultId/checkboxes/push-missing', async (req: AuthRequest, res: R
     const err = error as { status?: number; message?: string };
     const status = err.status || 500;
     if (status >= 500) logger.error('Bulk checkbox push failed', { error });
-    res.status(status).json({ success: false, message: err.message || 'Bulk push failed' });
+    return pmFail(res, status, err.message || 'Bulk push failed');
   }
 });
 
@@ -1696,8 +1766,8 @@ router.post('/:vaultId/notes/:noteId/checkboxes/push', async (req: AuthRequest, 
       organizationId: orgId,
     });
     if (data.alreadyLinked) {
-      return res.status(409).json({
-        success: false,
+      return res.status(200).json({
+        success: true,
         message: 'Checkbox already linked to a PM task',
         data,
       });
@@ -1707,7 +1777,7 @@ router.post('/:vaultId/notes/:noteId/checkboxes/push', async (req: AuthRequest, 
     const err = error as { status?: number; message?: string };
     const status = err.status || 500;
     if (status >= 500) logger.error('Checkbox push failed', { error });
-    res.status(status).json({ success: false, message: err.message || 'Failed to create PM task' });
+    return pmFail(res, status, err.message || 'Failed to create PM task');
   }
 });
 
@@ -1757,13 +1827,14 @@ router.post('/:vaultId/notes/:noteId/push-task', async (req: AuthRequest, res: R
       data: {
         ...noteTask,
         checkboxes: checkboxResult,
+        bodyMarkdown: checkboxResult?.bodyMarkdown,
       },
     });
   } catch (error: unknown) {
     const err = error as { status?: number; message?: string };
     const status = err.status || 500;
     if (status >= 500) logger.error('Note task push failed', { error });
-    res.status(status).json({ success: false, message: err.message || 'Failed to create note task' });
+    return pmFail(res, status, err.message || 'Failed to create note task');
   }
 });
 
@@ -1802,7 +1873,7 @@ router.post(
       const err = error as { status?: number; message?: string };
       const status = err.status || 500;
       if (status >= 500) logger.error('Note checkbox bulk push failed', { error });
-      res.status(status).json({ success: false, message: err.message || 'Bulk push failed' });
+      return pmFail(res, status, err.message || 'Bulk push failed');
     }
   }
 );

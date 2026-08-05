@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import AppUserMenu from '@/components/AppUserMenu';
 import InstallAppPrompt from '@/components/InstallAppPrompt';
+import PmSsoBanner from '@/components/PmSsoBanner';
 
 interface Me {
   userId: number;
@@ -363,6 +364,7 @@ export default function HomePage() {
           </div>
         </div>
       </header>
+      <PmSsoBanner />
 
       <div className="relative overflow-hidden border-b border-[var(--border)]">
         <div className="pointer-events-none absolute inset-0" aria-hidden>

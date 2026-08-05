@@ -2,7 +2,6 @@ import { pool, RowDataPacket } from '../config/database';
 import {
   ensureCheckboxMarker,
   parseCheckboxes,
-  type ParsedCheckbox,
 } from './checkboxes';
 import {
   ensureFrontmatterTodoIds,
@@ -12,6 +11,7 @@ import {
   buildPmTaskOpenUrl,
   buildSynapseNoteUrl,
   createPmTask,
+  fetchPmProjectTasks,
   fetchPmTaskPriorities,
   fetchPmTaskStatuses,
   normalizePmTaskStatusList,
@@ -148,6 +148,8 @@ export type PushMissingResult = {
   failed: number;
   errors: Array<{ noteId: number; noteTitle: string; index: number; message: string }>;
   createdTaskIds: number[];
+  /** Present when a single note was processed — editor should apply markers. */
+  bodyMarkdown?: string;
 };
 
 export type PushProgress = {
@@ -184,11 +186,23 @@ export async function pushNoteAsPmTask(params: {
   const note = notes[0];
   const existing = note.PmTaskId != null ? Number(note.PmTaskId) : null;
   if (existing) {
-    return {
+    const projectTaskIds = await loadProjectTaskIdSet(params.pmUserId, params.projectId);
+    if (projectTaskIds == null || projectTaskIds.has(existing)) {
+      return {
+        pmTaskId: existing,
+        openUrl: buildPmTaskOpenUrl(params.projectId, existing),
+        alreadyLinked: true,
+      };
+    }
+    await pool.execute(
+      `UPDATE Notes SET PmTaskId = NULL, PmProjectId = NULL, PmTaskLinkedAt = NULL
+       WHERE Id = ?`,
+      [params.noteId]
+    );
+    logger.info('Cleared stale note-level PM link before recreate', {
+      noteId: params.noteId,
       pmTaskId: existing,
-      openUrl: buildPmTaskOpenUrl(params.projectId, existing),
-      alreadyLinked: true,
-    };
+    });
   }
 
   const { statusList, priorityId } = await loadStatusAndPriority(
@@ -256,18 +270,43 @@ async function linkRowsForNote(noteId: number): Promise<LinkedRow[]> {
   }));
 }
 
-function findExistingTaskId(
+async function loadProjectTaskIdSet(
+  userId: number,
+  projectId: number
+): Promise<Set<number> | null> {
+  const res = await fetchPmProjectTasks(userId, projectId);
+  if (!res.ok) return null;
+  const tasks =
+    (res.data as { tasks?: Array<{ Id?: number }> }).tasks ||
+    (Array.isArray(res.data) ? (res.data as Array<{ Id?: number }>) : []);
+  const ids = new Set<number>();
+  for (const t of tasks) {
+    const id = Number(t.Id);
+    if (Number.isFinite(id) && id > 0) ids.add(id);
+  }
+  return ids;
+}
+
+async function clearCheckboxPmLink(noteId: number, markerId: string): Promise<void> {
+  await pool.execute(
+    `UPDATE NoteCheckboxTasks
+     SET PmTaskId = NULL, PmProjectId = NULL, PmTaskLinkedAt = NULL
+     WHERE NoteId = ? AND MarkerId = ?`,
+    [noteId, markerId]
+  );
+}
+
+function findExistingLink(
   noteId: number,
-  box: ParsedCheckbox,
+  box: { markerId: string | null; text: string },
   links: LinkedRow[]
-): number | null {
+): LinkedRow | null {
   if (box.markerId) {
     const byMarker = links.find((l) => l.MarkerId === box.markerId);
-    if (byMarker) return byMarker.PmTaskId;
+    if (byMarker) return byMarker;
   }
   const key = checkboxTextKey(noteId, box.text);
-  const byText = links.find((l) => checkboxTextKey(noteId, l.Text) === key);
-  return byText ? byText.PmTaskId : null;
+  return links.find((l) => checkboxTextKey(noteId, l.Text) === key) || null;
 }
 
 async function persistCheckboxLink(params: {
@@ -314,6 +353,8 @@ export async function pushMissingCheckboxTasksForNote(params: {
   projectId: number;
   statusList: PmTaskStatusValue[];
   priorityId: number;
+  /** When set, stale Synapse links (PM task deleted) are cleared and recreated. */
+  projectTaskIds?: Set<number> | null;
   onItem?: (label: string) => void | Promise<void>;
 }): Promise<PushMissingResult & { bodyMarkdown: string }> {
   const result: PushMissingResult = {
@@ -365,6 +406,7 @@ export async function pushMissingCheckboxTasksForNote(params: {
   const links = await linkRowsForNote(params.noteId);
   const synapseNoteUrl = buildSynapseNoteUrl(params.vaultId, params.noteId);
   const stack: IndentStackEntry[] = [];
+  const projectTaskIds = params.projectTaskIds;
 
   for (const box of candidates) {
     const markerId = box.markerId;
@@ -387,11 +429,37 @@ export async function pushMissingCheckboxTasksForNote(params: {
     }
     const parentTaskId = resolveParentTaskId(stack, params.notePmTaskId);
 
-    const existingId = findExistingTaskId(params.noteId, box, links);
-    if (existingId) {
-      result.skipped += 1;
-      stack.push({ indent: box.indent, pmTaskId: existingId });
-      continue;
+    const existing = findExistingLink(params.noteId, box, links);
+    if (existing) {
+      const stale =
+        projectTaskIds != null && !projectTaskIds.has(existing.PmTaskId);
+      if (stale) {
+        await clearCheckboxPmLink(params.noteId, existing.MarkerId);
+        const idx = links.findIndex((l) => l.MarkerId === existing.MarkerId);
+        if (idx >= 0) links.splice(idx, 1);
+      } else {
+        if (existing.MarkerId !== markerId) {
+          await persistCheckboxLink({
+            noteId: params.noteId,
+            markerId,
+            text: box.text,
+            checked: box.checked,
+            taskId: existing.PmTaskId,
+            projectId: params.projectId,
+          });
+          await clearCheckboxPmLink(params.noteId, existing.MarkerId);
+          const idx = links.findIndex((l) => l.MarkerId === existing.MarkerId);
+          if (idx >= 0) links.splice(idx, 1);
+          links.push({
+            MarkerId: markerId,
+            Text: box.text,
+            PmTaskId: existing.PmTaskId,
+          });
+        }
+        result.skipped += 1;
+        stack.push({ indent: box.indent, pmTaskId: existing.PmTaskId });
+        continue;
+      }
     }
 
     const statusId = statusIdForCandidate(params.statusList, box);
@@ -560,6 +628,7 @@ export async function pushMissingCheckboxTasks(params: {
   });
 
   let createDone = 0;
+  const projectTaskIds = await loadProjectTaskIdSet(params.pmUserId, params.projectId);
 
   for (let ni = 0; ni < notes.length; ni++) {
     const note = notes[ni];
@@ -576,6 +645,7 @@ export async function pushMissingCheckboxTasks(params: {
       projectId: params.projectId,
       statusList,
       priorityId,
+      projectTaskIds,
       onItem: async (label) => {
         createDone += 1;
         await report({
@@ -595,6 +665,9 @@ export async function pushMissingCheckboxTasks(params: {
     result.failed += noteResult.failed;
     result.errors.push(...noteResult.errors);
     result.createdTaskIds.push(...noteResult.createdTaskIds);
+    if (params.noteId != null) {
+      result.bodyMarkdown = noteResult.bodyMarkdown;
+    }
 
     await report({
       phase: 'create',
@@ -691,6 +764,7 @@ export async function pushSingleCheckboxTask(params: {
     params.organizationId
   );
   const links = await linkRowsForNote(params.noteId);
+  const projectTaskIds = await loadProjectTaskIdSet(params.pmUserId, params.projectId);
   const synapseNoteUrl = buildSynapseNoteUrl(params.vaultId, params.noteId);
   let parentTaskId: number | null = notePmTaskId;
   let createdAny = false;
@@ -698,11 +772,45 @@ export async function pushSingleCheckboxTask(params: {
 
   for (const box of stackBoxes) {
     const markerId = box.markerId!;
-    const existingId = findExistingTaskId(params.noteId, box, links);
-    if (existingId) {
-      parentTaskId = existingId;
-      if (box.index === target.index) targetTaskId = existingId;
-      continue;
+    const existing = findExistingLink(params.noteId, box, links);
+    if (existing) {
+      const stale =
+        projectTaskIds != null && !projectTaskIds.has(existing.PmTaskId);
+      if (stale) {
+        await clearCheckboxPmLink(params.noteId, existing.MarkerId);
+        const idx = links.findIndex((l) => l.MarkerId === existing.MarkerId);
+        if (idx >= 0) links.splice(idx, 1);
+        logger.info('Stale checkbox PM link cleared before recreate', {
+          noteId: params.noteId,
+          markerId: existing.MarkerId,
+          pmTaskId: existing.PmTaskId,
+        });
+      } else {
+        // Heal marker mismatch so the UI can resolve the openUrl on reload
+        if (existing.MarkerId !== markerId || existing.Text !== box.text) {
+          await persistCheckboxLink({
+            noteId: params.noteId,
+            markerId,
+            text: box.text,
+            checked: box.checked,
+            taskId: existing.PmTaskId,
+            projectId: params.projectId,
+          });
+          if (existing.MarkerId !== markerId) {
+            await clearCheckboxPmLink(params.noteId, existing.MarkerId);
+            const idx = links.findIndex((l) => l.MarkerId === existing.MarkerId);
+            if (idx >= 0) links.splice(idx, 1);
+          }
+          links.push({
+            MarkerId: markerId,
+            Text: box.text,
+            PmTaskId: existing.PmTaskId,
+          });
+        }
+        parentTaskId = existing.PmTaskId;
+        if (box.index === target.index) targetTaskId = existing.PmTaskId;
+        continue;
+      }
     }
 
     const statusId = statusIdForCandidate(statusList, box);
@@ -768,7 +876,8 @@ export async function pushSingleCheckboxTask(params: {
     markerId: target.markerId,
     pmTaskId: targetTaskId,
     pmProjectId: params.projectId,
-    bodyMarkdown: body !== originalBody ? body : undefined,
+    /** Always return current body so the editor can pick up markers. */
+    bodyMarkdown: body,
     openUrl: buildPmTaskOpenUrl(params.projectId, targetTaskId),
     alreadyLinked: !createdAny,
   };

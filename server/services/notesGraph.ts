@@ -1,6 +1,6 @@
 import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { extractTags, extractWikiLinks, findMentions } from './markdown';
-import { rewriteFrontmatterTodoNoteTargets } from './frontmatter';
+import { rewriteFrontmatterRelatedTargets, rewriteFrontmatterTodoNoteTargets } from './frontmatter';
 import { parseCrossVaultWikilinkTarget, pathStem, resolveNoteId } from './notePaths';
 
 const MAX_REVISIONS = 50;
@@ -205,8 +205,10 @@ export async function rewriteWikiLinksOnRename(
         `[[${newStem}|$1]]`
       );
     }
-    const rewrittenFm = rewriteFrontmatterTodoNoteTargets(body, noteFieldReplacements);
-    if (rewrittenFm) body = rewrittenFm;
+    const rewrittenTodos = rewriteFrontmatterTodoNoteTargets(body, noteFieldReplacements);
+    if (rewrittenTodos) body = rewrittenTodos;
+    const rewrittenRelated = rewriteFrontmatterRelatedTargets(body, noteFieldReplacements);
+    if (rewrittenRelated) body = rewrittenRelated;
 
     if (body !== before) {
       await pool.execute('UPDATE Notes SET BodyMarkdown = ? WHERE Id = ?', [body, note.Id]);

@@ -37,7 +37,7 @@ export function assertRuntimeSecrets(): void {
 
   if (isProd && (encMissing || encWeak)) {
     logger.error(
-      'ENCRYPTION_KEY is required in production (≥32 chars, distinct from JWT_SECRET). Used for SSO tokens, SMTP password, and PM API key.'
+      'ENCRYPTION_KEY is required in production (≥32 chars, distinct from JWT_SECRET). Used for SSO tokens, SMTP password, and personal PM API tokens.'
     );
     process.exit(1);
   }

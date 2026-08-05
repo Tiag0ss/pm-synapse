@@ -1,9 +1,9 @@
-import { decryptSecret } from './crypto';
+import { decryptSecret, encryptSecret } from './crypto';
 import { pool, RowDataPacket } from '../config/database';
-import { getPmApiKey, getSettingBool, SETTING_KEYS } from './appSettings';
+import { getSettingBool, SETTING_KEYS } from './appSettings';
 import logger from '../utils/logger';
 
-const PM_BASE_URL = (process.env.PM_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
+export const PM_BASE_URL = (process.env.PM_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
 const SYNAPSE_PUBLIC_URL = (
   process.env.NEXT_PUBLIC_APP_URL || `http://localhost:${process.env.PORT || 3010}`
 ).replace(/\/+$/, '');
@@ -16,17 +16,30 @@ export function buildSynapseNoteUrl(vaultId: number, noteId: number): string {
   return `${SYNAPSE_PUBLIC_URL}/vaults/${vaultId}?note=${noteId}`;
 }
 
+export function pmApiKeyPrefix(key: string | null | undefined): string | null {
+  if (!key) return null;
+  if (key.length <= 12) return key.slice(0, 4) + '…';
+  return key.slice(0, 7) + '…' + key.slice(-4);
+}
+
 /** Short-lived decrypted token cache — avoids DB + decrypt on every PM API call. */
 const ssoTokenCache = new Map<number, { token: string; expiresAtMs: number }>();
-let instanceKeyCache: { token: string; expiresAtMs: number } | null = null;
+const personalKeyCache = new Map<number, { token: string; expiresAtMs: number }>();
 const TOKEN_CACHE_TTL_MS = 5 * 60_000;
 
 export function invalidatePmTokenCache(userId?: number): void {
-  if (userId != null) ssoTokenCache.delete(userId);
-  else {
+  if (userId != null) {
+    ssoTokenCache.delete(userId);
+    personalKeyCache.delete(userId);
+  } else {
     ssoTokenCache.clear();
-    instanceKeyCache = null;
+    personalKeyCache.clear();
   }
+}
+
+export async function clearSsoToken(userId: number): Promise<void> {
+  await pool.execute('DELETE FROM SsoTokens WHERE UserId = ?', [userId]);
+  ssoTokenCache.delete(userId);
 }
 
 export async function hasValidSsoToken(userId: number): Promise<boolean> {
@@ -36,7 +49,24 @@ export async function hasValidSsoToken(userId: number): Promise<boolean> {
   );
   if (!rows.length) return false;
   const expiresAt = new Date(rows[0].ExpiresAt);
-  return !Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() > Date.now() + 60_000;
+  if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60_000) {
+    await clearSsoToken(userId);
+    return false;
+  }
+  return true;
+}
+
+export async function hasPersonalPmApiKey(userId: number): Promise<boolean> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT PmApiKeyEnc FROM Users WHERE Id = ? LIMIT 1',
+    [userId]
+  );
+  return Boolean(rows[0]?.PmApiKeyEnc);
+}
+
+export async function getPersonalPmApiKeyPrefix(userId: number): Promise<string | null> {
+  const token = await getPersonalPmApiKey(userId);
+  return pmApiKeyPrefix(token);
 }
 
 async function getSsoAccessToken(userId: number): Promise<string | null> {
@@ -55,7 +85,7 @@ async function getSsoAccessToken(userId: number): Promise<string | null> {
   }
   const expiresAt = new Date(rows[0].ExpiresAt);
   if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60_000) {
-    ssoTokenCache.delete(userId);
+    await clearSsoToken(userId);
     return null;
   }
   try {
@@ -70,30 +100,77 @@ async function getSsoAccessToken(userId: number): Promise<string | null> {
   }
 }
 
-/** Prefer per-user SSO token; fall back to instance PM API key. */
-export async function resolvePmBearer(userId: number): Promise<string | null> {
+async function getPersonalPmApiKey(userId: number): Promise<string | null> {
+  const cached = personalKeyCache.get(userId);
+  if (cached && cached.expiresAtMs > Date.now() + 60_000) {
+    return cached.token;
+  }
+
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT PmApiKeyEnc FROM Users WHERE Id = ? LIMIT 1',
+    [userId]
+  );
+  const enc = rows[0]?.PmApiKeyEnc != null ? String(rows[0].PmApiKeyEnc) : '';
+  if (!enc) {
+    personalKeyCache.delete(userId);
+    return null;
+  }
+  try {
+    const token = decryptSecret(enc);
+    personalKeyCache.set(userId, { token, expiresAtMs: Date.now() + TOKEN_CACHE_TTL_MS });
+    return token;
+  } catch (error) {
+    personalKeyCache.delete(userId);
+    logger.error('Failed to decrypt personal PM API key', { error, userId });
+    return null;
+  }
+}
+
+export async function setPersonalPmApiKey(userId: number, rawKey: string | null): Promise<void> {
+  const trimmed = rawKey != null ? String(rawKey).trim() : '';
+  if (!trimmed) {
+    await pool.execute('UPDATE Users SET PmApiKeyEnc = NULL WHERE Id = ?', [userId]);
+    personalKeyCache.delete(userId);
+    return;
+  }
+  await pool.execute('UPDATE Users SET PmApiKeyEnc = ? WHERE Id = ?', [
+    encryptSecret(trimmed),
+    userId,
+  ]);
+  personalKeyCache.delete(userId);
+}
+
+export type PmBearerSource = 'sso' | 'personal';
+
+export async function resolvePmBearerWithSource(
+  userId: number
+): Promise<{ token: string; source: PmBearerSource } | null> {
   const enabled = await getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true);
   if (!enabled) return null;
 
   const sso = await getSsoAccessToken(userId);
-  if (sso) return sso;
+  if (sso) return { token: sso, source: 'sso' };
 
-  if (instanceKeyCache && instanceKeyCache.expiresAtMs > Date.now() + 60_000) {
-    return instanceKeyCache.token;
-  }
-  const apiKey = await getPmApiKey();
-  if (apiKey) {
-    instanceKeyCache = { token: apiKey, expiresAtMs: Date.now() + TOKEN_CACHE_TTL_MS };
-    return apiKey;
-  }
-  logger.warn('No PM credentials (SSO token or instance API key)', { userId });
+  const personal = await getPersonalPmApiKey(userId);
+  if (personal) return { token: personal, source: 'personal' };
+
+  logger.warn('No PM credentials (SSO token or personal API key)', { userId });
   return null;
+}
+
+/** Prefer per-user SSO token; else personal pt_… API key. */
+export async function resolvePmBearer(userId: number): Promise<string | null> {
+  const resolved = await resolvePmBearerWithSource(userId);
+  return resolved?.token ?? null;
 }
 
 /** @deprecated use resolvePmBearer — kept as alias for call-site compatibility during rename */
 export async function getPmAccessToken(userId: number): Promise<string | null> {
   return resolvePmBearer(userId);
 }
+
+export const PM_NO_CREDENTIALS_MESSAGE =
+  'No Project Management credentials — reconnect via SSO or add a personal API token in Profile';
 
 async function pmFetch<T>(
   userId: number,
@@ -111,14 +188,13 @@ async function pmFetch<T>(
     };
   }
 
-  const token = await resolvePmBearer(userId);
-  if (!token) {
+  const resolved = await resolvePmBearerWithSource(userId);
+  if (!resolved) {
     return {
       ok: false,
       status: 401,
       data: {
-        message:
-          'No Project Management credentials — sign in with PM (SSO) or ask an admin to set an API key in Settings',
+        message: PM_NO_CREDENTIALS_MESSAGE,
       } as T & { message?: string },
     };
   }
@@ -126,7 +202,7 @@ async function pmFetch<T>(
     const res = await fetch(`${PM_BASE_URL}${path}`, {
       ...init,
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${resolved.token}`,
         Accept: 'application/json',
         'Content-Type': 'application/json',
         ...(init?.headers || {}),
@@ -139,7 +215,15 @@ async function pmFetch<T>(
         status: res.status,
         message: data.message,
         userId,
+        source: resolved.source,
       });
+      if (res.status === 401) {
+        if (resolved.source === 'sso') {
+          await clearSsoToken(userId);
+        } else {
+          personalKeyCache.delete(userId);
+        }
+      }
     }
     return { ok: res.ok, status: res.status, data };
   } catch (error) {
@@ -153,7 +237,6 @@ async function pmFetch<T>(
     };
   }
 }
-
 /** Normalize PM organization list from various response shapes. */
 export function normalizeOrganizationList(payload: unknown): Array<{ Id: number; Name: string }> {
   let raw: unknown = payload;
@@ -396,7 +479,7 @@ export type PmUserSummary = {
   isActive: boolean;
 };
 
-/** List all PM users (requires admin SSO token or admin API key). */
+/** List all PM users (requires admin SSO or the admin’s personal pt_… token). */
 export async function fetchPmUsers(userId: number) {
   return pmFetch<{ users?: unknown[]; data?: unknown[] }>(userId, '/api/users');
 }
@@ -434,5 +517,3 @@ export function normalizePmUserList(payload: unknown): PmUserSummary[] {
     })
     .filter((u) => Number.isFinite(u.id) && u.id > 0);
 }
-
-export { PM_BASE_URL, SYNAPSE_PUBLIC_URL };

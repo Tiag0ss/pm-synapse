@@ -3,10 +3,12 @@
 This document is the **portable contract** Synapse depends on. When Synapse is split into its own repository, keep this file (and `server/services/pmClient.ts`) updated — do **not** rely on browsing the PM codebase.
 
 Base URL: `PM_BASE_URL` (e.g. `http://localhost:3000`).  
-Auth for API calls: `Authorization: Bearer <token>` where `<token>` is either:
+Auth for API calls: `Authorization: Bearer <token>` where `<token>` is resolved **per acting Synapse user** in this order:
 
-1. **SSO access token** from the SSO token exchange (stored encrypted per Synapse user), or  
-2. **Personal API token** (`pt_…`) — Synapse may use an **instance-wide** key from admin Settings (or `PM_API_KEY` env) when the signed-in user has no valid SSO token.
+1. **SSO access token** from the SSO token exchange (stored encrypted in `SsoTokens` for that user), or  
+2. That user’s **personal API token** (`pt_…`, stored encrypted in `Users.PmApiKeyEnc` via Profile).
+
+There is **no** instance-wide Settings / `PM_API_KEY` credential. If neither SSO nor a personal token is available, Synapse returns `401` with `reauth: true` and asks the user to reconnect SSO or add a token in Profile.
 
 PM’s `authenticateToken` middleware accepts both JWT and `pt_` tokens on the same routes.
 
@@ -64,7 +66,7 @@ Success `data`:
 }
 ```
 
-Synapse stores `accessToken` encrypted per Synapse user (`SsoTokens.UserId`) and uses it as Bearer for subsequent PM calls when present. Otherwise Synapse falls back to the instance API key (`pt_…`).
+Synapse stores `accessToken` encrypted per Synapse user (`SsoTokens.UserId`) and uses it as Bearer for subsequent PM calls when present and not expired. Expired or PM-401 SSO rows are deleted. Otherwise Synapse falls back to that user’s personal `pt_…` token from Profile (not an instance-wide key).
 
 SSO login resolves the Synapse user by linked `PmUserId`, then by **email**, then creates a new user.
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { listNoteTaskCandidates } from '@/lib/noteTasks';
 import {
   resolveCrossVaultWikilink,
@@ -29,6 +29,8 @@ interface NoteTasksPanelProps {
   body: string;
   hasProject: boolean;
   onBodyChange: (body: string) => void;
+  /** Persist dirty editor content before PM ops that read the note from DB. */
+  onEnsureSaved?: () => Promise<boolean>;
   onStatus?: (msg: string) => void;
   compact?: boolean;
   readOnly?: boolean;
@@ -45,6 +47,7 @@ export default function NoteTasksPanel({
   body,
   hasProject,
   onBodyChange,
+  onEnsureSaved,
   onStatus,
   compact = false,
   readOnly = false,
@@ -57,6 +60,18 @@ export default function NoteTasksPanel({
   const [notePmTaskId, setNotePmTaskId] = useState<number | null>(null);
   const [noteOpenUrl, setNoteOpenUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [needsReauth, setNeedsReauth] = useState(false);
+  const bodyRef = useRef(body);
+  bodyRef.current = body;
+
+  const applyBodyFromServer = useCallback(
+    (next: unknown) => {
+      if (typeof next === 'string' && next !== bodyRef.current) {
+        onBodyChange(next);
+      }
+    },
+    [onBodyChange]
+  );
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes`, {
@@ -64,6 +79,7 @@ export default function NoteTasksPanel({
     });
     const data = await res.json();
     if (res.ok) {
+      setNeedsReauth(false);
       const payload = data.data;
       const list = Array.isArray(payload) ? payload : payload?.items || [];
       setItems(
@@ -106,12 +122,18 @@ export default function NoteTasksPanel({
           : null
       );
       if (payload && !Array.isArray(payload) && typeof payload.bodyMarkdown === 'string') {
-        onBodyChange(payload.bodyMarkdown);
+        applyBodyFromServer(payload.bodyMarkdown);
         if (payload.syncedFromPm > 0) {
           onStatus?.(
             payload.syncedFromPm === 1
               ? 'Synced 1 task from Project Management'
               : `Synced ${payload.syncedFromPm} tasks from Project Management`
+          );
+        } else if (payload.clearedStale > 0) {
+          onStatus?.(
+            payload.clearedStale === 1
+              ? 'Cleared 1 stale Planner link'
+              : `Cleared ${payload.clearedStale} stale Planner links`
           );
         }
       }
@@ -131,7 +153,7 @@ export default function NoteTasksPanel({
       }))
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- body only used as API failure fallback
-  }, [vaultId, noteId, onBodyChange, onStatus]);
+  }, [vaultId, noteId, applyBodyFromServer, onStatus]);
 
   useEffect(() => {
     void load();
@@ -159,7 +181,16 @@ export default function NoteTasksPanel({
     );
   }, [body]);
 
+  const ensureSaved = async () => {
+    if (!onEnsureSaved) return true;
+    return onEnsureSaved();
+  };
+
   const toggle = async (item: NoteTaskItem) => {
+    if (!(await ensureSaved())) {
+      onStatus?.('Save the note before updating tasks');
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes`, {
@@ -174,10 +205,11 @@ export default function NoteTasksPanel({
       });
       const data = await res.json();
       if (res.ok && data.data?.bodyMarkdown != null) {
-        onBodyChange(data.data.bodyMarkdown);
+        applyBodyFromServer(data.data.bodyMarkdown);
         onStatus?.(item.checked ? 'Marked open' : 'Marked done');
         await load();
       } else {
+        if (data.reauth) setNeedsReauth(true);
         onStatus?.(data.message || 'Could not update checkbox');
       }
     } finally {
@@ -190,6 +222,10 @@ export default function NoteTasksPanel({
       onStatus?.('Link a PM project in Vault settings first');
       return;
     }
+    if (!(await ensureSaved())) {
+      onStatus?.('Save the note before creating tasks');
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes/push`, {
@@ -200,15 +236,15 @@ export default function NoteTasksPanel({
       });
       const data = await res.json();
       if (res.ok || (res.status === 409 && data.data?.pmTaskId)) {
-        if (data.data?.bodyMarkdown) onBodyChange(data.data.bodyMarkdown);
+        applyBodyFromServer(data.data?.bodyMarkdown);
         onStatus?.(
-          res.ok
+          res.ok && !data.data?.alreadyLinked
             ? `Created PM task #${data.data.pmTaskId}`
             : `Already linked as PM #${data.data.pmTaskId}`
         );
-        if (res.ok && data.data?.openUrl) window.open(data.data.openUrl, '_blank');
         await load();
       } else {
+        if (data.reauth) setNeedsReauth(true);
         onStatus?.(data.message || 'Could not create task');
       }
     } finally {
@@ -221,6 +257,10 @@ export default function NoteTasksPanel({
       onStatus?.('Link a PM project in Vault settings first');
       return;
     }
+    if (!(await ensureSaved())) {
+      onStatus?.('Save the note before creating tasks');
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/push-task`, {
@@ -231,6 +271,7 @@ export default function NoteTasksPanel({
       });
       const data = await res.json();
       if (res.ok) {
+        applyBodyFromServer(data.data?.bodyMarkdown);
         const created = data.data?.checkboxes?.created;
         onStatus?.(
           data.data?.alreadyLinked
@@ -241,11 +282,9 @@ export default function NoteTasksPanel({
                 created != null ? ` · created ${created} checkbox task(s)` : ''
               }`
         );
-        if (!data.data?.alreadyLinked && data.data?.openUrl) {
-          window.open(data.data.openUrl, '_blank');
-        }
         await load();
       } else {
+        if (data.reauth) setNeedsReauth(true);
         onStatus?.(data.message || 'Could not create note task');
       }
     } finally {
@@ -258,6 +297,10 @@ export default function NoteTasksPanel({
       onStatus?.('Link a PM project in Vault settings first');
       return;
     }
+    if (!(await ensureSaved())) {
+      onStatus?.('Save the note before creating tasks');
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes/push-missing`, {
@@ -266,6 +309,7 @@ export default function NoteTasksPanel({
       });
       const data = await res.json();
       if (res.ok) {
+        applyBodyFromServer(data.data?.bodyMarkdown);
         onStatus?.(
           `Created ${data.data.created} task(s)` +
             (data.data.skipped ? ` · skipped ${data.data.skipped}` : '') +
@@ -273,6 +317,7 @@ export default function NoteTasksPanel({
         );
         await load();
       } else {
+        if (data.reauth) setNeedsReauth(true);
         onStatus?.(data.message || 'Could not create tasks');
       }
     } finally {
@@ -287,6 +332,22 @@ export default function NoteTasksPanel({
 
   return (
     <div className={compact ? '' : 'rounded-xl border border-[var(--border)] bg-[var(--panel)]/50 p-3'}>
+      {needsReauth && (
+        <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-100">
+          <p>Reconnect Project Management to create or sync tasks.</p>
+          <div className="mt-1.5 flex flex-wrap gap-3">
+            <a
+              href="/api/auth/sso/start"
+              className="font-medium text-[var(--accent-soft)] no-underline hover:underline"
+            >
+              Reconnect SSO
+            </a>
+            <a href="/profile" className="font-medium text-[var(--accent-soft)] no-underline hover:underline">
+              Add personal token in Profile
+            </a>
+          </div>
+        </div>
+      )}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
           Tasks · {items.length}

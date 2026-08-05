@@ -36,6 +36,8 @@ interface VaultPmSettingsModalProps {
   pmOrganizationId?: number | null;
   onClose: () => void;
   onChanged: () => void;
+  /** Bubble status into vault toast / header. */
+  onStatus?: (msg: string) => void;
   onOpenNote?: (noteId: number) => void;
   notes?: NoteResolveEntry[];
   /** Render as a panel inside Vault options (no overlay chrome). */
@@ -50,6 +52,7 @@ export default function VaultPmSettingsModal({
   pmOrganizationId,
   onClose,
   onChanged,
+  onStatus,
   onOpenNote,
   notes = [],
   embedded = false,
@@ -59,8 +62,13 @@ export default function VaultPmSettingsModal({
   const [linkProjectId, setLinkProjectId] = useState('');
   const [linkedProjectId, setLinkedProjectId] = useState<number | null>(pmProjectId ?? null);
   const [items, setItems] = useState<VaultCheckboxItem[]>([]);
-  const [status, setStatus] = useState('');
+  const [status, setStatusState] = useState('');
+  const setStatus = (msg: string) => {
+    setStatusState(msg);
+    if (msg.trim()) onStatus?.(msg);
+  };
   const [orgError, setOrgError] = useState('');
+  const [needsReauth, setNeedsReauth] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loadingOrgs, setLoadingOrgs] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unlinked' | 'open'>('unlinked');
@@ -69,6 +77,7 @@ export default function VaultPmSettingsModal({
   const load = async () => {
     setLoadingOrgs(true);
     setOrgError('');
+    setNeedsReauth(false);
     try {
       const [orgRes, cbRes] = await Promise.all([
         fetch('/api/vaults/pm/organizations', { credentials: 'include' }),
@@ -88,9 +97,10 @@ export default function VaultPmSettingsModal({
         }
       } else {
         setOrgs([]);
+        setNeedsReauth(Boolean(orgJson.reauth) || orgRes.status === 401);
         const msg =
           orgJson.message ||
-          'Failed to load organizations — sign in with Project Management or ask an admin to set an API key in Settings';
+          'Failed to load organizations — reconnect SSO or add a personal API token in Profile';
         setOrgError(msg);
         setStatus(msg);
       }
@@ -214,12 +224,19 @@ export default function VaultPmSettingsModal({
         body: JSON.stringify({ index: item.index }),
       });
       const data = await res.json();
-      if (res.ok) {
-        setStatus(`Created PM task #${data.data.pmTaskId}`);
-        if (data.data.openUrl) window.open(data.data.openUrl, '_blank');
+      if (res.ok || (res.status === 409 && data.data?.pmTaskId)) {
+        setStatus(
+          data.data?.alreadyLinked
+            ? `Already linked as PM #${data.data.pmTaskId}`
+            : `Created PM task #${data.data.pmTaskId}`
+        );
+        if (!data.data?.alreadyLinked && data.data?.openUrl) {
+          window.open(data.data.openUrl, '_blank');
+        }
         onChanged();
         await load();
       } else {
+        if (data.reauth || res.status === 401) setNeedsReauth(true);
         setStatus(data.message || 'Could not create task');
       }
     } finally {
@@ -257,7 +274,9 @@ export default function VaultPmSettingsModal({
 
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
-        setStatus((data as { message?: string }).message || 'Bulk create failed');
+        const payload = data as { message?: string; reauth?: boolean };
+        if (payload.reauth || res.status === 401) setNeedsReauth(true);
+        setStatus(payload.message || 'Bulk create failed');
         setBulkProgress(null);
         return;
       }
@@ -287,6 +306,7 @@ export default function VaultPmSettingsModal({
             label?: string;
             message?: string;
             success?: boolean;
+            reauth?: boolean;
             data?: {
               created?: number;
               skipped?: number;
@@ -316,6 +336,7 @@ export default function VaultPmSettingsModal({
               (d.errors?.length ? ` · ${d.errors.length} error(s)` : '');
             setStatus(finalMessage);
           } else if (event.type === 'error') {
+            if (event.reauth) setNeedsReauth(true);
             finalMessage = event.message || 'Bulk create failed';
             setStatus(finalMessage);
           }
@@ -327,6 +348,7 @@ export default function VaultPmSettingsModal({
           const event = JSON.parse(buffer.trim()) as {
             type?: string;
             message?: string;
+            reauth?: boolean;
             data?: { created?: number; skipped?: number; failed?: number; errors?: unknown[] };
           };
           if (event.type === 'done') {
@@ -336,6 +358,7 @@ export default function VaultPmSettingsModal({
                 (d.errors?.length ? ` · ${d.errors.length} error(s)` : '')
             );
           } else if (event.type === 'error') {
+            if (event.reauth) setNeedsReauth(true);
             setStatus(event.message || 'Bulk create failed');
           }
         } catch {
@@ -449,13 +472,27 @@ export default function VaultPmSettingsModal({
             {orgError && (
               <div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
                 <p>{orgError}</p>
-                {(orgError.toLowerCase().includes('sso') ||
+                {(needsReauth ||
+                  orgError.toLowerCase().includes('sso') ||
+                  orgError.toLowerCase().includes('credential') ||
+                  orgError.toLowerCase().includes('profile') ||
                   orgError.toLowerCase().includes('sign in') ||
                   orgError.toLowerCase().includes('expired') ||
                   orgError.toLowerCase().includes('401')) && (
-                  <a href="/api/auth/sso/start" className="mt-2 inline-block font-medium text-[var(--accent-soft)]">
-                    Sign in again with Project Management →
-                  </a>
+                  <div className="mt-2 flex flex-wrap gap-3">
+                    <a
+                      href="/api/auth/sso/start"
+                      className="font-medium text-[var(--accent-soft)] no-underline hover:underline"
+                    >
+                      Reconnect SSO →
+                    </a>
+                    <a
+                      href="/profile"
+                      className="font-medium text-[var(--accent-soft)] no-underline hover:underline"
+                    >
+                      Add personal token in Profile →
+                    </a>
+                  </div>
                 )}
               </div>
             )}

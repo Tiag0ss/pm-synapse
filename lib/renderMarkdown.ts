@@ -204,7 +204,7 @@ export function renderSynapseMarkdown(
 ): string {
   try {
     const fm = parseFrontmatter(md);
-    const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes) : '';
+    const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes, linkableVaults) : '';
     const withExtras = preprocessMarkdownExtras(fm.body);
     const prepared = preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId);
     const html = marked.parse(prepared, { async: false, gfm: true }) as string;

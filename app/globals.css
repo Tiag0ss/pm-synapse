@@ -303,16 +303,20 @@ a:hover { text-decoration: underline; }
 .synapse-md-preview li:has(> p > input[type="checkbox"]) > p > input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   vertical-align: text-top;
-  width: 1.05rem;
-  height: 1.05rem;
-  margin: 0.2rem 0.55rem 0 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin: 0.1rem 0.55rem 0 0;
   border: 1.5px solid var(--border-strong);
   border-radius: 0.3rem;
-  background: var(--surface);
+  background: transparent;
   cursor: default;
   position: relative;
+  flex-shrink: 0;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 .synapse-md-preview li.task-list-item > p {
   display: inline;
@@ -321,29 +325,41 @@ a:hover { text-decoration: underline; }
 .synapse-md-preview input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  width: 1.05rem;
-  height: 1.05rem;
-  margin-top: 0.2rem;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-top: 0.1rem;
   border: 1.5px solid var(--border-strong);
   border-radius: 0.3rem;
-  background: var(--surface);
+  background: transparent;
   cursor: default;
   position: relative;
 }
+/* Match sidebar task checkboxes (emerald checked state). Specificity must beat li > input rules. */
+.synapse-md-preview li.task-list-item > input[type="checkbox"]:checked,
+.synapse-md-preview li.task-list-item > p > input[type="checkbox"]:checked,
+.synapse-md-preview li:has(> input[type="checkbox"]) > input[type="checkbox"]:checked,
+.synapse-md-preview li:has(> p > input[type="checkbox"]) > p > input[type="checkbox"]:checked,
 .synapse-md-preview input[type="checkbox"]:checked {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: color-mix(in srgb, #10b981 25%, transparent);
+  border-color: color-mix(in srgb, #34d399 60%, transparent);
 }
+.synapse-md-preview li.task-list-item > input[type="checkbox"]:checked::after,
+.synapse-md-preview li.task-list-item > p > input[type="checkbox"]:checked::after,
+.synapse-md-preview li:has(> input[type="checkbox"]) > input[type="checkbox"]:checked::after,
+.synapse-md-preview li:has(> p > input[type="checkbox"]) > p > input[type="checkbox"]:checked::after,
 .synapse-md-preview input[type="checkbox"]:checked::after {
-  content: "";
+  content: "✓";
   position: absolute;
-  left: 0.28rem;
-  top: 0.05rem;
-  width: 0.28rem;
-  height: 0.55rem;
-  border: solid var(--accent-fg);
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -54%);
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #a7f3d0; /* emerald-200 — same as sidebar */
+  border: none;
+  width: auto;
+  height: auto;
 }
 .synapse-md-preview li.task-list-item:has(input[type="checkbox"]:checked),
 .synapse-md-preview li:has(> input[type="checkbox"]:checked),

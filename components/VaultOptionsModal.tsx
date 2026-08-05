@@ -38,6 +38,7 @@ interface VaultOptionsModalProps {
   notes?: NoteResolveEntry[];
   onClose: () => void;
   onChanged: () => void;
+  onStatus?: (msg: string) => void;
   onOpenNote: (noteId: number) => void;
   onCreateMissingNote: (title: string, linkFromNoteId: number) => Promise<void> | void;
 }
@@ -56,6 +57,7 @@ export default function VaultOptionsModal({
   notes = [],
   onClose,
   onChanged,
+  onStatus,
   onOpenNote,
   onCreateMissingNote,
 }: VaultOptionsModalProps) {
@@ -540,6 +542,7 @@ export default function VaultOptionsModal({
               pmOrganizationId={pmOrganizationId}
               onClose={onClose}
               onChanged={onChanged}
+              onStatus={onStatus}
               notes={notes}
               onOpenNote={(id) => {
                 onOpenNote(id);

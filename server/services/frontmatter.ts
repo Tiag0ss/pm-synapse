@@ -2,7 +2,12 @@
  * Server-side frontmatter helpers (keep in sync with lib/frontmatter.ts).
  */
 import matter from 'gray-matter';
-import { resolveNoteId, type NoteResolveEntry } from './notePaths';
+import {
+  resolveCrossVaultWikilink,
+  resolveNoteId,
+  type LinkableVaultNotes,
+  type NoteResolveEntry,
+} from './notePaths';
 import {
   parseEstimateFromFrontmatterTodo,
   type TaskEstimateMeta,
@@ -17,14 +22,38 @@ export type ParsedFrontmatter = {
   raw: string | null;
 };
 
+/**
+ * Quote bare `@vault/path` and `[[…]]` values in the YAML block so js-yaml
+ * does not treat `@` / `[` as special and abort the whole frontmatter parse.
+ * Keep in sync with lib/frontmatter.ts.
+ */
+export function quoteFragileYamlLinkValues(markdown: string): string {
+  const input = String(markdown || '');
+  if (!input.startsWith('---')) return input;
+  const end = input.match(/\n---\s*(?:\n|$)/);
+  if (!end || end.index == null) return input;
+  const yaml = input.slice(3, end.index);
+  const rest = input.slice(end.index);
+  const fixed = yaml.replace(
+    /^([ \t]*(?:-\s+|[a-zA-Z_][\w-]*\s*:\s*))(@\S+|\[\[.*?\]\])\s*$/gm,
+    (_full, lead: string, value: string) => {
+      const escaped = String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `${lead}"${escaped}"`;
+    }
+  );
+  return `---${fixed}${rest}`;
+}
+
 export function parseFrontmatter(markdown: string): ParsedFrontmatter {
   const input = String(markdown || '').replace(/^\uFEFF/, '');
   if (!input.startsWith('---')) {
     return { hasFrontmatter: false, data: {}, body: input, raw: null };
   }
 
+  const sanitized = quoteFragileYamlLinkValues(input);
+
   try {
-    const parsed = matter(input);
+    const parsed = matter(sanitized);
     const raw =
       typeof parsed.matter === 'string' && parsed.matter.trim()
         ? parsed.matter.replace(/^\n+|\n+$/g, '')
@@ -118,24 +147,94 @@ function objectKeyOrder(obj: Record<string, unknown>): string[] {
   return [...preferred.filter((k) => keys.includes(k)), ...keys.filter((k) => !preferred.includes(k))];
 }
 
-function renderNoteLinkHtml(raw: unknown, notes: NoteResolveEntry[]): string {
+function renderNoteLinkHtml(
+  raw: unknown,
+  notes: NoteResolveEntry[],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   const target = normalizeFrontmatterTodoNoteTarget(raw);
   if (!target) return '';
+
+  if (target.startsWith('@')) {
+    const r = resolveCrossVaultWikilink(target, linkableVaults);
+    if (r.status === 'locked') {
+      return (
+        `<span class="synapse-wikilink is-locked" title="You don't have access to this note" aria-label="${escapeAttr(r.label)} (no access)">` +
+        `${escapeHtml(r.label)}` +
+        `<span class="synapse-wikilink-lock" aria-hidden="true">no access</span>` +
+        `</span>`
+      );
+    }
+    if (r.status === 'missing') {
+      const href = `#wiki-${encodeURIComponent(`@${r.vaultSlug}/${r.label}`)}`;
+      return `<a class="synapse-wikilink is-missing" href="${href}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-id="" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
+    }
+    return `<a class="synapse-wikilink" href="#note-${r.noteId}" data-note-id="${r.noteId}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
+  }
+
   const id = resolveNoteId(target, notes);
   const cls = id != null ? 'synapse-wikilink' : 'synapse-wikilink is-missing';
   const href = id != null ? `#note-${id}` : `#wiki-${encodeURIComponent(target)}`;
   return `<a class="${cls}" href="${href}" data-note-id="${id ?? ''}" data-note-title="${escapeAttr(target)}">${escapeHtml(target)}</a>`;
 }
 
-function renderObjectHtml(obj: Record<string, unknown>, notes: NoteResolveEntry[]): string {
+/** Render `related:` list (or single value) as wikilink chips. */
+function renderRelatedHtml(
+  value: unknown,
+  notes: NoteResolveEntry[],
+  linkableVaults: LinkableVaultNotes[]
+): string {
+  const items = Array.isArray(value) ? value : [value];
+  const links = items
+    .map((item) => renderNoteLinkHtml(item, notes, linkableVaults))
+    .filter(Boolean);
+  if (!links.length) return `<span class="synapse-fm-empty">[]</span>`;
+  return `<div class="synapse-fm-list synapse-fm-related">${links
+    .map((html) => `<div class="synapse-fm-item">${html}</div>`)
+    .join('')}</div>`;
+}
+
+/**
+ * Parse top-level YAML `related:` into normalized wikilink targets.
+ * Accepts a string or list; deduplicates case-insensitively.
+ */
+export function parseFrontmatterRelatedNotes(
+  markdownOrData: string | FrontmatterData
+): string[] {
+  const data =
+    typeof markdownOrData === 'string'
+      ? parseFrontmatter(markdownOrData).data
+      : markdownOrData || {};
+  const raw = data.related;
+  if (raw == null || raw === '') return [];
+
+  const items = Array.isArray(raw) ? raw : [raw];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const target = normalizeFrontmatterTodoNoteTarget(item);
+    if (!target) continue;
+    const key = target.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(target);
+  }
+  return out;
+}
+
+function renderObjectHtml(
+  obj: Record<string, unknown>,
+  notes: NoteResolveEntry[],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   const rows = objectKeyOrder(obj)
     .map((key) => {
       const value = obj[key];
       if (value === undefined || value === null || value === '') return '';
       const rendered =
         key === 'note'
-          ? renderNoteLinkHtml(value, notes)
-          : renderValueHtml(value, notes);
+          ? renderNoteLinkHtml(value, notes, linkableVaults)
+          : renderValueHtml(value, notes, linkableVaults);
       if (!rendered) return '';
       return (
         `<div class="synapse-fm-kv">` +
@@ -149,7 +248,11 @@ function renderObjectHtml(obj: Record<string, unknown>, notes: NoteResolveEntry[
   return `<div class="synapse-fm-object">${rows || '<span class="synapse-fm-empty">{}</span>'}</div>`;
 }
 
-function renderValueHtml(value: unknown, notes: NoteResolveEntry[]): string {
+function renderValueHtml(
+  value: unknown,
+  notes: NoteResolveEntry[],
+  linkableVaults: LinkableVaultNotes[] = []
+): string {
   if (value == null) return '';
   if (typeof value === 'boolean' || typeof value === 'number') {
     return `<code class="synapse-fm-scalar">${escapeHtml(String(value))}</code>`;
@@ -166,10 +269,10 @@ function renderValueHtml(value: unknown, notes: NoteResolveEntry[]): string {
     const items = value
       .map((item) => {
         if (isPlainObject(item)) {
-          return `<div class="synapse-fm-item">${renderObjectHtml(item, notes)}</div>`;
+          return `<div class="synapse-fm-item">${renderObjectHtml(item, notes, linkableVaults)}</div>`;
         }
         if (Array.isArray(item)) {
-          return `<div class="synapse-fm-item">${renderValueHtml(item, notes)}</div>`;
+          return `<div class="synapse-fm-item">${renderValueHtml(item, notes, linkableVaults)}</div>`;
         }
         return `<div class="synapse-fm-item">${escapeHtml(String(item))}</div>`;
       })
@@ -177,7 +280,7 @@ function renderValueHtml(value: unknown, notes: NoteResolveEntry[]): string {
     return `<div class="synapse-fm-list">${items}</div>`;
   }
 
-  if (isPlainObject(value)) return renderObjectHtml(value, notes);
+  if (isPlainObject(value)) return renderObjectHtml(value, notes, linkableVaults);
 
   try {
     return `<pre class="synapse-fm-json">${escapeHtml(JSON.stringify(value, null, 2))}</pre>`;
@@ -188,17 +291,22 @@ function renderValueHtml(value: unknown, notes: NoteResolveEntry[]): string {
 
 export function renderFrontmatterHtml(
   data: FrontmatterData,
-  notes: NoteResolveEntry[] = []
+  notes: NoteResolveEntry[] = [],
+  linkableVaults: LinkableVaultNotes[] = []
 ): string {
   const entries = Object.entries(data || {}).filter(([, v]) => v !== undefined && v !== null && v !== '');
   if (!entries.length) return '';
 
   const rows = entries
     .map(([key, value]) => {
+      const rendered =
+        key === 'related'
+          ? renderRelatedHtml(value, notes, linkableVaults)
+          : renderValueHtml(value, notes, linkableVaults);
       return (
         `<div class="synapse-fm-row">` +
         `<span class="synapse-fm-key">${escapeHtml(key)}</span>` +
-        `<span class="synapse-fm-val">${renderValueHtml(value, notes)}</span>` +
+        `<span class="synapse-fm-val">${rendered}</span>` +
         `</div>`
       );
     })
@@ -362,38 +470,89 @@ export function rewriteFrontmatterTodoNoteTargets(
   const parsed = parseFrontmatter(markdown);
   if (!parsed.hasFrontmatter || !Array.isArray(parsed.data.todos)) return null;
 
-  const normalized = replacements
-    .map((r) => ({
-      from: String(r.from || '').trim(),
-      to: String(r.to || '').trim(),
-    }))
-    .filter((r) => r.from && r.to && r.from.toLowerCase() !== r.to.toLowerCase());
+  const normalized = normalizeReplacements(replacements);
   if (!normalized.length) return null;
 
   let changed = false;
   const nextData = rewriteTodosInData(parsed.data, (item) => {
     if (!isPlainObject(item) || item.note == null) return item;
-    const raw = item.note;
-    const target = normalizeFrontmatterTodoNoteTarget(raw);
-    if (!target) return item;
-    for (const { from, to } of normalized) {
-      if (target.toLowerCase() !== from.toLowerCase()) continue;
-      changed = true;
-      const rawStr = typeof raw === 'string' ? raw.trim() : '';
-      const wiki = rawStr.match(/^\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]$/);
-      if (wiki) {
-        const alias = wiki[2];
-        return {
-          ...item,
-          note: alias != null && String(alias).trim() ? `[[${to}|${alias}]]` : `[[${to}]]`,
-        };
-      }
-      return { ...item, note: to };
-    }
-    return item;
+    const next = rewriteRawNoteTarget(item.note, normalized);
+    if (!next.changed) return item;
+    changed = true;
+    return { ...item, note: next.value };
   });
   if (!changed) return null;
   return stringifyWithFrontmatter(nextData, parsed.body);
+}
+
+/**
+ * Rewrite top-level `related:` targets when a linked note is renamed.
+ * Returns null when nothing changed.
+ */
+export function rewriteFrontmatterRelatedTargets(
+  markdown: string,
+  replacements: Array<{ from: string; to: string }>
+): string | null {
+  if (!replacements.length) return null;
+  const parsed = parseFrontmatter(markdown);
+  if (!parsed.hasFrontmatter || parsed.data.related == null) return null;
+
+  const normalized = normalizeReplacements(replacements);
+  if (!normalized.length) return null;
+
+  let changed = false;
+  const raw = parsed.data.related;
+  let nextRelated: unknown = raw;
+
+  if (Array.isArray(raw)) {
+    nextRelated = raw.map((item) => {
+      const next = rewriteRawNoteTarget(item, normalized);
+      if (next.changed) changed = true;
+      return next.value;
+    });
+  } else {
+    const next = rewriteRawNoteTarget(raw, normalized);
+    if (next.changed) {
+      changed = true;
+      nextRelated = next.value;
+    }
+  }
+
+  if (!changed) return null;
+  return stringifyWithFrontmatter({ ...parsed.data, related: nextRelated }, parsed.body);
+}
+
+function normalizeReplacements(
+  replacements: Array<{ from: string; to: string }>
+): Array<{ from: string; to: string }> {
+  return replacements
+    .map((r) => ({
+      from: String(r.from || '').trim(),
+      to: String(r.to || '').trim(),
+    }))
+    .filter((r) => r.from && r.to && r.from.toLowerCase() !== r.to.toLowerCase());
+}
+
+function rewriteRawNoteTarget(
+  raw: unknown,
+  replacements: Array<{ from: string; to: string }>
+): { value: unknown; changed: boolean } {
+  const target = normalizeFrontmatterTodoNoteTarget(raw);
+  if (!target) return { value: raw, changed: false };
+  for (const { from, to } of replacements) {
+    if (target.toLowerCase() !== from.toLowerCase()) continue;
+    const rawStr = typeof raw === 'string' ? raw.trim() : '';
+    const wiki = rawStr.match(/^\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]$/);
+    if (wiki) {
+      const alias = wiki[2];
+      return {
+        value: alias != null && String(alias).trim() ? `[[${to}|${alias}]]` : `[[${to}]]`,
+        changed: true,
+      };
+    }
+    return { value: to, changed: true };
+  }
+  return { value: raw, changed: false };
 }
 
 function rewriteTodosInData(

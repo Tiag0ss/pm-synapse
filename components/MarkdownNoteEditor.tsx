@@ -5,8 +5,17 @@ import { renderSynapseMarkdown, type LinkableVaultNotes, type NoteIndexEntry } f
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
+import {
+  caretCoordinates,
+  detectLinkSuggestContext,
+  noteSuggestInsert,
+  noteSuggestLabel,
+  type LinkSuggestContext,
+  type LinkSuggestItem,
+} from '@/lib/noteLinkSuggest';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
+import NoteLinkSuggest from '@/components/NoteLinkSuggest';
 
 type ViewMode = 'edit' | 'split' | 'preview';
 
@@ -126,9 +135,18 @@ const LEGEND_SECTIONS: LegendSection[] = [
       { syntax: 'hours: 2.5', meaning: 'Under a todo → estimatedHours on Planner create' },
       { syntax: 'unscheduled: true', meaning: 'Under a todo → unscheduledWork on create (not implied by missing hours)' },
       {
+        syntax: 'related: […]',
+        meaning:
+          'Top-level list of linked notes (same vault or @vault-slug/note). Quote @… and [[…]] in YAML, or Synapse quotes them when parsing',
+      },
+      {
         syntax: 'note: meta/risks',
         meaning:
-          'Under a todo → link to another note (title or path; quote "[[wikilink]]" if using brackets)',
+          'Under a todo → link to another note (title or path; quote "@vault/note" or "[[wikilink]]" in YAML)',
+      },
+      {
+        syntax: '@ / autocomplete',
+        meaning: 'In [[…]], related:, or note: — type @ for vaults, / for notes',
       },
     ],
   },
@@ -301,10 +319,149 @@ export default function MarkdownNoteEditor({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
   const [fetchedPlannerLinks, setFetchedPlannerLinks] = useState<PlannerLinkItem[]>([]);
+  const [linkSuggest, setLinkSuggest] = useState<{
+    ctx: LinkSuggestContext;
+    items: LinkSuggestItem[];
+    activeIndex: number;
+    top: number;
+    left: number;
+  } | null>(null);
 
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
+
+  const buildLinkSuggestItems = useCallback(
+    (ctx: LinkSuggestContext): LinkSuggestItem[] => {
+      const q = ctx.query.trim().toLowerCase();
+      if (ctx.mode === 'vaults') {
+        const currentId = vaultId != null ? Number(vaultId) : null;
+        return linkableVaults
+          .filter((v) => (currentId != null ? v.vaultId !== currentId : true))
+          .filter((v) => {
+            if (!q) return true;
+            return (
+              v.vaultSlug.toLowerCase().includes(q) ||
+              v.vaultName.toLowerCase().includes(q)
+            );
+          })
+          .slice(0, 40)
+          .map((v) => ({
+            id: `vault-${v.vaultId}`,
+            label: v.vaultName || v.vaultSlug,
+            detail: `@${v.vaultSlug}`,
+            insert: `@${v.vaultSlug}/`,
+            followWithNotes: v.vaultSlug,
+          }));
+      }
+
+      const noteList =
+        ctx.vaultSlug != null
+          ? linkableVaults.find((v) => v.vaultSlug.toLowerCase() === ctx.vaultSlug!.toLowerCase())
+              ?.notes || []
+          : notes;
+
+      return noteList
+        .filter((n) => {
+          if (noteId != null && n.id === noteId && ctx.vaultSlug == null) return false;
+          if (!q) return true;
+          const title = n.title.toLowerCase();
+          const path = String(n.path || '').toLowerCase();
+          return title.includes(q) || path.includes(q);
+        })
+        .slice(0, 40)
+        .map((n) => ({
+          id: `note-${n.id}`,
+          label: noteSuggestLabel(n.title, n.path),
+          detail: ctx.vaultSlug ? `@${ctx.vaultSlug}` : undefined,
+          insert: noteSuggestInsert(n.title, n.path),
+        }));
+    },
+    [linkableVaults, notes, noteId, vaultId]
+  );
+
+  const dismissLinkSuggest = useCallback(() => setLinkSuggest(null), []);
+
+  const refreshLinkSuggest = useCallback(
+    (nextValue: string, caret: number) => {
+      const el = textareaRef.current;
+      if (!el || readOnly) {
+        setLinkSuggest(null);
+        return;
+      }
+      const ctx = detectLinkSuggestContext(nextValue, caret);
+      if (!ctx) {
+        setLinkSuggest(null);
+        return;
+      }
+      const items = buildLinkSuggestItems(ctx);
+      if (!items.length) {
+        setLinkSuggest(null);
+        return;
+      }
+      const coords = caretCoordinates(el, caret);
+      const rect = el.getBoundingClientRect();
+      const parent = el.offsetParent as HTMLElement | null;
+      const parentRect = parent?.getBoundingClientRect();
+      const top =
+        (parentRect ? rect.top - parentRect.top : 0) + coords.top + coords.lineHeight + 4;
+      const left = (parentRect ? rect.left - parentRect.left : 0) + Math.min(coords.left, el.clientWidth - 160);
+      setLinkSuggest({
+        ctx,
+        items,
+        activeIndex: 0,
+        top: Math.max(0, top),
+        left: Math.max(0, left),
+      });
+    },
+    [buildLinkSuggestItems, readOnly]
+  );
+
+  const applyLinkSuggest = useCallback(
+    (item: LinkSuggestItem) => {
+      const el = textareaRef.current;
+      const state = linkSuggest;
+      if (!el || !state) return;
+      const { ctx } = state;
+      let next =
+        value.slice(0, ctx.replaceStart) + item.insert + value.slice(ctx.replaceEnd);
+      let caret = ctx.replaceStart + item.insert.length;
+
+      // YAML: bare @vault/path breaks parsing — wrap the finished target in quotes.
+      if (
+        ctx.inFrontmatter &&
+        !item.followWithNotes &&
+        ctx.vaultSlug &&
+        ctx.mode === 'notes'
+      ) {
+        const atStart = ctx.replaceStart - (`@${ctx.vaultSlug}/`.length);
+        if (atStart >= 0 && next.slice(atStart, ctx.replaceStart) === `@${ctx.vaultSlug}/`) {
+          const targetEnd = atStart + `@${ctx.vaultSlug}/`.length + item.insert.length;
+          const before = next.slice(0, atStart);
+          const target = next.slice(atStart, targetEnd);
+          const after = next.slice(targetEnd);
+          const alreadyQuoted =
+            (before.endsWith('"') && after.startsWith('"')) ||
+            (before.endsWith("'") && after.startsWith("'"));
+          if (!alreadyQuoted) {
+            next = `${before}"${target}"${after}`;
+            caret = atStart + target.length + 2;
+          }
+        }
+      }
+
+      onChange(next);
+      dismissLinkSuggest();
+      requestAnimationFrame(() => {
+        el.focus();
+        el.setSelectionRange(caret, caret);
+        if (item.followWithNotes) {
+          refreshLinkSuggest(next, caret);
+        }
+      });
+    },
+    [dismissLinkSuggest, linkSuggest, onChange, refreshLinkSuggest, value]
+  );
 
   useEffect(() => {
     if (readOnly) setMode('preview');
@@ -547,6 +704,41 @@ export default function MarkdownNoteEditor({
   ]);
 
   const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (linkSuggest && linkSuggest.items.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setLinkSuggest((s) =>
+          s
+            ? { ...s, activeIndex: (s.activeIndex + 1) % s.items.length }
+            : s
+        );
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setLinkSuggest((s) =>
+          s
+            ? {
+                ...s,
+                activeIndex: (s.activeIndex - 1 + s.items.length) % s.items.length,
+              }
+            : s
+        );
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const item = linkSuggest.items[linkSuggest.activeIndex];
+        if (item) applyLinkSuggest(item);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        dismissLinkSuggest();
+        return;
+      }
+    }
+
     if (e.key !== 'Enter' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
     const el = e.currentTarget;
     if (el.selectionStart !== el.selectionEnd) return;
@@ -680,31 +872,60 @@ export default function MarkdownNoteEditor({
           }`}
         >
           {(mode === 'edit' || mode === 'split') && (
-            <textarea
-              ref={textareaRef}
-              className={`min-h-0 w-full resize-none border-r border-[var(--border)] bg-transparent p-4 font-mono text-[13px] leading-7 text-[var(--text)] outline-none placeholder:text-[var(--muted)] ${
-                dragging ? 'ring-2 ring-inset ring-[var(--accent)]' : ''
-              }`}
-              value={value}
-              onChange={(e) => onChange(e.target.value)}
-              onKeyDown={onEditorKeyDown}
-              onPaste={onPaste}
-              onDragEnter={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragging(true);
-              }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={onDrop}
-              placeholder={
-                placeholder ||
-                'Write in Markdown… Paste or drop images here. Use the toolbar or Help if you are new to the syntax.'
-              }
-              spellCheck
-            />
+            <div className="relative min-h-0 h-full min-w-0">
+              <textarea
+                ref={textareaRef}
+                className={`min-h-0 h-full w-full resize-none border-r border-[var(--border)] bg-transparent p-4 font-mono text-[13px] leading-7 text-[var(--text)] outline-none placeholder:text-[var(--muted)] ${
+                  dragging ? 'ring-2 ring-inset ring-[var(--accent)]' : ''
+                }`}
+                value={value}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  const caret = e.target.selectionStart;
+                  onChange(next);
+                  refreshLinkSuggest(next, caret);
+                }}
+                onSelect={(e) => {
+                  const el = e.currentTarget;
+                  if (el.selectionStart === el.selectionEnd) {
+                    refreshLinkSuggest(value, el.selectionStart);
+                  } else {
+                    dismissLinkSuggest();
+                  }
+                }}
+                onBlur={() => {
+                  // Delay so mousedown on a suggestion can fire first
+                  window.setTimeout(() => dismissLinkSuggest(), 120);
+                }}
+                onKeyDown={onEditorKeyDown}
+                onPaste={onPaste}
+                onDragEnter={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragging(true);
+                }}
+                onDragLeave={() => setDragging(false)}
+                onDrop={onDrop}
+                placeholder={
+                  placeholder ||
+                  'Write in Markdown… Paste or drop images here. Use the toolbar or Help if you are new to the syntax.'
+                }
+                spellCheck
+              />
+              {linkSuggest ? (
+                <NoteLinkSuggest
+                  items={linkSuggest.items}
+                  activeIndex={linkSuggest.activeIndex}
+                  top={linkSuggest.top}
+                  left={linkSuggest.left}
+                  onHover={(i) => setLinkSuggest((s) => (s ? { ...s, activeIndex: i } : s))}
+                  onSelect={applyLinkSuggest}
+                />
+              ) : null}
+            </div>
           )}
           {(mode === 'preview' || mode === 'split') && (
             <div

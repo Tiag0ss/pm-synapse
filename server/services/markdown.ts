@@ -8,6 +8,7 @@ import {
 import {
   frontmatterTags,
   parseFrontmatter,
+  parseFrontmatterRelatedNotes,
   parseFrontmatterTodos,
   renderFrontmatterHtml,
 } from './frontmatter';
@@ -59,6 +60,10 @@ export function extractWikiLinks(markdown: string): string[] {
 
   for (const todo of parseFrontmatterTodos(markdown)) {
     if (todo.noteTarget) push(todo.noteTarget);
+  }
+
+  for (const target of parseFrontmatterRelatedNotes(markdown)) {
+    push(target);
   }
 
   return links;
@@ -314,7 +319,7 @@ export function markdownToSafeHtml(
   excludeNoteId?: number | null
 ): string {
   const fm = parseFrontmatter(md);
-  const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes) : '';
+  const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes, linkableVaults) : '';
   const withExtras = preprocessMarkdownExtras(fm.body);
   const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId), {
     async: false,

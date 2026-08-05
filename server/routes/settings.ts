@@ -3,16 +3,14 @@ import { z } from 'zod';
 import { authenticateSession, AuthRequest, requireAdmin } from '../middleware/auth';
 import {
   getDecryptedSetting,
-  getPmApiKey,
   getSetting,
   getSettingBool,
   invalidateSettingsCache,
   isSmtpConfigured,
-  pmApiKeyPrefix,
   SETTING_KEYS,
   setSetting,
 } from '../services/appSettings';
-import { invalidatePmTokenCache, PM_BASE_URL } from '../services/pmClient';
+import { PM_BASE_URL } from '../services/pmClient';
 import { sendMail } from '../services/email';
 import logger from '../utils/logger';
 
@@ -36,7 +34,6 @@ router.get('/general', async (_req: AuthRequest, res: Response) => {
       smtpFrom,
       smtpFromName,
       smtpPassword,
-      apiKey,
     ] = await Promise.all([
       getSetting(SETTING_KEYS.siteName),
       getSettingBool(SETTING_KEYS.allowPublicWikiDirectory, true),
@@ -51,7 +48,6 @@ router.get('/general', async (_req: AuthRequest, res: Response) => {
       getSetting(SETTING_KEYS.smtpFrom),
       getSetting(SETTING_KEYS.smtpFromName),
       getDecryptedSetting(SETTING_KEYS.smtpPassword),
-      getPmApiKey(),
     ]);
 
     res.json({
@@ -79,9 +75,6 @@ router.get('/general', async (_req: AuthRequest, res: Response) => {
         projectManagement: {
           pmBaseUrl: PM_BASE_URL,
           pmIntegrationEnabled,
-          hasApiKey: Boolean(apiKey),
-          apiKeyPrefix: pmApiKeyPrefix(apiKey),
-          apiKeyFromEnv: Boolean((process.env.PM_API_KEY || '').trim()) && !(await getDecryptedSetting(SETTING_KEYS.pmApiKey)),
         },
       },
     });
@@ -108,8 +101,6 @@ router.put('/general', async (req: AuthRequest, res: Response) => {
       /** omit = leave unchanged; empty string = clear */
       smtpPassword: z.string().max(500).nullable().optional(),
       pmIntegrationEnabled: z.boolean().optional(),
-      /** omit = leave unchanged; empty string/null = clear */
-      pmApiKey: z.string().max(200).nullable().optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
@@ -143,13 +134,6 @@ router.put('/general', async (req: AuthRequest, res: Response) => {
     }
     if (d.pmIntegrationEnabled != null) {
       await setSetting(SETTING_KEYS.pmIntegrationEnabled, d.pmIntegrationEnabled ? 'true' : 'false');
-    }
-    if (d.pmApiKey !== undefined) {
-      await setSetting(
-        SETTING_KEYS.pmApiKey,
-        d.pmApiKey === '' || d.pmApiKey == null ? null : d.pmApiKey
-      );
-      invalidatePmTokenCache();
     }
 
     invalidateSettingsCache();

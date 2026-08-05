@@ -11,10 +11,18 @@ import {
 } from '../middleware/auth';
 import { encryptSecret } from '../services/crypto';
 import { accessibleVault } from '../services/vaultAccess';
-import { PM_BASE_URL } from '../services/pmClient';
+import {
+  fetchPmOrganizations,
+  hasPersonalPmApiKey,
+  hasValidSsoToken,
+  getPersonalPmApiKeyPrefix,
+  invalidatePmTokenCache,
+  PM_BASE_URL,
+  resolvePmBearerWithSource,
+  setPersonalPmApiKey,
+} from '../services/pmClient';
 import {
   countUsers,
-  getPmApiKey,
   getPublicAuthProviders,
   getSettingBool,
   getSettingInt,
@@ -24,7 +32,6 @@ import {
   SETTING_KEYS,
 } from '../services/appSettings';
 import { sendPasswordResetEmail } from '../services/email';
-import { hasValidSsoToken } from '../services/pmClient';
 import { bumpSessionVersion } from '../services/sessionVersion';
 import logger from '../utils/logger';
 
@@ -97,6 +104,7 @@ async function storeSsoToken(userId: number, accessToken: string, expiresIn: num
      ON DUPLICATE KEY UPDATE AccessTokenEnc = VALUES(AccessTokenEnc), ExpiresAt = VALUES(ExpiresAt)`,
     [userId, encryptSecret(accessToken), expiresAt]
   );
+  invalidatePmTokenCache(userId);
 }
 
 /** Resolve or create Synapse user from PM SSO profile (PmUserId, then email). */
@@ -448,9 +456,11 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
       res.clearCookie(COOKIE);
       return res.status(401).json({ success: false, message: 'Authentication required' });
     }
-    const [ssoToken, instanceKey, pmEnabled] = await Promise.all([
-      hasValidSsoToken(req.user!.userId),
-      getPmApiKey(),
+    const userId = req.user!.userId;
+    const [ssoToken, personalConfigured, personalPrefix, pmEnabled] = await Promise.all([
+      hasValidSsoToken(userId),
+      hasPersonalPmApiKey(userId),
+      getPersonalPmApiKeyPrefix(userId),
       getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true),
     ]);
     res.json({
@@ -469,7 +479,10 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
         pmIntegration: {
           enabled: pmEnabled,
           ssoToken,
-          instanceApiKey: Boolean(instanceKey),
+          personalApiKey: {
+            configured: personalConfigured,
+            prefix: personalPrefix,
+          },
         },
       },
     });
@@ -479,7 +492,7 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
   }
 });
 
-/** Update own profile (username / email / password). SSO-linked email is not editable. */
+/** Update own profile (username / email / password / personal PM API key). SSO-linked email is not editable. */
 router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response) => {
   try {
     const row = await fetchUserById(req.user!.userId);
@@ -494,6 +507,8 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
       email: z.string().trim().email().max(255).optional(),
       currentPassword: z.string().min(1).optional(),
       newPassword: z.string().min(minLen).max(200).optional(),
+      /** omit = leave unchanged; empty string/null = clear */
+      pmApiKey: z.string().max(512).nullable().optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
@@ -549,22 +564,33 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
       sets.push('SessionVersion = SessionVersion + 1');
     }
 
-    if (!sets.length) {
+    let pmKeyChanged = false;
+    if (parsed.data.pmApiKey !== undefined) {
+      await setPersonalPmApiKey(
+        req.user!.userId,
+        parsed.data.pmApiKey === '' || parsed.data.pmApiKey == null ? null : parsed.data.pmApiKey
+      );
+      pmKeyChanged = true;
+    }
+
+    if (!sets.length && !pmKeyChanged) {
       return res.status(400).json({ success: false, message: 'No changes to save' });
     }
 
-    params.push(row.Id);
-    try {
-      await pool.execute(`UPDATE Users SET ${sets.join(', ')} WHERE Id = ?`, params);
-    } catch (error: unknown) {
-      const code = (error as { code?: string })?.code;
-      if (code === 'ER_DUP_ENTRY') {
-        return res.status(409).json({
-          success: false,
-          message: 'Username or email already in use',
-        });
+    if (sets.length) {
+      params.push(row.Id);
+      try {
+        await pool.execute(`UPDATE Users SET ${sets.join(', ')} WHERE Id = ?`, params);
+      } catch (error: unknown) {
+        const code = (error as { code?: string })?.code;
+        if (code === 'ER_DUP_ENTRY') {
+          return res.status(409).json({
+            success: false,
+            message: 'Username or email already in use',
+          });
+        }
+        throw error;
       }
-      throw error;
     }
 
     const updated = await fetchUserById(req.user!.userId);
@@ -573,6 +599,13 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
     }
     const user = toSessionUser(updated);
     setSessionCookie(res, user);
+
+    const [ssoToken, personalConfigured, personalPrefix, pmEnabled] = await Promise.all([
+      hasValidSsoToken(user.userId),
+      hasPersonalPmApiKey(user.userId),
+      getPersonalPmApiKeyPrefix(user.userId),
+      getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true),
+    ]);
 
     res.json({
       success: true,
@@ -588,11 +621,51 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
           local: Boolean(updated.PasswordHash),
           sso: updated.PmUserId != null,
         },
+        pmIntegration: {
+          enabled: pmEnabled,
+          ssoToken,
+          personalApiKey: {
+            configured: personalConfigured,
+            prefix: personalPrefix,
+          },
+        },
       },
     });
   } catch (error) {
     logger.error('PATCH /me failed', { error });
     res.status(500).json({ success: false, message: 'Failed to update profile' });
+  }
+});
+
+/** Verify this user's PM credentials (SSO or personal API token). */
+router.post('/me/pm-test', authenticateSession, async (req: AuthRequest, res: Response) => {
+  try {
+    const resolved = await resolvePmBearerWithSource(req.user!.userId);
+    if (!resolved) {
+      return res.status(401).json({
+        success: false,
+        message:
+          'No Project Management credentials — reconnect via SSO or add a personal API token in Profile',
+        reauth: true,
+      });
+    }
+    const orgs = await fetchPmOrganizations(req.user!.userId);
+    if (!orgs.ok) {
+      return res.status(orgs.status).json({
+        success: false,
+        message: orgs.data.message || 'PM credentials rejected',
+        reauth: orgs.status === 401,
+        data: { source: resolved.source },
+      });
+    }
+    res.json({
+      success: true,
+      message: `Connected to Project Management (${resolved.source === 'sso' ? 'SSO' : 'personal API token'})`,
+      data: { source: resolved.source },
+    });
+  } catch (error) {
+    logger.error('POST /me/pm-test failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to test PM credentials' });
   }
 });
 
