@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import AppUserMenu from '@/components/AppUserMenu';
+import InstallAppPrompt from '@/components/InstallAppPrompt';
 
 interface Me {
   userId: number;
@@ -394,6 +395,7 @@ export default function HomePage() {
       </div>
 
       <div className="mx-auto max-w-6xl px-6 py-8">
+        <InstallAppPrompt variant="banner" className="mb-6" />
         {error && (
           <p className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
             {error}

@@ -22,12 +22,14 @@ const STOP = new Set([
  * CommonMark needs a space after ATX hashes. `#Received Requirements` / `##Technical Design`
  * would otherwise become tags or plain text — insert the space when the line has multiple tokens.
  * Lone `#tag` lines are left unchanged. Keep in sync with lib/renderMarkdown.ts.
+ *
+ * The char after the hash run must not be `#`, or `#### Title` backtracks to `###` + `# Title`.
  */
 function normalizeAtxHeadingSpaces(chunk: string): string {
   return chunk
     .split('\n')
     .map((line) => {
-      const m = line.match(/^(#{1,6})(\S)(.*)$/);
+      const m = line.match(/^(#{1,6})([^\s#])(.*)$/);
       if (!m) return line;
       const [, hashes, first, rest] = m;
       if (!/\s/.test(`${first}${rest}`)) return line;
@@ -260,15 +262,12 @@ export function preprocessSynapseMarkdown(
       htmlSlots.push(raw);
       return `\u0000HT${htmlSlots.length - 1}\u0000`;
     };
+    // Keep <!--synapse:cb:--> until after marked (see promoteCheckboxMarkers in postprocess).
     let next = normalizeAtxHeadingSpaces(chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml));
 
     next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });
-    next = next.replace(
-      /<!--\s*synapse:cb:([a-zA-Z0-9_-]+)\s*-->/g,
-      '<span class="synapse-cb-marker" data-marker-id="$1" hidden></span>'
-    );
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
       const t = String(target).trim();
       const aliasLabel = alias != null ? String(alias).trim() : '';

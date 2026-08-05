@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import InstallAppPrompt from '@/components/InstallAppPrompt';
 
 const LAST_VAULT_COOKIE = 'synapse_last_vault';
 const LAST_VAULT_KEY = 'synapse_last_vault_id';
@@ -164,6 +165,7 @@ export default function VaultSwitcher({
               <span>Manage vaults…</span>
             </Link>
           </div>
+          <InstallAppPrompt variant="menu" />
         </div>
       )}
 

@@ -224,6 +224,35 @@ export function preprocessToc(md: string): string {
   return md.replace(/^(\[\[toc\]\]|\[toc\])\s*$/gim, tocHtml);
 }
 
+/**
+ * Turn <!--synapse:cb:id--> left in marked HTML into spans for Planner buttons.
+ * Must run after marked (so task lists stay pure `- [ ]`) and before sanitize
+ * (which strips HTML comments).
+ */
+export function promoteCheckboxMarkers(html: string): string {
+  return (html || '').replace(
+    /<!--\s*synapse:cb:([a-zA-Z0-9_-]+)\s*-->/g,
+    '<span class="synapse-cb-marker" data-marker-id="$1" hidden="hidden"></span>'
+  );
+}
+
+/** Add GFM-style `task-list-item` class so CSS can kill list markers reliably. */
+export function markTaskListItems(html: string): string {
+  return (html || '').replace(
+    /<li(\b[^>]*)>(\s*)(<input\b[^>]*\btype\s*=\s*["']checkbox["'][^>]*>)/gi,
+    (_m, liAttrs: string, ws: string, input: string) => {
+      let attrs = String(liAttrs || '');
+      if (/\btask-list-item\b/.test(attrs)) return `<li${attrs}>${ws}${input}`;
+      if (/\bclass\s*=\s*"/i.test(attrs)) {
+        attrs = attrs.replace(/\bclass\s*=\s*"/i, 'class="task-list-item ');
+      } else {
+        attrs = ` class="task-list-item"${attrs}`;
+      }
+      return `<li${attrs}>${ws}${input}`;
+    }
+  );
+}
+
 /** Assign stable ids to h1–h6 so TOC links can scroll to sections. */
 export function applyHeadingIds(html: string): string {
   const used = new Map<string, number>();
@@ -361,6 +390,8 @@ export function preprocessMarkdownExtras(md: string): string {
 /** Full extras pass after marked.parse. */
 export function postprocessMarkdownHtml(html: string): string {
   let out = html || '';
+  out = promoteCheckboxMarkers(out);
+  out = markTaskListItems(out);
   out = applyHeadingIds(out);
   out = highlightCodeBlocks(out);
   return out;

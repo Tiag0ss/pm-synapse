@@ -125,6 +125,7 @@ export default function NoteTasksPanel({
         markerId: b.markerId,
         indent: b.indent,
         source: b.source,
+        linkedNote: b.linkedNote ? String(b.linkedNote) : null,
         pmTaskId: null,
         openUrl: null,
       }))
@@ -150,6 +151,7 @@ export default function NoteTasksPanel({
           markerId: b.markerId || old?.markerId || null,
           indent: b.indent,
           source: b.source,
+          linkedNote: b.linkedNote ? String(b.linkedNote) : old?.linkedNote ?? null,
           pmTaskId: old?.pmTaskId ?? null,
           openUrl: old?.openUrl ?? null,
         };

@@ -40,12 +40,15 @@ function escapeRegExp(s: string): string {
  * `##Technical Design` would otherwise become #tags / plain text — insert the space when
  * the line has more than one token so marked can render real headings.
  * Lone `#tag` lines are left unchanged.
+ *
+ * Important: the char after the hash run must not be `#`, otherwise `#### Title` backtracks
+ * to `###` + `# Title` and previews show a literal `#` in the heading.
  */
 function normalizeAtxHeadingSpaces(chunk: string): string {
   return chunk
     .split('\n')
     .map((line) => {
-      const m = line.match(/^(#{1,6})(\S)(.*)$/);
+      const m = line.match(/^(#{1,6})([^\s#])(.*)$/);
       if (!m) return line;
       const [, hashes, first, rest] = m;
       if (!/\s/.test(`${first}${rest}`)) return line;
@@ -142,18 +145,14 @@ export function preprocessSynapseMarkdown(
       htmlSlots.push(raw);
       return `\u0000HT${htmlSlots.length - 1}\u0000`;
     };
+    // Do NOT turn <!--synapse:cb:--> into spans here — that injects HTML before marked and
+    // historically broke task-list parsing/CSS. Promote markers in postprocess instead.
     let next = normalizeAtxHeadingSpaces(chunk.replace(/<[a-zA-Z/!][^>]*>/g, stashHtml));
 
     // Tags — only in plain text (heading lines already normalized to `# Title`)
     next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });
-
-    // Keep checkbox markers as spans so the UI can attach Planner links
-    next = next.replace(
-      /<!--\s*synapse:cb:([a-zA-Z0-9_-]+)\s*-->/g,
-      '<span class="synapse-cb-marker" data-marker-id="$1" hidden></span>'
-    );
 
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
       const t = String(target).trim();
