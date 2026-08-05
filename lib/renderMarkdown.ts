@@ -70,10 +70,12 @@ function mapProtected(md: string, transform: (chunk: string) => string): string 
 }
 
 function mentionTermsForNotes(
-  notes: NoteIndexEntry[]
+  notes: NoteIndexEntry[],
+  excludeId?: number | null
 ): Array<{ id: number; term: string; title: string }> {
   const leafCount = new Map<string, number>();
   for (const n of notes) {
+    if (excludeId != null && n.id === excludeId) continue;
     const leaf = String(n.title)
       .replace(/\\/g, '/')
       .split('/')
@@ -85,6 +87,7 @@ function mentionTermsForNotes(
 
   const terms: Array<{ id: number; term: string; title: string }> = [];
   for (const n of notes) {
+    if (excludeId != null && n.id === excludeId) continue;
     const candidates = [n.title];
     const leaf = String(n.title)
       .replace(/\\/g, '/')
@@ -108,7 +111,11 @@ function mentionTermsForNotes(
   return terms.sort((a, b) => b.term.length - a.term.length);
 }
 
-function linkifyUnlinkedMentions(chunk: string, notes: NoteIndexEntry[]): string {
+function linkifyUnlinkedMentions(
+  chunk: string,
+  notes: NoteIndexEntry[],
+  excludeNoteId?: number | null
+): string {
   if (!notes.length) return chunk;
   const slots: string[] = [];
   const stash = (raw: string) => {
@@ -120,7 +127,7 @@ function linkifyUnlinkedMentions(chunk: string, notes: NoteIndexEntry[]): string
     .replace(/<span\b[^>]*>[\s\S]*?<\/span>/gi, stash)
     .replace(/<[^>]+>/g, stash);
 
-  const terms = mentionTermsForNotes(notes);
+  const terms = mentionTermsForNotes(notes, excludeNoteId);
   for (const { id, term, title } of terms) {
     const re = new RegExp(`(?<![\\w/#.\\u0000])(${escapeRegExp(term)})(?![\\w/.\\u0000])`, 'gi');
     work = work.replace(re, (match) => {
@@ -136,7 +143,8 @@ function linkifyUnlinkedMentions(chunk: string, notes: NoteIndexEntry[]): string
 export function preprocessSynapseMarkdown(
   md: string,
   notes: NoteIndexEntry[] = [],
-  linkableVaults: LinkableVaultNotes[] = []
+  linkableVaults: LinkableVaultNotes[] = [],
+  excludeNoteId?: number | null
 ): string {
   return mapProtected(md || '', (chunk) => {
     // Protect existing HTML (TOC, callouts, math, …) so # inside href="#…" is not treated as a tag
@@ -183,7 +191,7 @@ export function preprocessSynapseMarkdown(
       return `<a class="${cls}" href="${href}" data-note-id="${id ?? ''}" data-note-title="${escapeAttr(t)}">${escapeHtml(label)}</a>`;
     });
 
-    next = linkifyUnlinkedMentions(next, notes);
+    next = linkifyUnlinkedMentions(next, notes, excludeNoteId);
     return next.replace(/\u0000HT(\d+)\u0000/g, (_, i) => htmlSlots[Number(i)] ?? '');
   });
 }
@@ -191,13 +199,14 @@ export function preprocessSynapseMarkdown(
 export function renderSynapseMarkdown(
   md: string,
   notes: NoteIndexEntry[] = [],
-  linkableVaults: LinkableVaultNotes[] = []
+  linkableVaults: LinkableVaultNotes[] = [],
+  excludeNoteId?: number | null
 ): string {
   try {
     const fm = parseFrontmatter(md);
     const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes) : '';
     const withExtras = preprocessMarkdownExtras(fm.body);
-    const prepared = preprocessSynapseMarkdown(withExtras, notes, linkableVaults);
+    const prepared = preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId);
     const html = marked.parse(prepared, { async: false, gfm: true }) as string;
     return sanitizeSynapseHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)));
   } catch {

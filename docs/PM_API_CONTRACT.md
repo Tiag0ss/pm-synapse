@@ -171,6 +171,7 @@ Optional create fields:
 | Field | Use |
 |-------|-----|
 | `parentTaskId` | Optional. When set, the new task is a **subtask** of that parent (`Tasks.ParentTaskId`). Synapse uses this for nested note checkboxes (and for checkboxes under a note-level task). |
+| `description` | Optional HTML. **Note-level** tasks get the rendered note body. **Checkbox / YAML todo** tasks keep a short “From Synapse note …” blurb (not the full body). |
 | `estimatedHours` | Optional effort estimate from note YAML `hours` / checkbox `(2h)`. Synapse does **not** send `storyPoints` on create. |
 | `unscheduledWork` | Optional. Sent as `true` only when the note explicitly marks unscheduled; missing hours does **not** imply unscheduled. |
 

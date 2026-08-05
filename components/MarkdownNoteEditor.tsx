@@ -316,8 +316,8 @@ export default function MarkdownNoteEditor({
   }, [compact, readOnly, mode]);
 
   const html = useMemo(
-    () => renderSynapseMarkdown(value, notes, linkableVaults),
-    [value, notes, linkableVaults]
+    () => renderSynapseMarkdown(value, notes, linkableVaults, noteId ?? null),
+    [value, notes, linkableVaults, noteId]
   );
 
   useEffect(() => {

@@ -18,9 +18,43 @@ import {
   resolvePmTaskStatusId,
   type PmTaskStatusValue,
 } from './pmClient';
+import { markdownToPmDescriptionHtml, type MarkdownNoteRef } from './markdown';
 import { snapshotRevision } from './notesGraph';
 import { stripMarkdownToPlainText } from './plainText';
 import logger from '../utils/logger';
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+async function vaultNoteRefs(vaultId: number): Promise<MarkdownNoteRef[]> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT Id, Title, Path FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
+    [vaultId]
+  );
+  return rows.map((n) => ({
+    id: Number(n.Id),
+    title: String(n.Title),
+    path: String(n.Path || ''),
+  }));
+}
+
+/** HTML description for a note-level Planner task (full note body). */
+async function noteLevelTaskDescription(
+  vaultId: number,
+  noteId: number,
+  title: string,
+  bodyMarkdown: string
+): Promise<string> {
+  const notes = await vaultNoteRefs(vaultId);
+  const contentHtml = markdownToPmDescriptionHtml(bodyMarkdown, notes, noteId);
+  if (contentHtml) return contentHtml;
+  return `<p>Synapse note task for <strong>${escapeHtml(title)}</strong></p>`;
+}
 
 type PrioRow = { Id: number; IsDefault?: number };
 
@@ -168,10 +202,16 @@ export async function pushNoteAsPmTask(params: {
 
   const title = stripMarkdownToPlainText(String(note.Title)) || String(note.Title);
   const synapseNoteUrl = buildSynapseNoteUrl(params.vaultId, params.noteId);
+  const description = await noteLevelTaskDescription(
+    params.vaultId,
+    params.noteId,
+    String(note.Title),
+    String(note.BodyMarkdown || '')
+  );
   const created = await createPmTask(params.pmUserId, {
     projectId: params.projectId,
     taskName: title.slice(0, 512),
-    description: `<p>Synapse note task for <strong>${String(note.Title)}</strong></p>`,
+    description,
     status: statusId,
     priority: priorityId,
     synapseVaultId: params.vaultId,

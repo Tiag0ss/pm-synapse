@@ -203,7 +203,11 @@ export function mentionTermsForNotes(
 }
 
 /** Turn unlinked title mentions into visually distinct links (after [[wikilinks]]). */
-export function linkifyUnlinkedMentions(chunk: string, notes: MarkdownNoteRef[]): string {
+export function linkifyUnlinkedMentions(
+  chunk: string,
+  notes: MarkdownNoteRef[],
+  excludeNoteId?: number | null
+): string {
   if (!notes.length) return chunk;
   const slots: string[] = [];
   const stash = (raw: string) => {
@@ -216,7 +220,7 @@ export function linkifyUnlinkedMentions(chunk: string, notes: MarkdownNoteRef[])
     .replace(/<span\b[^>]*>[\s\S]*?<\/span>/gi, stash)
     .replace(/<[^>]+>/g, stash);
 
-  const terms = mentionTermsForNotes(notes);
+  const terms = mentionTermsForNotes(notes, excludeNoteId);
   for (const { id, term, title } of terms) {
     const re = new RegExp(`(?<![\\w/#.\\u0000])(${escapeRegExp(term)})(?![\\w/.\\u0000])`, 'gi');
     work = work.replace(re, (match) => {
@@ -254,7 +258,8 @@ function mapProtected(md: string, transform: (chunk: string) => string): string 
 export function preprocessSynapseMarkdown(
   md: string,
   notes: MarkdownNoteRef[] = [],
-  linkableVaults: LinkableVaultNotes[] = []
+  linkableVaults: LinkableVaultNotes[] = [],
+  excludeNoteId?: number | null
 ): string {
   return mapProtected(md || '', (chunk) => {
     const htmlSlots: string[] = [];
@@ -297,7 +302,7 @@ export function preprocessSynapseMarkdown(
       return `<a class="${cls}" href="${href}" data-note-id="${id ?? ''}" data-note-title="${escapeAttr(t)}">${escapeHtml(label)}</a>`;
     });
 
-    next = linkifyUnlinkedMentions(next, notes);
+    next = linkifyUnlinkedMentions(next, notes, excludeNoteId);
     return next.replace(/\u0000HT(\d+)\u0000/g, (_, i) => htmlSlots[Number(i)] ?? '');
   });
 }
@@ -305,16 +310,36 @@ export function preprocessSynapseMarkdown(
 export function markdownToSafeHtml(
   md: string,
   notes: MarkdownNoteRef[] = [],
-  linkableVaults: LinkableVaultNotes[] = []
+  linkableVaults: LinkableVaultNotes[] = [],
+  excludeNoteId?: number | null
 ): string {
   const fm = parseFrontmatter(md);
   const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes) : '';
   const withExtras = preprocessMarkdownExtras(fm.body);
-  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, linkableVaults), {
+  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId), {
     async: false,
     gfm: true,
   }) as string;
   return sanitizeSynapseHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)));
+}
+
+/**
+ * Note body → HTML for Planner task descriptions (no Synapse UI chrome / frontmatter panel).
+ */
+export function markdownToPmDescriptionHtml(
+  md: string,
+  notes: MarkdownNoteRef[] = [],
+  excludeNoteId?: number | null
+): string {
+  const fm = parseFrontmatter(md || '');
+  const body = String(fm.body || '').trim();
+  if (!body) return '';
+  const withExtras = preprocessMarkdownExtras(body);
+  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, [], excludeNoteId), {
+    async: false,
+    gfm: true,
+  }) as string;
+  return sanitizeSynapseHtml(postprocessMarkdownHtml(html)).trim();
 }
 
 /** Keep in sync with lib/codeCopy.ts enhanceCodeCopyHtml */

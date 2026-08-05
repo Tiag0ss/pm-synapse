@@ -333,7 +333,8 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
   const html = markdownToSafeHtml(
     String(note.BodyMarkdown || ''),
     noteIndex,
-    linkableVaults
+    linkableVaults,
+    Number(note.Id)
   ).replace(
     new RegExp(`/api/vaults/${Number(vault.Id)}/media/(\\d+)`, 'g'),
     `/api/public/${String(vault.slug)}/media/$1`
