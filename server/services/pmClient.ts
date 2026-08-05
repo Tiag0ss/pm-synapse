@@ -172,6 +172,22 @@ export async function getPmAccessToken(userId: number): Promise<string | null> {
 export const PM_NO_CREDENTIALS_MESSAGE =
   'No Project Management credentials — reconnect via SSO or add a personal API token in Profile';
 
+
+async function persistRefreshedSsoToken(userId: number, accessToken: string): Promise<void> {
+  // Sliding refresh from PM authenticateToken (X-New-Token) issues a new 24h JWT.
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  await pool.execute(
+    `INSERT INTO SsoTokens (UserId, AccessTokenEnc, ExpiresAt)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE AccessTokenEnc = VALUES(AccessTokenEnc), ExpiresAt = VALUES(ExpiresAt)`,
+    [userId, encryptSecret(accessToken), expiresAt]
+  );
+  ssoTokenCache.set(userId, {
+    token: accessToken,
+    expiresAtMs: Math.min(expiresAt.getTime(), Date.now() + TOKEN_CACHE_TTL_MS),
+  });
+}
+
 async function pmFetch<T>(
   userId: number,
   path: string,
@@ -209,6 +225,18 @@ async function pmFetch<T>(
       },
     });
     const data = (await res.json().catch(() => ({}))) as T & { message?: string; success?: boolean };
+
+    if (resolved.source === 'sso') {
+      const refreshed = res.headers.get('X-New-Token') || res.headers.get('x-new-token');
+      if (refreshed && refreshed.trim()) {
+        try {
+          await persistRefreshedSsoToken(userId, refreshed.trim());
+        } catch (error) {
+          logger.warn('Failed to persist refreshed PM SSO token', { error, userId });
+        }
+      }
+    }
+
     if (!res.ok) {
       logger.warn('PM API call failed', {
         path,
