@@ -235,21 +235,53 @@ export function promoteCheckboxMarkers(html: string): string {
   );
 }
 
-/** Add GFM-style `task-list-item` class so CSS can kill list markers reliably. */
+/**
+ * Mark GFM task <li>s. Handles tight (`<li><input>`) and loose
+ * (`<li><p><input>` — blank line between items in CommonMark).
+ * Keep in sync with lib/markdownEnhance.ts.
+ */
 export function markTaskListItems(html: string): string {
-  return (html || '').replace(
-    /<li(\b[^>]*)>(\s*)(<input\b[^>]*\btype\s*=\s*["']checkbox["'][^>]*>)/gi,
-    (_m, liAttrs: string, ws: string, input: string) => {
+  let out = (html || '').replace(
+    /<li(\b[^>]*)>((?:\s|<p\b[^>]*>)*)(<input\b[^>]*\btype\s*=\s*["']checkbox["'][^>]*>)/gi,
+    (_m, liAttrs: string, prefix: string, input: string) => {
       let attrs = String(liAttrs || '');
-      if (/\btask-list-item\b/.test(attrs)) return `<li${attrs}>${ws}${input}`;
-      if (/\bclass\s*=\s*"/i.test(attrs)) {
-        attrs = attrs.replace(/\bclass\s*=\s*"/i, 'class="task-list-item ');
-      } else {
-        attrs = ` class="task-list-item"${attrs}`;
+      if (!/\btask-list-item\b/.test(attrs)) {
+        if (/\bclass\s*=\s*"/i.test(attrs)) {
+          attrs = attrs.replace(/\bclass\s*=\s*"/i, 'class="task-list-item ');
+        } else {
+          attrs = ` class="task-list-item"${attrs}`;
+        }
       }
-      return `<li${attrs}>${ws}${input}`;
+      const killMarker = 'list-style:none;list-style-type:none;';
+      if (/\bstyle\s*=\s*"/i.test(attrs)) {
+        attrs = attrs.replace(/\bstyle\s*=\s*"/i, `style="${killMarker}`);
+      } else {
+        attrs += ` style="${killMarker}"`;
+      }
+      return `<li${attrs}>${prefix}${input}`;
     }
   );
+
+  out = out.replace(/<ul(\b[^>]*)>/gi, (full, attrs: string, offset: number) => {
+    if (/\bcontains-task-list\b/.test(attrs)) return full;
+    const after = out.slice(offset + full.length, offset + full.length + 320);
+    if (!/^\s*<li\b[^>]*\btask-list-item\b/.test(after)) return full;
+    let nextAttrs = String(attrs || '');
+    if (/\bclass\s*=\s*"/i.test(nextAttrs)) {
+      nextAttrs = nextAttrs.replace(/\bclass\s*=\s*"/i, 'class="contains-task-list ');
+    } else {
+      nextAttrs = ` class="contains-task-list"${nextAttrs}`;
+    }
+    const ulStyle = 'list-style:none;list-style-type:none;';
+    if (/\bstyle\s*=\s*"/i.test(nextAttrs)) {
+      nextAttrs = nextAttrs.replace(/\bstyle\s*=\s*"/i, `style="${ulStyle}`);
+    } else {
+      nextAttrs += ` style="${ulStyle}"`;
+    }
+    return `<ul${nextAttrs}>`;
+  });
+
+  return out;
 }
 
 /** Assign stable ids to h1–h6 so TOC links can scroll to sections. */

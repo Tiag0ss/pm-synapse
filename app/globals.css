@@ -254,47 +254,73 @@ a:hover { text-decoration: underline; }
 .synapse-md-preview ol { list-style: decimal; padding-left: 1.35rem; margin: 0.55rem 0; }
 .synapse-md-preview li { margin: 0.35rem 0; }
 /*
- * GFM task checkboxes — flex in-flow (e9208e0).
- * display:flex on <li> still paints ::marker in Chromium/Firefox unless content:none.
+ * GFM task checkboxes.
+ * Blank line between items → CommonMark "loose" list → <li><p><input>…
+ * Selectors must cover both tight (> input) and loose (> p > input).
  */
-.synapse-md-preview li.task-list-item,
-.synapse-md-preview li:has(> input[type="checkbox"]) {
-  list-style: none !important;
-  list-style-type: none !important;
-  margin-left: -1.1rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 0.55rem;
-  font-family: var(--font-sans);
-}
-.synapse-md-preview li.task-list-item::marker,
-.synapse-md-preview li:has(> input[type="checkbox"])::marker {
-  content: none !important;
-  display: none !important;
-  font-size: 0 !important;
-  color: transparent !important;
-}
+.synapse-md-preview ul.contains-task-list,
 .synapse-md-preview ul:has(> li.task-list-item),
-.synapse-md-preview ul:has(> li > input[type="checkbox"]) {
+.synapse-md-preview ul:has(> li > input[type="checkbox"]),
+.synapse-md-preview ul:has(> li > p > input[type="checkbox"]) {
   list-style: none !important;
   list-style-type: none !important;
   padding-left: 0.35rem;
 }
+.synapse-md-preview li.task-list-item,
+.synapse-md-preview li:has(> input[type="checkbox"]),
+.synapse-md-preview li:has(> p > input[type="checkbox"]) {
+  list-style: none !important;
+  list-style-type: none !important;
+  display: block;
+  margin-left: 0;
+  padding-left: 0;
+  font-family: var(--font-sans);
+}
+.synapse-md-preview li.task-list-item::marker,
+.synapse-md-preview li:has(> input[type="checkbox"])::marker,
+.synapse-md-preview li:has(> p > input[type="checkbox"])::marker {
+  content: "" !important;
+  display: none !important;
+  font-size: 0 !important;
+  color: transparent !important;
+}
 .synapse-md-preview li.task-list-item > ul,
 .synapse-md-preview li.task-list-item > ol,
 .synapse-md-preview li:has(> input[type="checkbox"]) > ul,
-.synapse-md-preview li:has(> input[type="checkbox"]) > ol {
-  flex: 1 0 100%;
+.synapse-md-preview li:has(> input[type="checkbox"]) > ol,
+.synapse-md-preview li:has(> p > input[type="checkbox"]) > ul,
+.synapse-md-preview li:has(> p > input[type="checkbox"]) > ol {
+  display: block;
   width: 100%;
   box-sizing: border-box;
-  margin: 0.25rem 0 0.1rem;
-  padding-left: 1.4rem;
+  margin: 0.35rem 0 0.1rem;
+  padding-left: 1.65rem;
+  list-style: none !important;
+}
+.synapse-md-preview li.task-list-item > input[type="checkbox"],
+.synapse-md-preview li.task-list-item > p > input[type="checkbox"],
+.synapse-md-preview li:has(> input[type="checkbox"]) > input[type="checkbox"],
+.synapse-md-preview li:has(> p > input[type="checkbox"]) > p > input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-block;
+  vertical-align: text-top;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0.2rem 0.55rem 0 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 0.3rem;
+  background: var(--surface);
+  cursor: default;
+  position: relative;
+}
+.synapse-md-preview li.task-list-item > p {
+  display: inline;
+  margin: 0;
 }
 .synapse-md-preview input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
-  flex: 0 0 auto;
   width: 1.05rem;
   height: 1.05rem;
   margin-top: 0.2rem;
@@ -319,8 +345,9 @@ a:hover { text-decoration: underline; }
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }
-.synapse-md-preview li.task-list-item:has(> input[type="checkbox"]:checked),
-.synapse-md-preview li:has(> input[type="checkbox"]:checked) {
+.synapse-md-preview li.task-list-item:has(input[type="checkbox"]:checked),
+.synapse-md-preview li:has(> input[type="checkbox"]:checked),
+.synapse-md-preview li:has(> p > input[type="checkbox"]:checked) {
   color: var(--muted);
 }
 .synapse-md-preview a.synapse-open-planner {
