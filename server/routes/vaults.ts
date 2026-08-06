@@ -1575,6 +1575,9 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
         indent: box.indent,
         source: box.source,
         linkedNote: box.linkedNote || null,
+        category: box.category || null,
+        estimateHours:
+          box.estimate?.estimatedHours != null ? Number(box.estimate.estimatedHours) : null,
         pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
         pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
         openUrl: link?.PmTaskId
@@ -1659,6 +1662,9 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
           indent: box.indent,
           source: box.source,
           linkedNote: box.linkedNote || null,
+          category: box.category || null,
+          estimateHours:
+            box.estimate?.estimatedHours != null ? Number(box.estimate.estimatedHours) : null,
           pmTaskId: link?.PmTaskId ? Number(link.PmTaskId) : null,
           pmProjectId: link?.PmProjectId ? Number(link.PmProjectId) : null,
           openUrl: link?.PmTaskId

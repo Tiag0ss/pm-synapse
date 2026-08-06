@@ -1,7 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { listNoteTaskCandidates } from '@/lib/noteTasks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { listNoteTaskCandidates, sumNoteTaskEstimateHours } from '@/lib/noteTasks';
+import {
+  computeFrontmatterCategoryEstimates,
+  recalculateFrontmatterEstimations,
+} from '@/lib/frontmatter';
 import {
   resolveCrossVaultWikilink,
   resolveNoteId,
@@ -18,6 +22,8 @@ interface NoteTaskItem {
   indent: number;
   source: 'checkbox' | 'frontmatter';
   linkedNote: string | null;
+  category: string | null;
+  estimateHours: number | null;
   pmTaskId: number | null;
   openUrl: string | null;
 }
@@ -28,7 +34,16 @@ interface NoteTasksPanelProps {
   noteTitle?: string;
   body: string;
   hasProject: boolean;
+  /**
+   * Apply body already persisted by the server (PM sync / markers).
+   * Must not leave the editor dirty or skip a needed save.
+   */
   onBodyChange: (body: string) => void;
+  /**
+   * Client-side body rewrite that must be saved (e.g. Recalculate estimates).
+   * Receives the full markdown and should persist it to the DB.
+   */
+  onCommitBody?: (body: string) => Promise<boolean>;
   /** Persist dirty editor content before PM ops that read the note from DB. */
   onEnsureSaved?: () => Promise<boolean>;
   onStatus?: (msg: string) => void;
@@ -47,6 +62,7 @@ export default function NoteTasksPanel({
   body,
   hasProject,
   onBodyChange,
+  onCommitBody,
   onEnsureSaved,
   onStatus,
   compact = false,
@@ -92,6 +108,8 @@ export default function NoteTasksPanel({
             indent?: number;
             source?: 'checkbox' | 'frontmatter';
             linkedNote?: string | null;
+            category?: string | null;
+            estimateHours?: number | null;
             pmTaskId: number | null;
             openUrl: string | null;
           }) => ({
@@ -106,6 +124,11 @@ export default function NoteTasksPanel({
                 ? 'frontmatter'
                 : 'checkbox',
             linkedNote: b.linkedNote ? String(b.linkedNote) : null,
+            category: b.category ? String(b.category) : null,
+            estimateHours:
+              b.estimateHours != null && Number.isFinite(Number(b.estimateHours))
+                ? Number(b.estimateHours)
+                : null,
             pmTaskId: b.pmTaskId,
             openUrl: b.openUrl,
           })
@@ -148,6 +171,9 @@ export default function NoteTasksPanel({
         indent: b.indent,
         source: b.source,
         linkedNote: b.linkedNote ? String(b.linkedNote) : null,
+        category: b.category ? String(b.category) : null,
+        estimateHours:
+          b.estimate?.estimatedHours != null ? Number(b.estimate.estimatedHours) : null,
         pmTaskId: null,
         openUrl: null,
       }))
@@ -174,6 +200,9 @@ export default function NoteTasksPanel({
           indent: b.indent,
           source: b.source,
           linkedNote: b.linkedNote ? String(b.linkedNote) : old?.linkedNote ?? null,
+          category: b.category ? String(b.category) : null,
+          estimateHours:
+            b.estimate?.estimatedHours != null ? Number(b.estimate.estimatedHours) : null,
           pmTaskId: old?.pmTaskId ?? null,
           openUrl: old?.openUrl ?? null,
         };
@@ -326,6 +355,51 @@ export default function NoteTasksPanel({
   };
 
   const missingCount = items.filter((i) => !i.pmTaskId).length;
+  const totalHours = useMemo(() => sumNoteTaskEstimateHours(body), [body]);
+  const categoryEstimates = useMemo(
+    () => computeFrontmatterCategoryEstimates(body),
+    [body]
+  );
+  const hasEstimateSources = useMemo(
+    () =>
+      listNoteTaskCandidates(body).some(
+        (t) => t.estimate?.estimatedHours != null && Number.isFinite(t.estimate.estimatedHours)
+      ),
+    [body]
+  );
+
+  const recalculateEstimates = async () => {
+    if (readOnly) return;
+    const result = recalculateFrontmatterEstimations(body);
+    if (!result.changed) {
+      onStatus?.(
+        result.totalHours > 0
+          ? `Estimates already up to date · ${result.totalHours}h total`
+          : 'No task hours to recalculate'
+      );
+      return;
+    }
+    setBusy(true);
+    try {
+      // Must persist: export/PM read BodyMarkdown from DB, not the editor buffer.
+      if (onCommitBody) {
+        const ok = await onCommitBody(result.markdown);
+        if (!ok) {
+          onStatus?.('Updated estimates in editor, but save failed — save before export');
+          return;
+        }
+      } else {
+        onBodyChange(result.markdown);
+      }
+      const catCount = Object.keys(result.categories).length;
+      onStatus?.(
+        `Updated estimate (${catCount} tasks + Total) · ${result.totalHours}h`
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const showPanel = items.length > 0 || !readOnly;
 
   if (!showPanel) return null;
@@ -351,12 +425,61 @@ export default function NoteTasksPanel({
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
           Tasks · {items.length}
+          {totalHours > 0 ? (
+            <>
+              {' · '}
+              <span className="group/hours relative inline-block">
+                <span
+                  className="cursor-default border-b border-dotted border-[var(--muted)]/50 text-[var(--text)]"
+                  tabIndex={0}
+                  aria-describedby="note-tasks-hours-breakdown"
+                >
+                  {totalHours}h
+                </span>
+                <span
+                  id="note-tasks-hours-breakdown"
+                  role="tooltip"
+                  className="pointer-events-none absolute left-0 top-full z-20 mt-1.5 hidden min-w-[9rem] rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-2 text-left font-normal normal-case tracking-normal shadow-lg group-hover/hours:block group-focus-within/hours:block"
+                >
+                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+                    By category
+                  </span>
+                  <span className="block space-y-0.5 text-[11px] text-[var(--text)]">
+                    {Object.entries(categoryEstimates.categories).map(([name, hours]) => (
+                      <span key={name} className="flex justify-between gap-4">
+                        <span className="text-[var(--muted)]">{name}</span>
+                        <span className="tabular-nums">{hours}h</span>
+                      </span>
+                    ))}
+                    <span className="mt-1 flex justify-between gap-4 border-t border-[var(--border)] pt-1 font-medium">
+                      <span>Total</span>
+                      <span className="tabular-nums">{categoryEstimates.totalHours}h</span>
+                    </span>
+                  </span>
+                </span>
+              </span>
+            </>
+          ) : null}
         </h3>
         <span className="text-[10px] text-[var(--muted)]">
           {items.filter((i) => i.checked).length} done
           {missingCount > 0 ? ` · ${missingCount} unlinked` : ''}
         </span>
       </div>
+
+      {!readOnly && hasEstimateSources && (
+        <div className="mb-3">
+          <button
+            type="button"
+            className="btn-ghost py-1 text-[11px]"
+            disabled={busy}
+            title="Sum checkbox + YAML todo hours by category into estimate (missing → Other; Total indent 0)"
+            onClick={() => void recalculateEstimates()}
+          >
+            Recalculate estimates
+          </button>
+        </div>
+      )}
 
       <div className="mb-3 space-y-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/40 px-2.5 py-2">
         <p className="text-[11px] text-[var(--muted)]">
@@ -469,6 +592,19 @@ export default function NoteTasksPanel({
                   YAML
                 </span>
               )}
+              {item.category ? (
+                <span
+                  className="shrink-0 rounded border border-[var(--border)] px-1 py-0.5 text-[9px] font-medium text-[var(--accent-soft)]"
+                  title="Category"
+                >
+                  {item.category}
+                </span>
+              ) : null}
+              {item.estimateHours != null ? (
+                <span className="shrink-0 text-[10px] text-[var(--muted)]" title="Estimate">
+                  {item.estimateHours}h
+                </span>
+              ) : null}
               <span
                 className={`synapse-task-label min-w-0 flex-1 text-sm leading-snug ${
                   item.checked ? 'text-[var(--muted)] line-through' : 'text-[var(--text)]'

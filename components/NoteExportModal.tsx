@@ -14,6 +14,8 @@ interface NoteExportModalProps {
   vaultId: string;
   noteId: number | null;
   noteTitle: string;
+  /** Flush unsaved editor changes before export (server reads DB). */
+  onBeforeExport?: () => Promise<boolean>;
   onClose: () => void;
 }
 
@@ -22,6 +24,7 @@ export default function NoteExportModal({
   vaultId,
   noteId,
   noteTitle,
+  onBeforeExport,
   onClose,
 }: NoteExportModalProps) {
   const [templates, setTemplates] = useState<ExportTemplate[]>([]);
@@ -61,6 +64,13 @@ export default function NoteExportModal({
     setBusy(true);
     setError('');
     try {
+      if (onBeforeExport) {
+        const ok = await onBeforeExport();
+        if (!ok) {
+          setError('Save failed — fix save errors before exporting');
+          return;
+        }
+      }
       const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/export-docx`, {
         method: 'POST',
         credentials: 'include',

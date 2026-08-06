@@ -5,8 +5,12 @@ import {
   type LinkableVaultNotes,
   type NoteResolveEntry,
 } from './notePaths';
+import { parseCheckboxes } from './checkboxes';
 import {
+  normalizeEstimateCategory,
   parseEstimateFromFrontmatterTodo,
+  stripTrailingEstimateMeta,
+  UNCATEGORIZED_ESTIMATE_TASK,
   type TaskEstimateMeta,
 } from './taskEstimate';
 
@@ -348,6 +352,8 @@ export type FrontmatterTodo = {
   arrayIndex: number;
   /** Linked note title/path from YAML `note:` (normalized). */
   noteTarget: string | null;
+  /** Optional planning category (`category:`). */
+  category: string | null;
   estimate?: TaskEstimateMeta;
 };
 
@@ -394,6 +400,15 @@ function todoContentFromObj(obj: Record<string, unknown>, fallbackId: string): s
   return fallbackId;
 }
 
+function normalizeTodoCategory(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw === 'string' || typeof raw === 'number') {
+    const s = String(raw).trim();
+    return s || null;
+  }
+  return null;
+}
+
 function normalizeTodoEntry(
   raw: unknown,
   arrayIndex: number
@@ -405,6 +420,10 @@ function normalizeTodoEntry(
     const content = todoContentFromObj(raw, id || `todo-${arrayIndex + 1}`);
     const estimate = parseEstimateFromFrontmatterTodo(raw);
     const noteTarget = normalizeFrontmatterTodoNoteTarget(raw.note);
+    const category =
+      normalizeTodoCategory(raw.category) ||
+      normalizeTodoCategory(raw.categoria) ||
+      normalizeTodoCategory(raw.cat);
     return {
       id,
       content,
@@ -412,6 +431,7 @@ function normalizeTodoEntry(
       checked: todoCheckedFromStatus(raw.status),
       arrayIndex,
       noteTarget,
+      category,
       estimate:
         estimate.estimatedHours != null || estimate.unscheduledWork === true
           ? estimate
@@ -426,6 +446,7 @@ function normalizeTodoEntry(
       checked: false,
       arrayIndex,
       noteTarget: null,
+      category: null,
     };
   }
   return {
@@ -435,6 +456,7 @@ function normalizeTodoEntry(
     checked: false,
     arrayIndex,
     noteTarget: null,
+    category: null,
   };
 }
 
@@ -454,6 +476,7 @@ export function parseFrontmatterTodos(markdown: string): FrontmatterTodo[] {
       checked: n.checked,
       arrayIndex: i,
       noteTarget: n.noteTarget,
+      category: n.category,
       estimate: n.estimate,
     });
   }
@@ -644,4 +667,135 @@ export function setFrontmatterTodoStatusLabel(
   });
   if (!found) return null;
   return stringifyWithFrontmatter(nextData, parsed.body);
+}
+
+const TOTAL_HOURS_KEYS = new Set(['totalhours', 'total_hours', 'total']);
+const ESTIMATE_SECTION_KEYS = new Set(['estimate', 'estimates', 'categories', 'categorias']);
+
+function isTotalHoursKey(key: string): boolean {
+  return TOTAL_HOURS_KEYS.has(key.toLowerCase());
+}
+
+function isEstimateSectionKey(key: string): boolean {
+  return ESTIMATE_SECTION_KEYS.has(key.toLowerCase());
+}
+
+export type CategoryEstimateTotals = {
+  /** Category name → hours (FM `category:` / checkbox paren + hours; missing → Other) */
+  categories: Record<string, number>;
+  totalHours: number;
+};
+
+function addHoursToCategory(
+  categories: Record<string, number>,
+  category: string | null | undefined,
+  hours: number
+) {
+  const key = normalizeEstimateCategory(category);
+  categories[key] = (categories[key] || 0) + hours;
+}
+
+function orderCategoryEstimates(categories: Record<string, number>): Record<string, number> {
+  const keys = Object.keys(categories).sort((a, b) => {
+    const aOther = a.toLowerCase() === UNCATEGORIZED_ESTIMATE_TASK.toLowerCase();
+    const bOther = b.toLowerCase() === UNCATEGORIZED_ESTIMATE_TASK.toLowerCase();
+    if (aOther && !bOther) return 1;
+    if (!aOther && bOther) return -1;
+    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  });
+  const ordered: Record<string, number> = {};
+  for (const key of keys) {
+    ordered[key] = roundHours(categories[key]);
+  }
+  return ordered;
+}
+
+/**
+ * Sum checkbox `(Nh[, Category])` + frontmatter todo `hours` / `category`
+ * into category buckets (uncategorized → Other).
+ */
+export function computeFrontmatterCategoryEstimates(markdown: string): CategoryEstimateTotals {
+  const categories: Record<string, number> = {};
+  let totalHours = 0;
+
+  for (const box of parseCheckboxes(markdown)) {
+    const { meta } = stripTrailingEstimateMeta(box.text);
+    const hours = meta.estimatedHours;
+    if (hours == null || !Number.isFinite(hours)) continue;
+    totalHours += hours;
+    addHoursToCategory(categories, meta.category, hours);
+  }
+
+  for (const t of parseFrontmatterTodos(markdown)) {
+    const hours = t.estimate?.estimatedHours;
+    if (hours == null || !Number.isFinite(hours)) continue;
+    totalHours += hours;
+    addHoursToCategory(categories, t.category, hours);
+  }
+
+  return {
+    categories: orderCategoryEstimates(categories),
+    totalHours: roundHours(totalHours),
+  };
+}
+
+function roundHours(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Build YAML `estimate:` list entries (categories + trailing Total):
+ *   estimate:
+ *     - Task: Design
+ *       hours: 5
+ *       indent: 1
+ *     - Task: Other
+ *       hours: 2
+ *       indent: 1
+ *     - Task: Total
+ *       hours: 7
+ *       indent: 0
+ */
+export function buildEstimateTaskList(
+  categories: Record<string, number>,
+  totalHours: number
+): Array<{ Task: string; hours: number; indent: number }> {
+  const list = Object.entries(categories).map(([Task, hours]) => ({
+    Task,
+    hours: roundHours(hours),
+    indent: 1,
+  }));
+  list.push({ Task: 'Total', hours: roundHours(totalHours), indent: 0 });
+  return list;
+}
+
+/**
+ * Recalculate `estimate:` from checkbox + frontmatter todo hours/category as a
+ * list of `{ Task, hours, indent }` ending with `Task: Total` (indent 0).
+ * Missing category → Other. Removes legacy top-level `totalHours` / `categories`.
+ */
+export function recalculateFrontmatterEstimations(markdown: string): {
+  markdown: string;
+  changed: boolean;
+  categories: Record<string, number>;
+  totalHours: number;
+} {
+  const parsed = parseFrontmatter(markdown);
+  const { categories, totalHours } = computeFrontmatterCategoryEstimates(markdown);
+
+  if (!Object.keys(categories).length && totalHours === 0) {
+    return { markdown, changed: false, categories, totalHours };
+  }
+
+  // Rebuild data so `estimate` is the trailing key (Total is last list item).
+  const nextData: FrontmatterData = {};
+  for (const [key, value] of Object.entries(parsed.data)) {
+    if (isEstimateSectionKey(key) || isTotalHoursKey(key)) continue;
+    nextData[key] = value;
+  }
+  nextData.estimate = buildEstimateTaskList(categories, totalHours);
+
+  const markdownOut = stringifyWithFrontmatter(nextData, parsed.body);
+  const changed = markdownOut !== markdown;
+  return { markdown: markdownOut, changed, categories, totalHours };
 }

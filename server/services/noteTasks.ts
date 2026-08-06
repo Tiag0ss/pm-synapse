@@ -19,19 +19,28 @@ export type NoteTaskCandidate = ParsedCheckbox & {
   estimate?: TaskEstimateMeta;
   /** Frontmatter todo `note:` target (title/path), when set */
   linkedNote?: string | null;
+  /** Frontmatter `category:` or checkbox `(2h, Design)` category token */
+  category?: string | null;
 };
 
 /** Markdown checkboxes first, then frontmatter todos (indent 0). */
 export function listNoteTaskCandidates(markdown: string): NoteTaskCandidate[] {
   const boxes = parseCheckboxes(markdown).map((b) => {
     const { text: taskText, meta } = stripTrailingEstimateMeta(b.text);
+    const estimate =
+      meta.estimatedHours != null || meta.unscheduledWork === true
+        ? {
+            estimatedHours: meta.estimatedHours,
+            unscheduledWork: meta.unscheduledWork,
+          }
+        : undefined;
     return {
       ...b,
       source: 'checkbox' as const,
       displayText: b.text,
       taskText,
-      estimate:
-        meta.estimatedHours != null || meta.unscheduledWork === true ? meta : undefined,
+      estimate,
+      category: meta.category || null,
     };
   });
   const startIndex = boxes.length;
@@ -50,6 +59,17 @@ export function listNoteTaskCandidates(markdown: string): NoteTaskCandidate[] {
     statusText: t.status,
     estimate: t.estimate,
     linkedNote: t.noteTarget,
+    category: t.category,
   }));
   return [...boxes, ...fmTasks];
+}
+
+/** Sum estimated hours across checkbox + frontmatter tasks. */
+export function sumNoteTaskEstimateHours(markdown: string): number {
+  let total = 0;
+  for (const t of listNoteTaskCandidates(markdown)) {
+    const h = t.estimate?.estimatedHours;
+    if (h != null && Number.isFinite(h)) total += h;
+  }
+  return Math.round(total * 100) / 100;
 }

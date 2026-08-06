@@ -108,15 +108,18 @@ todos:
     content: Discovery and scope
     status: pending
     hours: 2
+    category: Discovery
     note: meta/risks
   - id: implementation
     content: Implementation
     status: pending
     hours: 8
+    category: Build
   - id: buffer
     content: Unplanned follow-ups
     status: pending
     unscheduled: true
+    category: Buffer
 ---
 
 # {{title}}
@@ -147,15 +150,18 @@ todos:
     content: Design and acceptance criteria
     status: pending
     hours: 3
+    category: Design
     note: meta/risks
   - id: build
     content: Build and wire up
     status: pending
     hours: 6
+    category: Build
   - id: verify
     content: Verify and ship
     status: pending
     hours: 2
+    category: QA
 ---
 
 # {{title}}

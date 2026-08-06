@@ -398,6 +398,18 @@ export default function VaultWorkspacePage() {
     setSavedSnapshot((s) => ({ ...s, body: next }));
   }, []);
 
+  /** Client rewrite (e.g. Recalculate estimates) — update editor and persist immediately. */
+  const commitLocalBody = useCallback(
+    async (next: string) => {
+      if (!selectedId || !canEdit) return false;
+      setBody(next);
+      return saveNote({ reason: 'manual', body: next });
+    },
+    // saveNote closes over latest title/visibility/icon; selectedId/canEdit gate the call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedId, canEdit, title, visibility, noteIcon, vaultId]
+  );
+
   const ensureNoteSaved = useCallback(async () => {
     if (!selectedId || !canEdit) return true;
     if (!dirty) return true;
@@ -1471,6 +1483,7 @@ export default function VaultWorkspacePage() {
                   body={body}
                   hasProject={!!vaultMeta.PmProjectId}
                   onBodyChange={applyServerBody}
+                  onCommitBody={commitLocalBody}
                   onEnsureSaved={ensureNoteSaved}
                   onStatus={setStatus}
                   compact
@@ -1780,6 +1793,7 @@ export default function VaultWorkspacePage() {
         vaultId={vaultId}
         noteId={selectedId}
         noteTitle={title}
+        onBeforeExport={ensureNoteSaved}
         onClose={() => setExportOpen(false)}
       />
 

@@ -6,7 +6,15 @@
 export type TaskEstimateMeta = {
   estimatedHours?: number;
   unscheduledWork?: boolean;
+  /** Planning category from `(2h, Design)` or YAML `category:` */
+  category?: string;
 };
+
+/** Bucket name for hours with no category (estimate rollup). */
+export const UNCATEGORIZED_ESTIMATE_TASK = 'Other';
+
+/** Reserved estimate Task names (case-insensitive) — not used as user categories. */
+const RESERVED_ESTIMATE_TASKS = new Set(['total', 'other']);
 
 const HOURS_RE = /^(\d+(?:[.,]\d+)?)\s*(?:h|hr|hrs|hour|hours)?$/i;
 const UNSCHEDULED_RE = /^(?:unscheduled|u)$/i;
@@ -23,7 +31,15 @@ function mergeMeta(into: TaskEstimateMeta, piece: TaskEstimateMeta): TaskEstimat
   const out = { ...into };
   if (piece.estimatedHours != null) out.estimatedHours = piece.estimatedHours;
   if (piece.unscheduledWork === true) out.unscheduledWork = true;
+  if (piece.category) out.category = piece.category;
   return out;
+}
+
+function normalizeCategoryToken(token: string): string | null {
+  const s = String(token || '').trim();
+  if (!s) return null;
+  if (RESERVED_ESTIMATE_TASKS.has(s.toLowerCase())) return UNCATEGORIZED_ESTIMATE_TASK;
+  return s;
 }
 
 /** Parse tokens inside a trailing `(…)` group (comma / · / ; separated). */
@@ -39,7 +55,12 @@ export function parseEstimateFromParenGroup(raw: string): TaskEstimateMeta {
       continue;
     }
     const hours = parseHoursToken(part);
-    if (hours != null) meta = mergeMeta(meta, { estimatedHours: hours });
+    if (hours != null) {
+      meta = mergeMeta(meta, { estimatedHours: hours });
+      continue;
+    }
+    const category = normalizeCategoryToken(part);
+    if (category) meta = mergeMeta(meta, { category });
   }
   return meta;
 }
@@ -47,6 +68,7 @@ export function parseEstimateFromParenGroup(raw: string): TaskEstimateMeta {
 /**
  * Strip a trailing `(meta)` group from checkbox text.
  * Does not strip earlier parentheticals in the middle of the label.
+ * Recognized when the group has hours and/or unscheduled (category is optional).
  */
 export function stripTrailingEstimateMeta(text: string): {
   text: string;
@@ -97,4 +119,12 @@ export function parseEstimateFromFrontmatterTodo(obj: Record<string, unknown>): 
 export function hasEstimateMeta(meta: TaskEstimateMeta | undefined): boolean {
   if (!meta) return false;
   return meta.estimatedHours != null || meta.unscheduledWork === true;
+}
+
+/** Normalize a category label for estimate rollup (empty → Other; Total → Other). */
+export function normalizeEstimateCategory(raw: string | null | undefined): string {
+  const s = String(raw || '').trim();
+  if (!s) return UNCATEGORIZED_ESTIMATE_TASK;
+  if (RESERVED_ESTIMATE_TASKS.has(s.toLowerCase())) return UNCATEGORIZED_ESTIMATE_TASK;
+  return s;
 }

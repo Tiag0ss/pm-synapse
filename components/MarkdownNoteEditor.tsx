@@ -134,6 +134,10 @@ const LEGEND_SECTIONS: LegendSection[] = [
       { syntax: '1. item', meaning: 'Numbered list' },
       { syntax: '- [ ] task', meaning: 'Checklist (pushable task)' },
       { syntax: '- [ ] task (2h)', meaning: 'Estimate hours on create in Planner' },
+      {
+        syntax: '- [ ] task (1.5h, Design)',
+        meaning: 'Hours + category for Recalculate estimates (missing category → Other)',
+      },
       { syntax: '- [ ] task (unscheduled)', meaning: 'Mark unscheduled work on create' },
       { syntax: '> quote', meaning: 'Block quote' },
       { syntax: '---', meaning: 'Horizontal rule (in the body)' },
@@ -171,6 +175,11 @@ const LEGEND_SECTIONS: LegendSection[] = [
           'id, status, content → Properties + note tasks; push to Planner. hours / unscheduled on create; note: links to another note; when linked, status follows Planner status names',
       },
       { syntax: 'hours: 2.5', meaning: 'Under a todo → estimatedHours on Planner create' },
+      {
+        syntax: 'category: Design',
+        meaning:
+          'Under a todo → groups hours; Recalculate writes estimate (indent 1), Other if missing, Task Total indent 0',
+      },
       { syntax: 'unscheduled: true', meaning: 'Under a todo → unscheduledWork on create (not implied by missing hours)' },
       {
         syntax: 'related: […]',
