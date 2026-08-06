@@ -142,6 +142,7 @@ const STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS VaultMedia (
     Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     VaultId INT NOT NULL,
+    NoteId INT NULL,
     StorageName VARCHAR(128) NOT NULL,
     OriginalName VARCHAR(512) NULL,
     MimeType VARCHAR(128) NOT NULL,
@@ -150,7 +151,9 @@ const STATEMENTS = [
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uq_media_storage (VaultId, StorageName),
     KEY idx_media_vault (VaultId),
-    CONSTRAINT fk_media_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
+    KEY idx_media_note (NoteId),
+    CONSTRAINT fk_media_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_media_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE SET NULL
   )`,
   `CREATE TABLE IF NOT EXISTS VaultMembers (
     Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -205,6 +208,9 @@ const ALTERS = [
   'ALTER TABLE Users ADD COLUMN SessionVersion INT NOT NULL DEFAULT 0',
   'ALTER TABLE Users ADD COLUMN PmApiKeyEnc TEXT NULL',
   "ALTER TABLE NoteRevisions ADD COLUMN Source VARCHAR(16) NOT NULL DEFAULT 'manual'",
+  'ALTER TABLE VaultMedia ADD COLUMN NoteId INT NULL',
+  'ALTER TABLE VaultMedia ADD KEY idx_media_note (NoteId)',
+  'ALTER TABLE VaultMedia ADD CONSTRAINT fk_media_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE SET NULL',
 ];
 
 /** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */

@@ -5,13 +5,14 @@ import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { frontmatterJsonString, parseFrontmatter } from './frontmatter';
 import { titleToPath } from './checkboxes';
 import { sanitizeNotePath } from './notePaths';
-import { readVaultMedia, saveVaultImage, mediaPublicUrl } from './vaultMedia';
+import { readVaultMedia, saveVaultMedia, mediaPublicUrl } from './vaultMedia';
 import { snapshotRevision, rebuildNoteGraph } from './notesGraph';
 import { listNoteTaskCandidates } from './noteTasks';
 import logger from '../utils/logger';
 
 const ACTIVE_NOTE = 'DeletedAt IS NULL';
-const MEDIA_URL_RE = /!\[([^\]]*)\]\(\/api\/vaults\/(\d+)\/media\/(\d+)\)/g;
+/** Matches both `![alt](.../media/id)` and `[label](.../media/id)`. */
+const MEDIA_URL_RE = /(!?)\[([^\]]*)\]\(\/api\/vaults\/(\d+)\/media\/(\d+)\)/g;
 
 export type NoteTransferMode = 'copy' | 'move';
 
@@ -79,13 +80,13 @@ async function copyReferencedMedia(
   let m: RegExpExecArray | null;
   const re = new RegExp(MEDIA_URL_RE.source, 'g');
   while ((m = re.exec(bodyMarkdown))) {
-    const vId = Number(m[2]);
-    const mediaId = Number(m[3]);
+    const vId = Number(m[3]);
+    const mediaId = Number(m[4]);
     if (vId !== sourceVaultId || idMap.has(mediaId)) continue;
     const file = await readVaultMedia(sourceVaultId, mediaId);
     if (!file) continue;
     try {
-      const saved = await saveVaultImage({
+      const saved = await saveVaultMedia({
         vaultId: targetVaultId,
         pmUserId,
         mimeType: file.mimeType,
@@ -105,11 +106,11 @@ async function copyReferencedMedia(
 
   if (!idMap.size) return bodyMarkdown;
 
-  return bodyMarkdown.replace(MEDIA_URL_RE, (full, alt: string, vId: string, mId: string) => {
+  return bodyMarkdown.replace(MEDIA_URL_RE, (full, bang: string, alt: string, vId: string, mId: string) => {
     if (Number(vId) !== sourceVaultId) return full;
     const nextId = idMap.get(Number(mId));
     if (!nextId) return full;
-    return `![${alt}](${mediaPublicUrl(targetVaultId, nextId)})`;
+    return `${bang}[${alt}](${mediaPublicUrl(targetVaultId, nextId)})`;
   });
 }
 

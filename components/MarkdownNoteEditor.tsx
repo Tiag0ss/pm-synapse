@@ -13,9 +13,41 @@ import {
   type LinkSuggestContext,
   type LinkSuggestItem,
 } from '@/lib/noteLinkSuggest';
+import {
+  attachSuggestItems,
+  detectAttachSuggestContext,
+  type AttachSuggestSource,
+} from '@/lib/attachSuggest';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import NoteLinkSuggest from '@/components/NoteLinkSuggest';
+
+const ATTACH_ACCEPT =
+  'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown,application/zip';
+
+function isAllowedUploadFile(file: File): boolean {
+  const mime = (file.type || '').toLowerCase();
+  if (mime.startsWith('image/') && !mime.includes('svg')) return true;
+  if (
+    [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-powerpoint',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'text/plain',
+      'text/markdown',
+      'application/zip',
+      'application/x-zip-compressed',
+    ].includes(mime)
+  ) {
+    return true;
+  }
+  const name = file.name.toLowerCase();
+  return /\.(png|jpe?g|gif|webp|pdf|docx?|xlsx?|pptx?|txt|md|zip)$/i.test(name);
+}
 
 type ViewMode = 'edit' | 'split' | 'preview';
 
@@ -42,6 +74,12 @@ interface MarkdownNoteEditorProps {
   compact?: boolean;
   /** Preloaded Planner links (e.g. public wiki). When omitted, fetched via vault/note APIs. */
   plannerLinks?: PlannerLinkItem[];
+  /** Insert markdown at caret (used by attachments panel). */
+  insertRequest?: { id: number; snippet: string } | null;
+  /** Fired after a successful media upload from the editor. */
+  onMediaUploaded?: () => void;
+  /** Bump to reload [[attach suggestions (e.g. after panel upload). */
+  attachmentsRefreshToken?: number;
 }
 
 type WrapSpec =
@@ -148,6 +186,10 @@ const LEGEND_SECTIONS: LegendSection[] = [
         syntax: '@ / autocomplete',
         meaning: 'In [[…]], related:, or note: — type @ for vaults, / for notes',
       },
+      {
+        syntax: '[[attach',
+        meaning: 'Autocomplete attachments for this note → inserts [file](url) or ![img](url)',
+      },
     ],
   },
   {
@@ -163,6 +205,8 @@ const LEGEND_SECTIONS: LegendSection[] = [
       { syntax: '[[Note|label]]', meaning: 'Wikilink with custom label' },
       { syntax: 'plain Title', meaning: 'Unlinked mention (dashed)' },
       { syntax: '#tag', meaning: 'Inline tag for filtering / graph' },
+      { syntax: '![alt](url)', meaning: 'Embedded image (paste / Img / Attach)' },
+      { syntax: '[file.pdf](url)', meaning: 'Attachment link (Attach toolbar or [[attach)' },
     ],
   },
 ];
@@ -307,10 +351,14 @@ export default function MarkdownNoteEditor({
   readOnly = false,
   compact = false,
   plannerLinks,
+  insertRequest = null,
+  onMediaUploaded,
+  attachmentsRefreshToken = 0,
 }: MarkdownNoteEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const attachInputRef = useRef<HTMLInputElement>(null);
   const valueRef = useRef(value);
   const [mode, setMode] = useState<ViewMode>(readOnly ? 'preview' : compact ? 'edit' : 'split');
   const [showLegend, setShowLegend] = useState(false);
@@ -319,8 +367,9 @@ export default function MarkdownNoteEditor({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
   const [fetchedPlannerLinks, setFetchedPlannerLinks] = useState<PlannerLinkItem[]>([]);
+  const [attachments, setAttachments] = useState<AttachSuggestSource[]>([]);
   const [linkSuggest, setLinkSuggest] = useState<{
-    ctx: LinkSuggestContext;
+    ctx: LinkSuggestContext | { kind: 'attach'; replaceStart: number; replaceEnd: number };
     items: LinkSuggestItem[];
     activeIndex: number;
     top: number;
@@ -330,6 +379,67 @@ export default function MarkdownNoteEditor({
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
+
+  const reloadAttachments = useCallback(async () => {
+    if (!vaultId || noteId == null) {
+      setAttachments([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/attachments`, {
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) return;
+      const list = Array.isArray(data.data) ? data.data : [];
+      setAttachments(
+        list.map(
+          (row: {
+            id: number;
+            originalName?: string | null;
+            url: string;
+            mimeType: string;
+            sizeBytes: number;
+          }) => ({
+            id: Number(row.id),
+            originalName: row.originalName ?? null,
+            url: String(row.url),
+            mimeType: String(row.mimeType || ''),
+            sizeBytes: Number(row.sizeBytes || 0),
+          })
+        )
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [vaultId, noteId]);
+
+  useEffect(() => {
+    void reloadAttachments();
+  }, [reloadAttachments, attachmentsRefreshToken]);
+
+  const insertSnippetAtCaret = useCallback(
+    (snippet: string) => {
+      const el = textareaRef.current;
+      const current = valueRef.current;
+      const caret = el?.selectionStart ?? current.length;
+      const next = current.slice(0, caret) + snippet + current.slice(caret);
+      valueRef.current = next;
+      onChange(next);
+      const nextCaret = caret + snippet.length;
+      requestAnimationFrame(() => {
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(nextCaret, nextCaret);
+      });
+    },
+    [onChange]
+  );
+
+  useEffect(() => {
+    if (!insertRequest) return;
+    insertSnippetAtCaret(insertRequest.snippet);
+  }, [insertRequest, insertSnippetAtCaret]);
 
   const buildLinkSuggestItems = useCallback(
     (ctx: LinkSuggestContext): LinkSuggestItem[] => {
@@ -389,6 +499,32 @@ export default function MarkdownNoteEditor({
         setLinkSuggest(null);
         return;
       }
+
+      const attachCtx = detectAttachSuggestContext(nextValue, caret);
+      if (attachCtx) {
+        const items = attachSuggestItems(attachments, attachCtx.query);
+        if (!items.length) {
+          setLinkSuggest(null);
+          return;
+        }
+        const coords = caretCoordinates(el, caret);
+        const rect = el.getBoundingClientRect();
+        const parent = el.offsetParent as HTMLElement | null;
+        const parentRect = parent?.getBoundingClientRect();
+        const top =
+          (parentRect ? rect.top - parentRect.top : 0) + coords.top + coords.lineHeight + 4;
+        const left =
+          (parentRect ? rect.left - parentRect.left : 0) + Math.min(coords.left, el.clientWidth - 160);
+        setLinkSuggest({
+          ctx: { kind: 'attach', replaceStart: attachCtx.replaceStart, replaceEnd: attachCtx.replaceEnd },
+          items,
+          activeIndex: 0,
+          top: Math.max(0, top),
+          left: Math.max(0, left),
+        });
+        return;
+      }
+
       const ctx = detectLinkSuggestContext(nextValue, caret);
       if (!ctx) {
         setLinkSuggest(null);
@@ -414,7 +550,7 @@ export default function MarkdownNoteEditor({
         left: Math.max(0, left),
       });
     },
-    [buildLinkSuggestItems, readOnly]
+    [attachments, buildLinkSuggestItems, readOnly]
   );
 
   const applyLinkSuggest = useCallback(
@@ -423,20 +559,34 @@ export default function MarkdownNoteEditor({
       const state = linkSuggest;
       if (!el || !state) return;
       const { ctx } = state;
+
+      if ('kind' in ctx && ctx.kind === 'attach') {
+        const next = value.slice(0, ctx.replaceStart) + item.insert + value.slice(ctx.replaceEnd);
+        const caret = ctx.replaceStart + item.insert.length;
+        onChange(next);
+        setLinkSuggest(null);
+        requestAnimationFrame(() => {
+          el.focus();
+          el.setSelectionRange(caret, caret);
+        });
+        return;
+      }
+
+      const linkCtx = ctx as LinkSuggestContext;
       let next =
-        value.slice(0, ctx.replaceStart) + item.insert + value.slice(ctx.replaceEnd);
-      let caret = ctx.replaceStart + item.insert.length;
+        value.slice(0, linkCtx.replaceStart) + item.insert + value.slice(linkCtx.replaceEnd);
+      let caret = linkCtx.replaceStart + item.insert.length;
 
       // YAML: bare @vault/path breaks parsing — wrap the finished target in quotes.
       if (
-        ctx.inFrontmatter &&
+        linkCtx.inFrontmatter &&
         !item.followWithNotes &&
-        ctx.vaultSlug &&
-        ctx.mode === 'notes'
+        linkCtx.vaultSlug &&
+        linkCtx.mode === 'notes'
       ) {
-        const atStart = ctx.replaceStart - (`@${ctx.vaultSlug}/`.length);
-        if (atStart >= 0 && next.slice(atStart, ctx.replaceStart) === `@${ctx.vaultSlug}/`) {
-          const targetEnd = atStart + `@${ctx.vaultSlug}/`.length + item.insert.length;
+        const atStart = linkCtx.replaceStart - (`@${linkCtx.vaultSlug}/`.length);
+        if (atStart >= 0 && next.slice(atStart, linkCtx.replaceStart) === `@${linkCtx.vaultSlug}/`) {
+          const targetEnd = atStart + `@${linkCtx.vaultSlug}/`.length + item.insert.length;
           const before = next.slice(0, atStart);
           const target = next.slice(atStart, targetEnd);
           const after = next.slice(targetEnd);
@@ -526,14 +676,17 @@ export default function MarkdownNoteEditor({
     void renderMermaidInRoot(root);
   }, [html, fetchedPlannerLinks, mode]);
 
-  const uploadImages = useCallback(
+  const uploadFiles = useCallback(
     async (files: File[]) => {
       if (!vaultId) {
-        onStatus?.('Open a vault note to upload images');
+        onStatus?.('Open a vault note to upload files');
         return;
       }
-      const images = files.filter((f) => f.type.startsWith('image/'));
-      if (!images.length) return;
+      const allowed = files.filter(isAllowedUploadFile);
+      if (!allowed.length) {
+        onStatus?.('Unsupported file type');
+        return;
+      }
 
       setUploading(true);
       try {
@@ -541,40 +694,47 @@ export default function MarkdownNoteEditor({
         const el = textareaRef.current;
         let caret = el?.selectionStart ?? current.length;
 
-        for (const file of images) {
+        for (const file of allowed) {
           const payload = await fileToBase64Payload(file);
           const res = await fetch(`/api/vaults/${vaultId}/media`, {
             method: 'POST',
             credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
+            body: JSON.stringify({
+              ...payload,
+              noteId: noteId != null ? noteId : undefined,
+            }),
           });
           const data = await res.json();
           if (!res.ok) {
-            onStatus?.(data.message || 'Image upload failed');
+            onStatus?.(data.message || 'Upload failed');
             continue;
           }
           const url = String(data.data?.url || '');
-          const alt = (file.name || 'image').replace(/\.[^.]+$/, '').replace(/[[\]]/g, '');
-          const snippet = `\n![${alt || 'image'}](${url})\n`;
+          const name = (file.name || 'file').replace(/[[\]]/g, '');
+          const isImage = (file.type || '').startsWith('image/');
+          const alt = name.replace(/\.[^.]+$/, '') || (isImage ? 'image' : 'file');
+          const snippet = isImage ? `\n![${alt}](${url})\n` : `\n[${name}](${url})\n`;
           current = current.slice(0, caret) + snippet + current.slice(caret);
           caret += snippet.length;
           valueRef.current = current;
           onChange(current);
-          onStatus?.('Image inserted');
+          onStatus?.(isImage ? 'Image inserted' : 'Attachment inserted');
         }
+        void reloadAttachments();
+        onMediaUploaded?.();
         requestAnimationFrame(() => {
           if (!el) return;
           el.focus();
           el.setSelectionRange(caret, caret);
         });
       } catch {
-        onStatus?.('Image upload failed');
+        onStatus?.('Upload failed');
       } finally {
         setUploading(false);
       }
     },
-    [onChange, onStatus, vaultId]
+    [noteId, onChange, onMediaUploaded, onStatus, reloadAttachments, vaultId]
   );
 
   const runToolbar = useCallback(
@@ -758,21 +918,21 @@ export default function MarkdownNoteEditor({
     const files: File[] = [];
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (item.type.startsWith('image/')) {
+      if (item.kind === 'file') {
         const file = item.getAsFile();
-        if (file) files.push(file);
+        if (file && isAllowedUploadFile(file)) files.push(file);
       }
     }
     if (!files.length) return;
     e.preventDefault();
-    void uploadImages(files);
+    void uploadFiles(files);
   };
 
   const onDrop = (e: React.DragEvent<HTMLTextAreaElement>) => {
     e.preventDefault();
     setDragging(false);
-    const files = Array.from(e.dataTransfer.files || []);
-    void uploadImages(files);
+    const files = Array.from(e.dataTransfer.files || []).filter(isAllowedUploadFile);
+    void uploadFiles(files);
   };
 
   return (
@@ -807,6 +967,15 @@ export default function MarkdownNoteEditor({
             >
               Img
             </button>
+            <button
+              type="button"
+              title="Attach file"
+              className="toolbar-btn"
+              disabled={!vaultId || uploading}
+              onClick={() => attachInputRef.current?.click()}
+            >
+              Attach
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -816,7 +985,19 @@ export default function MarkdownNoteEditor({
               onChange={(e) => {
                 const files = Array.from(e.target.files || []);
                 e.target.value = '';
-                void uploadImages(files);
+                void uploadFiles(files);
+              }}
+            />
+            <input
+              ref={attachInputRef}
+              type="file"
+              accept={ATTACH_ACCEPT}
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                e.target.value = '';
+                void uploadFiles(files);
               }}
             />
           </>
@@ -911,7 +1092,7 @@ export default function MarkdownNoteEditor({
                 onDrop={onDrop}
                 placeholder={
                   placeholder ||
-                  'Write in Markdown… Paste or drop images here. Use the toolbar or Help if you are new to the syntax.'
+                  'Write in Markdown… Paste or drop images/files here. Type [[attach for attachments. Use Help for syntax.'
                 }
                 spellCheck
               />
@@ -945,8 +1126,8 @@ export default function MarkdownNoteEditor({
           >
             <h3 className="mb-1 text-sm font-semibold text-[var(--text)]">Markdown guide</h3>
             <p className="mb-4 leading-relaxed text-[var(--muted)]">
-              Toolbar + Ctrl/Cmd+B, I, K. Enter continues lists and tasks. Paste or drop images
-              into the editor.
+              Toolbar + Ctrl/Cmd+B, I, K. Enter continues lists and tasks. Paste or drop
+              images/files. Type [[attach to insert an attachment link.
             </p>
             <div className="space-y-4">
               {LEGEND_SECTIONS.map((section) => (

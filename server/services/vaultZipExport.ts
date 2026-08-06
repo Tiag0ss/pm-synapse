@@ -4,7 +4,8 @@ import { readVaultMedia } from './vaultMedia';
 import { safeZipEntryName } from './notePaths';
 import logger from '../utils/logger';
 
-const MEDIA_URL_RE = /!\[([^\]]*)\]\(\/api\/vaults\/(\d+)\/media\/(\d+)\)/g;
+/** Matches both `![alt](.../media/id)` and `[label](.../media/id)`. */
+const MEDIA_URL_RE = /(!?)\[([^\]]*)\]\(\/api\/vaults\/(\d+)\/media\/(\d+)\)/g;
 
 export type ZipExportResult = {
   buffer: Buffer;
@@ -15,7 +16,7 @@ export type ZipExportResult = {
 
 /**
  * Export vault notes as Markdown paths + media files.
- * Rewrites `/api/vaults/:id/media/:mediaId` image URLs to `media/<id>-<name>` relative paths.
+ * Rewrites `/api/vaults/:id/media/:mediaId` URLs to `media/<id>-<name>` relative paths.
  */
 export async function exportVaultZip(vaultId: number, vaultName: string): Promise<ZipExportResult> {
   const [notes] = await pool.execute<RowDataPacket[]>(
@@ -34,7 +35,7 @@ export async function exportVaultZip(vaultId: number, vaultName: string): Promis
   const mediaRelById = new Map<number, string>();
   for (const m of mediaRows) {
     const id = Number(m.Id);
-    const original = m.OriginalName ? String(m.OriginalName) : `image-${id}`;
+    const original = m.OriginalName ? String(m.OriginalName) : `file-${id}`;
     const base = safeZipEntryName(original).replace(/\s+/g, '_');
     const leaf = base.includes('/') ? base.split('/').pop()! : base;
     mediaRelById.set(id, `media/${id}-${leaf}`);
@@ -53,11 +54,13 @@ export async function exportVaultZip(vaultId: number, vaultName: string): Promis
   for (const note of notes) {
     const pathName = safeZipEntryName(String(note.Path || `${note.Title}.md`));
     let body = String(note.BodyMarkdown || '');
-    body = body.replace(MEDIA_URL_RE, (_full, alt: string, vId: string, mId: string) => {
-      if (Number(vId) !== vaultId) return `![${alt}](/api/vaults/${vId}/media/${mId})`;
+    body = body.replace(MEDIA_URL_RE, (_full, bang: string, alt: string, vId: string, mId: string) => {
+      if (Number(vId) !== vaultId) {
+        return `${bang}[${alt}](/api/vaults/${vId}/media/${mId})`;
+      }
       const rel = mediaRelById.get(Number(mId));
-      if (!rel) return `![${alt}](/api/vaults/${vId}/media/${mId})`;
-      return `![${alt}](${rel})`;
+      if (!rel) return `${bang}[${alt}](/api/vaults/${vId}/media/${mId})`;
+      return `${bang}[${alt}](${rel})`;
     });
     zip.file(
       pathName.endsWith('.md') || pathName.endsWith('.markdown') ? pathName : `${pathName}.md`,

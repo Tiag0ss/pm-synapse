@@ -30,7 +30,7 @@ import {
 import {
   syncNoteCheckboxesFromPm,
 } from '../services/pmCheckboxSync';
-import { applySafeMediaHeaders, readVaultMedia, saveVaultImage } from '../services/vaultMedia';
+import { applySafeMediaHeaders, readVaultMedia, saveVaultMedia, listNoteAttachments, deleteVaultMedia } from '../services/vaultMedia';
 import { importVaultZip } from '../services/vaultZipImport';
 import { exportVaultZip } from '../services/vaultZipExport';
 import { renderNoteDocx } from '../services/carboneExport';
@@ -133,7 +133,7 @@ async function readableVault(vaultId: number, pmUserId: number) {
   return accessibleVault(vaultId, pmUserId, 'edit');
 }
 
-/** Upload image (paste / drop / file picker) — JSON body with base64. */
+/** Upload image or attachment (paste / drop / file picker) — JSON body with base64. */
 router.post('/:vaultId/media', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
@@ -142,6 +142,7 @@ router.post('/:vaultId/media', async (req: AuthRequest, res: Response) => {
     mimeType: z.string().min(3).max(128),
     dataBase64: z.string().min(1),
     fileName: z.string().max(512).optional().nullable(),
+    noteId: z.number().int().positive().optional().nullable(),
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -149,12 +150,13 @@ router.post('/:vaultId/media', async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const saved = await saveVaultImage({
+    const saved = await saveVaultMedia({
       vaultId: Number(vault.Id),
       pmUserId: req.user!.userId,
       mimeType: parsed.data.mimeType,
       dataBase64: parsed.data.dataBase64,
       fileName: parsed.data.fileName,
+      noteId: parsed.data.noteId,
     });
     res.status(201).json({ success: true, data: saved });
   } catch (error: unknown) {
@@ -181,6 +183,31 @@ router.get('/:vaultId/media/:mediaId', async (req: AuthRequest, res: Response) =
     return res.status(415).json({ success: false, message: 'Unsupported media type' });
   }
   res.send(media.buffer);
+});
+
+/** Delete a media file from the vault. */
+router.delete('/:vaultId/media/:mediaId', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const mediaId = Number(req.params.mediaId);
+  if (!Number.isFinite(mediaId) || mediaId <= 0) {
+    return res.status(400).json({ success: false, message: 'Invalid media id' });
+  }
+  const ok = await deleteVaultMedia(Number(vault.Id), mediaId);
+  if (!ok) return res.status(404).json({ success: false, message: 'Not found' });
+  res.json({ success: true, message: 'Deleted' });
+});
+
+/** List attachments for a note (NoteId-owned + referenced in body). */
+router.get('/:vaultId/notes/:noteId/attachments', async (req: AuthRequest, res: Response) => {
+  const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const noteId = Number(req.params.noteId);
+  if (!Number.isFinite(noteId) || noteId <= 0) {
+    return res.status(400).json({ success: false, message: 'Invalid note id' });
+  }
+  const items = await listNoteAttachments(Number(vault.Id), noteId);
+  res.json({ success: true, data: items });
 });
 
 /** Import Markdown (+ images) from a ZIP, preserving folder structure. */

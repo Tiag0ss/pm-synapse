@@ -15,6 +15,7 @@ import RevisionDiffModal, {
 import VaultOptionsModal from '@/components/VaultOptionsModal';
 import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
 import NoteTasksPanel from '@/components/NoteTasksPanel';
+import NoteAttachmentsPanel from '@/components/NoteAttachmentsPanel';
 import NoteExportModal from '@/components/NoteExportModal';
 import NoteTransferModal from '@/components/NoteTransferModal';
 import NotesFolderTree from '@/components/NotesFolderTree';
@@ -93,7 +94,7 @@ function FullMindmapPane({
         <div>
           <h2 className="text-base font-semibold tracking-tight">Full vault mindmap</h2>
           <p className="text-xs text-[var(--muted)]">
-            {graph.nodes.length} notes · {graph.edges.length} links · click a node to open it in the editor
+            Folders view (default when &gt;25 links) or All notes · switch in the toolbar
           </p>
         </div>
         <button type="button" className="btn-ghost" onClick={onBack}>
@@ -181,6 +182,11 @@ export default function VaultWorkspacePage() {
   const [zipOverwriteOpen, setZipOverwriteOpen] = useState(false);
   const [pendingZipBase64, setPendingZipBase64] = useState<string | null>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
+  const [editorInsertRequest, setEditorInsertRequest] = useState<{
+    id: number;
+    snippet: string;
+  } | null>(null);
+  const [attachmentsRefresh, setAttachmentsRefresh] = useState(0);
   const [savedSnapshot, setSavedSnapshot] = useState({
     title: '',
     body: '',
@@ -1372,6 +1378,9 @@ export default function VaultWorkspacePage() {
                 onStatus={setStatus}
                 readOnly={!canEdit}
                 compact={!isLgUp}
+                insertRequest={editorInsertRequest}
+                onMediaUploaded={() => setAttachmentsRefresh((n) => n + 1)}
+                attachmentsRefreshToken={attachmentsRefresh}
               />
             </>
           ) : (
@@ -1473,6 +1482,19 @@ export default function VaultWorkspacePage() {
                     router.push(`/vaults/${targetVaultId}?note=${noteId}`);
                   }}
                 />
+                <div className="mt-4">
+                  <NoteAttachmentsPanel
+                    vaultId={vaultId}
+                    noteId={selectedId}
+                    readOnly={!canEdit}
+                    refreshToken={attachmentsRefresh}
+                    onStatus={setStatus}
+                    onUploaded={() => setAttachmentsRefresh((n) => n + 1)}
+                    onInsertMarkdown={(snippet) => {
+                      setEditorInsertRequest({ id: Date.now(), snippet });
+                    }}
+                  />
+                </div>
               </div>
             )}
 

@@ -4,7 +4,7 @@ import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { titleToPath } from './checkboxes';
 import { pathStem } from './notePaths';
 import { rebuildNoteGraph, snapshotRevision } from './notesGraph';
-import { saveVaultImage } from './vaultMedia';
+import { saveVaultMedia } from './vaultMedia';
 import { frontmatterJsonString, parseFrontmatter } from './frontmatter';
 import logger from '../utils/logger';
 
@@ -15,7 +15,23 @@ const MAX_NOTES = 500;
 const MAX_IMAGES = 200;
 
 const SKIP_NAME_RE = /(^|\/)(__MACOSX|\.git|\.obsidian|\.trash|node_modules)(\/|$)/i;
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+const MEDIA_EXT = new Set([
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.txt',
+  '.md',
+  '.zip',
+]);
 
 export type ZipImportResult = {
   created: number;
@@ -66,6 +82,26 @@ function mimeFromExt(ext: string): string {
       return 'image/gif';
     case '.webp':
       return 'image/webp';
+    case '.pdf':
+      return 'application/pdf';
+    case '.doc':
+      return 'application/msword';
+    case '.docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case '.xls':
+      return 'application/vnd.ms-excel';
+    case '.xlsx':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    case '.ppt':
+      return 'application/vnd.ms-powerpoint';
+    case '.pptx':
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    case '.txt':
+      return 'text/plain';
+    case '.md':
+      return 'text/markdown';
+    case '.zip':
+      return 'application/zip';
     default:
       return 'application/octet-stream';
   }
@@ -76,14 +112,14 @@ function noteTitleFromRelPath(relPath: string): string {
   return stem;
 }
 
-function rewriteRelativeImages(
+function rewriteRelativeMedia(
   markdown: string,
   noteDir: string,
   urlByRelPath: Map<string, string>
 ): string {
   return markdown.replace(
-    /!\[([^\]]*)\]\(([^)]+)\)/g,
-    (full, alt: string, target: string) => {
+    /(!?)\[([^\]]*)\]\(([^)]+)\)/g,
+    (full, bang: string, alt: string, target: string) => {
       const t = String(target).trim().replace(/^<|>$/g, '');
       if (/^(https?:|data:|\/)/i.test(t)) return full;
       const cleaned = t.split(/[?#]/)[0];
@@ -93,7 +129,7 @@ function rewriteRelativeImages(
         urlByRelPath.get(cleaned) ||
         urlByRelPath.get(path.posix.basename(cleaned));
       if (!url) return full;
-      return `![${alt}](${url})`;
+      return `${bang}[${alt}](${url})`;
     }
   );
 }
@@ -162,13 +198,19 @@ export async function importVaultZip(params: {
 
   const imageEntries = fileEntries
     .map((e) => ({ ...e, rel: relativize(e.rel) }))
-    .filter((e) => e.rel && IMAGE_EXT.has(path.posix.extname(e.rel).toLowerCase()));
+    .filter((e) => {
+      if (!e.rel) return false;
+      const ext = path.posix.extname(e.rel).toLowerCase();
+      // Markdown notes are handled separately; only import non-md media binaries from MEDIA_EXT
+      if (/\.(md|markdown)$/i.test(e.rel)) return false;
+      return MEDIA_EXT.has(ext);
+    });
 
   if (mdEntries.length > MAX_NOTES) {
     throw Object.assign(new Error(`Too many notes in ZIP (max ${MAX_NOTES})`), { status: 400 });
   }
   if (imageEntries.length > MAX_IMAGES) {
-    throw Object.assign(new Error(`Too many images in ZIP (max ${MAX_IMAGES})`), { status: 400 });
+    throw Object.assign(new Error(`Too many media files in ZIP (max ${MAX_IMAGES})`), { status: 400 });
   }
 
   const result: ZipImportResult = {
@@ -185,10 +227,10 @@ export async function importVaultZip(params: {
     try {
       const bytes = await zip.files[img.zipKey].async('nodebuffer');
       if (bytes.length > MAX_ENTRY_UNCOMPRESSED) {
-        throw new Error('Image entry too large');
+        throw new Error('Media entry too large');
       }
       const ext = path.posix.extname(img.rel).toLowerCase();
-      const saved = await saveVaultImage({
+      const saved = await saveVaultMedia({
         vaultId: params.vaultId,
         pmUserId: params.pmUserId,
         mimeType: mimeFromExt(ext),
@@ -199,9 +241,9 @@ export async function importVaultZip(params: {
       urlByRelPath.set(path.posix.basename(img.rel), saved.url);
       result.images += 1;
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Image import failed';
+      const message = error instanceof Error ? error.message : 'Media import failed';
       result.errors.push({ path: img.rel, message });
-      logger.warn('ZIP image import failed', { path: img.rel, message });
+      logger.warn('ZIP media import failed', { path: img.rel, message });
     }
   }
 
@@ -219,7 +261,7 @@ export async function importVaultZip(params: {
       if (!notePath.endsWith('.md')) notePath = `${notePath}.md`;
 
       const noteDir = path.posix.dirname(md.rel);
-      body = rewriteRelativeImages(body, noteDir === '.' ? '' : noteDir, urlByRelPath);
+      body = rewriteRelativeMedia(body, noteDir === '.' ? '' : noteDir, urlByRelPath);
       const fmJson = frontmatterJsonString(parseFrontmatter(body).data);
 
       const [existing] = await pool.execute<RowDataPacket[]>(

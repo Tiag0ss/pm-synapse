@@ -246,6 +246,15 @@ a:hover { text-decoration: underline; }
   cursor: zoom-in;
   transition: opacity 0.15s ease;
 }
+.synapse-md-preview a[href*="/media/"]:not(:has(img)) {
+  color: var(--accent-soft);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.synapse-md-preview a[href*="/media/"]:not(:has(img))::before {
+  content: "📎 ";
+  font-size: 0.85em;
+}
 .synapse-md-preview img:hover {
   opacity: 0.92;
 }

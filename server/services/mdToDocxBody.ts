@@ -262,6 +262,9 @@ async function loadVaultImageForDocx(
     let buffer = file.buffer;
     let mimeType = file.mimeType.split(';')[0].trim().toLowerCase();
 
+    // Non-image attachments stay as hyperlinks in the DOCX body — do not embed.
+    if (!mimeType.startsWith('image/')) return null;
+
     if (mimeType === 'image/svg+xml') {
       const png = await svgToPng(buffer.toString('utf8'));
       if (!png) return null;
