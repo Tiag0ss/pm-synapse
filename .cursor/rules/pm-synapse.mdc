@@ -27,7 +27,7 @@ rules:
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Next.js 15 App Router, React 19, Tailwind 4 |
+| Frontend | Next.js 16 App Router, React 19, Tailwind 4 |
 | Backend | Express 5, TypeScript, `server/index.ts` (serves Next) |
 | Database | MySQL (`server/config/database.ts`), schema in `server/services/schema.ts` |
 | Auth | Cookie session + SSO against Project Management |

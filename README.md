@@ -26,7 +26,7 @@ This project is a work in progress — bugs may still be found; please report th
 
 | Component | Technology |
 |-----------|------------|
-| Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS |
 | Backend | Node.js, Express 5, TypeScript (custom server) |
 | Database | MySQL 8+ |
 | Auth | Local password + optional PM SSO; JWT session cookie |
@@ -88,7 +88,7 @@ pnpm run dev
 
 Open [http://localhost:3010](http://localhost:3010) — register a local account (first user becomes admin) and/or sign in with Project Management. Admins manage registration, SMTP, and users under **Settings**. Each user manages their personal PM API token under **Profile**. Local and SSO accounts with the same email are linked.
 
-**Note:** TypeScript must stay on 5.x (`typescript@5.9.3`) — Next.js 15 does not support TypeScript 7.
+**Note:** TypeScript must stay on 5.x (`typescript@5.9.3`) — Next.js 16 does not support TypeScript 7.
 
 ## Docker
 
