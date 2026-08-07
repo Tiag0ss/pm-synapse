@@ -1,10 +1,4 @@
 # >>> PM-ACTIVE-TASK:START
 # Managed by Project Management Kanban extension — do not edit this block by hand.
-# Cursor "Generate commit message" reads .cursorrules (not .cursor/rules).
-When generating a Git commit message for this repository, include ALL of these task references
-(tasks worked on since the last successful commit):
-- Task #440 - No admin settings devia mostrar uma lista de todos os vaults existentes e se o utilizador logado for admin poderá definir um novo owner ou fazer share, e relembro que o admin settings é só para utilizadores admin.
-Always keep every of these references in the message: Task #440.
-Prefer starting the subject with the most recently activated task, then briefly describe the staged changes.
-If more than one task is listed, put the others in the subject or body — do not drop any Task #Id.
+# No active PM tasks since the last commit.
 # >>> PM-ACTIVE-TASK:END
