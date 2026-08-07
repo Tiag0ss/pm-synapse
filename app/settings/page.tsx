@@ -8,7 +8,7 @@ import PromptModal from '@/components/PromptModal';
 import VaultShareModal from '@/components/VaultShareModal';
 import WordExportHelpModal from '@/components/WordExportHelpModal';
 
-type Tab = 'general' | 'auth' | 'email' | 'pm' | 'templates' | 'export' | 'users' | 'vaults';
+type Tab = 'general' | 'auth' | 'email' | 'pm' | 'ai' | 'templates' | 'export' | 'users' | 'vaults';
 
 interface SettingsData {
   general: { siteName: string; allowPublicWikiDirectory: boolean };
@@ -26,6 +26,11 @@ interface SettingsData {
   projectManagement: {
     pmBaseUrl: string;
     pmIntegrationEnabled: boolean;
+  };
+  ai: {
+    aiEnabled: boolean;
+    ollamaBaseUrl: string;
+    ollamaModel: string;
   };
 }
 
@@ -81,6 +86,12 @@ export default function SettingsPage() {
   const [smtpPassword, setSmtpPassword] = useState('');
   const [clearSmtpPassword, setClearSmtpPassword] = useState(false);
   const [pmEnabled, setPmEnabled] = useState(true);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://127.0.0.1:11434');
+  const [ollamaModel, setOllamaModel] = useState('llama3.2');
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaModelsBusy, setOllamaModelsBusy] = useState(false);
+  const [ollamaModelsError, setOllamaModelsError] = useState('');
 
   const [createOpen, setCreateOpen] = useState(false);
   const [newUsername, setNewUsername] = useState('');
@@ -151,6 +162,9 @@ export default function SettingsPage() {
     setSmtpFrom(d.email.smtpFrom);
     setSmtpFromName(d.email.smtpFromName);
     setPmEnabled(d.projectManagement.pmIntegrationEnabled);
+    setAiEnabled(d.ai?.aiEnabled ?? false);
+    setOllamaBaseUrl(d.ai?.ollamaBaseUrl || 'http://127.0.0.1:11434');
+    setOllamaModel(d.ai?.ollamaModel || 'llama3.2');
     setLoading(false);
   }, []);
 
@@ -182,6 +196,42 @@ export default function SettingsPage() {
       void loadUsers();
     }
   }, [tab, forbidden, loadAdminVaults, loadUsers]);
+
+  const loadOllamaModels = useCallback(async (baseUrl: string, currentModel: string) => {
+    setOllamaModelsBusy(true);
+    setOllamaModelsError('');
+    try {
+      const qs = new URLSearchParams();
+      if (baseUrl.trim()) qs.set('baseUrl', baseUrl.trim());
+      const res = await fetch(`/api/settings/ai/models?${qs.toString()}`, {
+        credentials: 'include',
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setOllamaModels([]);
+        setOllamaModelsError(json.message || 'Failed to list models');
+        return;
+      }
+      const list = (json.data?.models || []) as string[];
+      setOllamaModels(list);
+      if (list.length > 0 && !currentModel) {
+        setOllamaModel(list[0]);
+      }
+    } catch {
+      setOllamaModels([]);
+      setOllamaModelsError('Network error listing Ollama models');
+    } finally {
+      setOllamaModelsBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'ai' && !forbidden && !loading) {
+      void loadOllamaModels(ollamaBaseUrl, ollamaModel);
+    }
+    // Load once when opening the AI tab (refresh button for URL changes).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, forbidden, loading]);
 
   const transferOwner = async () => {
     if (!ownerVault || ownerUserId === '') return;
@@ -305,6 +355,9 @@ export default function SettingsPage() {
       smtpFrom,
       smtpFromName,
       pmIntegrationEnabled: pmEnabled,
+      aiEnabled,
+      ollamaBaseUrl,
+      ollamaModel,
       ...extra,
     };
     if (clearSmtpPassword) body.smtpPassword = '';
@@ -439,6 +492,7 @@ export default function SettingsPage() {
     { id: 'auth', label: 'Authentication' },
     { id: 'email', label: 'Email' },
     { id: 'pm', label: 'Project Management' },
+    { id: 'ai', label: 'AI' },
     { id: 'templates', label: 'Templates' },
     { id: 'export', label: 'Word export' },
     { id: 'users', label: 'Users' },
@@ -626,6 +680,82 @@ export default function SettingsPage() {
             </Link>
             . There is no instance-wide API key.
           </p>
+          <button type="button" className="btn-primary" onClick={() => void save()}>
+            Save
+          </button>
+        </section>
+      )}
+
+      {tab === 'ai' && (
+        <section className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]/70 p-5">
+          <p className="text-xs leading-relaxed text-[var(--muted)]">
+            Synapse calls an external{' '}
+            <a
+              href="https://ollama.com/"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[var(--accent-soft)]"
+            >
+              Ollama
+            </a>{' '}
+            instance to suggest YAML <code className="text-[var(--accent-soft)]">todos:</code> from a
+            note. Ollama install, model pull, and GPU are managed outside Synapse. Suggestions never
+            auto-save — the editor always reviews them first.
+          </p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={aiEnabled} onChange={(e) => setAiEnabled(e.target.checked)} />
+            Enable AI todo suggestions
+          </label>
+          <label className="block text-sm">
+            Ollama base URL
+            <input
+              className="input mt-1 w-full"
+              value={ollamaBaseUrl}
+              onChange={(e) => setOllamaBaseUrl(e.target.value)}
+              placeholder="http://127.0.0.1:11434"
+            />
+          </label>
+          <div>
+            <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+              <label className="block text-sm" htmlFor="ollama-model-select">
+                Model
+              </label>
+              <button
+                type="button"
+                className="btn-ghost py-1 text-xs"
+                disabled={ollamaModelsBusy || !ollamaBaseUrl.trim()}
+                onClick={() => void loadOllamaModels(ollamaBaseUrl, ollamaModel)}
+              >
+                {ollamaModelsBusy ? 'Loading…' : 'Refresh models'}
+              </button>
+            </div>
+            <select
+              id="ollama-model-select"
+              className="input w-full"
+              value={ollamaModel}
+              disabled={ollamaModelsBusy && ollamaModels.length === 0}
+              onChange={(e) => setOllamaModel(e.target.value)}
+            >
+              {ollamaModel && !ollamaModels.includes(ollamaModel) && (
+                <option value={ollamaModel}>{ollamaModel} (saved)</option>
+              )}
+              {ollamaModels.length === 0 && !ollamaModel && (
+                <option value="">No models found</option>
+              )}
+              {ollamaModels.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            {ollamaModelsError ? (
+              <p className="mt-1 text-xs text-red-300">{ollamaModelsError}</p>
+            ) : (
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Loaded from Ollama <code>/api/tags</code>. Pull models on the host, then refresh.
+              </p>
+            )}
+          </div>
           <button type="button" className="btn-primary" onClick={() => void save()}>
             Save
           </button>

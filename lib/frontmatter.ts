@@ -629,6 +629,50 @@ export function ensureFrontmatterTodoIds(markdown: string): {
   };
 }
 
+export type ApplyFrontmatterTodoInput = {
+  id?: string | null;
+  content: string;
+  status?: string | null;
+  hours?: number | null;
+  category?: string | null;
+  unscheduled?: boolean | null;
+  note?: string | null;
+};
+
+/**
+ * Replace YAML `todos:` with the given list (stable ids generated when missing).
+ * Preserves other frontmatter keys and the markdown body. Leaves `estimate:` untouched.
+ */
+export function applyFrontmatterTodosList(
+  markdown: string,
+  todos: ApplyFrontmatterTodoInput[]
+): string {
+  const parsed = parseFrontmatter(markdown);
+  const nextTodos = todos
+    .map((t) => {
+      const content = String(t.content || '').trim();
+      if (!content) return null;
+      const row: Record<string, unknown> = {
+        id: String(t.id || '').trim() || newTodoId(),
+        content,
+        status: String(t.status || '').trim() || 'pending',
+      };
+      if (t.hours != null && Number.isFinite(Number(t.hours))) {
+        row.hours = Number(t.hours);
+      }
+      const category = t.category != null ? String(t.category).trim() : '';
+      if (category) row.category = category;
+      if (t.unscheduled === true) row.unscheduled = true;
+      const note = t.note != null ? String(t.note).trim() : '';
+      if (note) row.note = note;
+      return row;
+    })
+    .filter((row): row is Record<string, unknown> => row != null);
+
+  const nextData: FrontmatterData = { ...parsed.data, todos: nextTodos };
+  return stringifyWithFrontmatter(nextData, parsed.body);
+}
+
 /**
  * Set a frontmatter todo status by id (`completed` / `pending`).
  * Returns null if the todo id is not found.

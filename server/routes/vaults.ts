@@ -39,9 +39,11 @@ import {
   frontmatterTodoIdFromMarker,
   isFrontmatterTodoMarker,
   parseFrontmatter,
+  parseFrontmatterTodos,
   setFrontmatterTodoStatus,
   setFrontmatterTodoStatusLabel,
 } from '../services/frontmatter';
+import { OllamaError, suggestTodosFromNote } from '../services/ollamaClient';
 import { listNoteTaskCandidates } from '../services/noteTasks';
 import {
   checkboxTextKey,
@@ -1598,6 +1600,64 @@ router.get('/:vaultId/checkboxes', async (req: AuthRequest, res: Response) => {
       items,
     },
   });
+});
+
+/** Suggest frontmatter todos via external Ollama — does not write the note. */
+router.post('/:vaultId/notes/:noteId/ai/suggest-todos', async (req: AuthRequest, res: Response) => {
+  try {
+    const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+    if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+    const schema = z.object({
+      bodyMarkdown: z.string().max(500_000).optional(),
+    });
+    const parsed = schema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'Invalid request body' });
+    }
+
+    const [notes] = await pool.execute<RowDataPacket[]>(
+      `SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE}`,
+      [req.params.noteId, vault.Id]
+    );
+    if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
+    const note = notes[0];
+    const markdown =
+      parsed.data.bodyMarkdown != null
+        ? String(parsed.data.bodyMarkdown)
+        : String(note.BodyMarkdown || '');
+
+    const existing = parseFrontmatterTodos(markdown).map((t) => ({
+      id: t.id,
+      content: t.content,
+      status: t.status,
+      hours: t.estimate?.estimatedHours ?? null,
+      category: t.category,
+      unscheduled: t.estimate?.unscheduledWork === true,
+      noteTarget: t.noteTarget,
+    }));
+
+    const proposed = await suggestTodosFromNote({
+      title: String(note.Title || ''),
+      path: String(note.Path || ''),
+      bodyMarkdown: markdown,
+      existingTodoTitles: existing.map((t) => t.content).filter(Boolean),
+    });
+
+    res.json({
+      success: true,
+      data: {
+        existing,
+        proposed,
+      },
+    });
+  } catch (error) {
+    if (error instanceof OllamaError) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+    logger.error('AI suggest-todos failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to suggest todos' });
+  }
 });
 
 router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: Response) => {

@@ -299,6 +299,9 @@ async function seedDefaultAppSettings(): Promise<void> {
     allowSsoLogin: 'true',
     minPasswordLength: '8',
     pmIntegrationEnabled: 'true',
+    aiEnabled: 'false',
+    ollamaBaseUrl: 'http://127.0.0.1:11434',
+    ollamaModel: 'llama3.2',
   };
   for (const [key, value] of Object.entries(defaults)) {
     await pool.execute(

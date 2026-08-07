@@ -21,6 +21,7 @@ import {
   listAllVaultsForAdmin,
   transferVaultOwnership,
 } from '../services/adminVaults';
+import { OllamaError, listOllamaModels } from '../services/ollamaClient';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -43,6 +44,9 @@ router.get('/general', async (_req: AuthRequest, res: Response) => {
       smtpFrom,
       smtpFromName,
       smtpPassword,
+      aiEnabled,
+      ollamaBaseUrl,
+      ollamaModel,
     ] = await Promise.all([
       getSetting(SETTING_KEYS.siteName),
       getSettingBool(SETTING_KEYS.allowPublicWikiDirectory, true),
@@ -57,6 +61,9 @@ router.get('/general', async (_req: AuthRequest, res: Response) => {
       getSetting(SETTING_KEYS.smtpFrom),
       getSetting(SETTING_KEYS.smtpFromName),
       getDecryptedSetting(SETTING_KEYS.smtpPassword),
+      getSettingBool(SETTING_KEYS.aiEnabled, false),
+      getSetting(SETTING_KEYS.ollamaBaseUrl),
+      getSetting(SETTING_KEYS.ollamaModel),
     ]);
 
     res.json({
@@ -85,6 +92,11 @@ router.get('/general', async (_req: AuthRequest, res: Response) => {
           pmBaseUrl: PM_BASE_URL,
           pmIntegrationEnabled,
         },
+        ai: {
+          aiEnabled,
+          ollamaBaseUrl: ollamaBaseUrl || 'http://127.0.0.1:11434',
+          ollamaModel: ollamaModel || 'llama3.2',
+        },
       },
     });
   } catch (error) {
@@ -110,6 +122,9 @@ router.put('/general', async (req: AuthRequest, res: Response) => {
       /** omit = leave unchanged; empty string = clear */
       smtpPassword: z.string().max(500).nullable().optional(),
       pmIntegrationEnabled: z.boolean().optional(),
+      aiEnabled: z.boolean().optional(),
+      ollamaBaseUrl: z.string().max(512).optional(),
+      ollamaModel: z.string().max(128).optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
@@ -144,12 +159,38 @@ router.put('/general', async (req: AuthRequest, res: Response) => {
     if (d.pmIntegrationEnabled != null) {
       await setSetting(SETTING_KEYS.pmIntegrationEnabled, d.pmIntegrationEnabled ? 'true' : 'false');
     }
+    if (d.aiEnabled != null) {
+      await setSetting(SETTING_KEYS.aiEnabled, d.aiEnabled ? 'true' : 'false');
+    }
+    if (d.ollamaBaseUrl != null) {
+      const url = d.ollamaBaseUrl.trim().replace(/\/+$/, '');
+      await setSetting(SETTING_KEYS.ollamaBaseUrl, url || null);
+    }
+    if (d.ollamaModel != null) {
+      const model = d.ollamaModel.trim();
+      await setSetting(SETTING_KEYS.ollamaModel, model || null);
+    }
 
     invalidateSettingsCache();
     res.json({ success: true, message: 'Settings saved' });
   } catch (error) {
     logger.error('PUT settings/general failed', { error });
     res.status(500).json({ success: false, message: 'Failed to save settings' });
+  }
+});
+
+/** List models from Ollama (`GET /api/tags`). Optional `?baseUrl=` uses the form value before save. */
+router.get('/ai/models', async (req: AuthRequest, res: Response) => {
+  try {
+    const q = typeof req.query.baseUrl === 'string' ? req.query.baseUrl : undefined;
+    const models = await listOllamaModels(q);
+    res.json({ success: true, data: { models } });
+  } catch (error) {
+    if (error instanceof OllamaError) {
+      return res.status(error.status).json({ success: false, message: error.message });
+    }
+    logger.error('GET settings/ai/models failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to list Ollama models' });
   }
 });
 

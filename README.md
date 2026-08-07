@@ -20,6 +20,7 @@ This project is a work in progress — bugs may still be found; please report th
 - 👥 **Vault sharing** — **Read** = wiki only; **Edit** = vault editor + wiki; invite by search or PM user id
 - 🔐 **Auth** — Local username/password and optional PM SSO (linked by email); password reset via SMTP
 - ⚙️ **Admin settings** — Registration toggle, SMTP, PM integration switch, user management
+- 🤖 **AI todo suggestions** — Optional external [Ollama](https://ollama.com/) (Admin → AI); analyzes a note and proposes YAML `todos:` — review/merge before save; never auto-applies
 - 🔌 **PM bridge** — Per-user SSO token or personal `pt_…` API key (Profile); manual vault→project link; Synapse refs on PM tasks
 
 ## Tech Stack

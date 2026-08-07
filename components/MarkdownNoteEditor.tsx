@@ -172,7 +172,7 @@ const LEGEND_SECTIONS: LegendSection[] = [
       {
         syntax: 'todos: …',
         meaning:
-          'id, status, content → Properties + note tasks; push to Planner. hours / unscheduled on create; note: links to another note; when linked, status follows Planner status names',
+          'id, status, content → Properties + note tasks; push to Planner. hours / unscheduled on create; note: links to another note; when linked, status follows Planner status names. Suggest todos with AI (Tasks panel) proposes items via external Ollama — review before save',
       },
       { syntax: 'hours: 2.5', meaning: 'Under a todo → estimatedHours on Planner create' },
       {

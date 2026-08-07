@@ -17,6 +17,9 @@ export const SETTING_KEYS = {
   smtpPassword: 'smtpPassword',
   smtpFrom: 'smtpFrom',
   smtpFromName: 'smtpFromName',
+  aiEnabled: 'aiEnabled',
+  ollamaBaseUrl: 'ollamaBaseUrl',
+  ollamaModel: 'ollamaModel',
 } as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];

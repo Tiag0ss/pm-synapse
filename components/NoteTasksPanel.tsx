@@ -13,6 +13,10 @@ import {
   type NoteResolveEntry,
 } from '@/lib/notePaths';
 import { renderInlineMarkdown } from '@/lib/renderMarkdown';
+import AiTodosReviewModal, {
+  type ExistingTodoSuggestion,
+  type ProposedTodoSuggestion,
+} from '@/components/AiTodosReviewModal';
 
 interface NoteTaskItem {
   index: number;
@@ -77,6 +81,12 @@ export default function NoteTasksPanel({
   const [noteOpenUrl, setNoteOpenUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [needsReauth, setNeedsReauth] = useState(false);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiExisting, setAiExisting] = useState<ExistingTodoSuggestion[]>([]);
+  const [aiProposed, setAiProposed] = useState<ProposedTodoSuggestion[]>([]);
+  const [aiEnabled, setAiEnabled] = useState(false);
   const bodyRef = useRef(body);
   bodyRef.current = body;
 
@@ -184,6 +194,27 @@ export default function NoteTasksPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (readOnly) {
+      setAiEnabled(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch('/api/auth/me', { credentials: 'include' });
+        const json = await res.json();
+        if (cancelled || !res.ok) return;
+        setAiEnabled(Boolean(json.data?.ai?.enabled));
+      } catch {
+        if (!cancelled) setAiEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [readOnly]);
 
   useEffect(() => {
     const local = listNoteTaskCandidates(body);
@@ -400,11 +431,57 @@ export default function NoteTasksPanel({
     }
   };
 
+  const suggestTodosWithAi = async () => {
+    if (readOnly || !aiEnabled) return;
+    setAiModalOpen(true);
+    setAiBusy(true);
+    setAiError('');
+    setAiExisting([]);
+    setAiProposed([]);
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/ai/suggest-todos`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bodyMarkdown: bodyRef.current }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAiError(data.message || 'Failed to suggest todos');
+        onStatus?.(data.message || 'AI todo suggestions failed');
+        return;
+      }
+      setAiExisting((data.data?.existing || []) as ExistingTodoSuggestion[]);
+      setAiProposed((data.data?.proposed || []) as ProposedTodoSuggestion[]);
+    } catch {
+      setAiError('Network error talking to Synapse / Ollama');
+      onStatus?.('AI todo suggestions failed');
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  const applyAiTodos = async (nextMarkdown: string) => {
+    if (onCommitBody) {
+      const ok = await onCommitBody(nextMarkdown);
+      if (!ok) {
+        onStatus?.('Updated todos in editor, but save failed — save manually');
+        throw new Error('save failed');
+      }
+    } else {
+      onBodyChange(nextMarkdown);
+    }
+    setAiModalOpen(false);
+    onStatus?.('Frontmatter todos updated from AI suggestions');
+    await load();
+  };
+
   const showPanel = items.length > 0 || !readOnly;
 
   if (!showPanel) return null;
 
   return (
+    <>
     <div className={compact ? '' : 'rounded-xl border border-[var(--border)] bg-[var(--panel)]/50 p-3'}>
       {needsReauth && (
         <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-100">
@@ -467,17 +544,30 @@ export default function NoteTasksPanel({
         </span>
       </div>
 
-      {!readOnly && hasEstimateSources && (
-        <div className="mb-3">
-          <button
-            type="button"
-            className="btn-ghost py-1 text-[11px]"
-            disabled={busy}
-            title="Sum checkbox + YAML todo hours by category into estimate (missing → Other; Total indent 0)"
-            onClick={() => void recalculateEstimates()}
-          >
-            Recalculate estimates
-          </button>
+      {!readOnly && (hasEstimateSources || aiEnabled) && (
+        <div className="mb-3 flex flex-wrap gap-1.5">
+          {hasEstimateSources && (
+            <button
+              type="button"
+              className="btn-ghost py-1 text-[11px]"
+              disabled={busy || aiBusy}
+              title="Sum checkbox + YAML todo hours by category into estimate (missing → Other; Total indent 0)"
+              onClick={() => void recalculateEstimates()}
+            >
+              Recalculate estimates
+            </button>
+          )}
+          {aiEnabled && (
+            <button
+              type="button"
+              className="btn-ghost py-1 text-[11px]"
+              disabled={busy || aiBusy}
+              title="Ask external Ollama to propose YAML todos (review before save)"
+              onClick={() => void suggestTodosWithAi()}
+            >
+              Suggest todos with AI
+            </button>
+          )}
         </div>
       )}
 
@@ -711,5 +801,18 @@ export default function NoteTasksPanel({
         </ul>
       )}
     </div>
+    <AiTodosReviewModal
+      open={aiModalOpen}
+      bodyMarkdown={body}
+      existing={aiExisting}
+      proposed={aiProposed}
+      busy={aiBusy}
+      error={aiError}
+      onClose={() => {
+        if (!aiBusy) setAiModalOpen(false);
+      }}
+      onApply={applyAiTodos}
+    />
+    </>
   );
 }

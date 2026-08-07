@@ -92,6 +92,7 @@ function profilePayload(
     personalConfigured: boolean;
     personalPrefix: string | null;
     pmEnabled: boolean;
+    aiEnabled: boolean;
   }
 ) {
   return {
@@ -113,6 +114,9 @@ function profilePayload(
         prefix: extras.personalPrefix,
       },
       autoAssignOnCreate: Number(row.PmAutoAssignOnCreate) === 1,
+    },
+    ai: {
+      enabled: extras.aiEnabled,
     },
   };
 }
@@ -492,11 +496,12 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
       return res.status(401).json({ success: false, message: 'Authentication required' });
     }
     const userId = req.user!.userId;
-    const [ssoToken, personalConfigured, personalPrefix, pmEnabled] = await Promise.all([
+    const [ssoToken, personalConfigured, personalPrefix, pmEnabled, aiEnabled] = await Promise.all([
       hasValidSsoToken(userId),
       hasPersonalPmApiKey(userId),
       getPersonalPmApiKeyPrefix(userId),
       getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true),
+      getSettingBool(SETTING_KEYS.aiEnabled, false),
     ]);
     res.json({
       success: true,
@@ -505,6 +510,7 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
         personalConfigured,
         personalPrefix,
         pmEnabled,
+        aiEnabled,
       }),
     });
   } catch (error) {
@@ -628,11 +634,12 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
     const user = toSessionUser(updated);
     setSessionCookie(res, user);
 
-    const [ssoToken, personalConfigured, personalPrefix, pmEnabled] = await Promise.all([
+    const [ssoToken, personalConfigured, personalPrefix, pmEnabled, aiEnabled] = await Promise.all([
       hasValidSsoToken(user.userId),
       hasPersonalPmApiKey(user.userId),
       getPersonalPmApiKeyPrefix(user.userId),
       getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true),
+      getSettingBool(SETTING_KEYS.aiEnabled, false),
     ]);
 
     res.json({
@@ -643,6 +650,7 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
         personalConfigured,
         personalPrefix,
         pmEnabled,
+        aiEnabled,
       }),
     });
   } catch (error) {
