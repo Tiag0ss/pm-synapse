@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import VaultShareModal from '@/components/VaultShareModal';
 import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
+import VaultShareModal from '@/components/VaultShareModal';
 import ConfirmModal from '@/components/ConfirmModal';
 import type { NoteResolveEntry } from '@/lib/notePaths';
 
@@ -85,12 +85,25 @@ export default function VaultOptionsModal({
 
   useEffect(() => {
     if (!open) return;
-    setTab(initialTab);
+    const nextTab =
+      initialTab === 'pm' ||
+      initialTab === 'vault' ||
+      initialTab === 'trash' ||
+      initialTab === 'links' ||
+      initialTab === 'share'
+        ? initialTab
+        : 'links';
+    const allowed =
+      nextTab === 'links' ||
+      nextTab === 'vault' ||
+      nextTab === 'share' ||
+      (canEdit && (nextTab === 'trash' || nextTab === 'pm'));
+    setTab(allowed ? nextTab : 'links');
     setVaultStatus('');
     setDeleteConfirm('');
     setVaultDefaultVis((defaultVisibility || 'private').toLowerCase());
     setNameDraft(vaultName);
-  }, [open, initialTab, defaultVisibility, vaultName]);
+  }, [open, initialTab, defaultVisibility, vaultName, canEdit]);
 
   const loadBroken = async () => {
     setLoadingLinks(true);
@@ -483,6 +496,7 @@ export default function VaultOptionsModal({
               vaultId={vaultId}
               vaultName={vaultName}
               isOwner={isOwner}
+              canManage={isOwner}
               onClose={onClose}
             />
           )}

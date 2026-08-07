@@ -1,5 +1,6 @@
 import { Router, Response } from 'express';
 import { z } from 'zod';
+import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { authenticateSession, AuthRequest, requireAdmin } from '../middleware/auth';
 import {
   getDecryptedSetting,
@@ -12,6 +13,14 @@ import {
 } from '../services/appSettings';
 import { PM_BASE_URL } from '../services/pmClient';
 import { sendMail } from '../services/email';
+import {
+  adminAddVaultMember,
+  adminRemoveVaultMember,
+  adminUpdateVaultMemberRole,
+  getVaultMembersForAdmin,
+  listAllVaultsForAdmin,
+  transferVaultOwnership,
+} from '../services/adminVaults';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -163,6 +172,175 @@ router.post('/email/test', async (req: AuthRequest, res: Response) => {
   } catch (error) {
     logger.error('email test failed', { error });
     res.status(500).json({ success: false, message: 'Failed to send test email' });
+  }
+});
+
+/** List every vault (admin). */
+router.get('/vaults', async (_req: AuthRequest, res: Response) => {
+  try {
+    const data = await listAllVaultsForAdmin();
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('GET settings/vaults failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to list vaults' });
+  }
+});
+
+router.get('/vaults/:vaultId/members', async (req: AuthRequest, res: Response) => {
+  try {
+    const data = await getVaultMembersForAdmin(Number(req.params.vaultId));
+    if (!data) return res.status(404).json({ success: false, message: 'Vault not found' });
+    res.json({ success: true, data });
+  } catch (error) {
+    logger.error('GET settings/vaults/:id/members failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to load members' });
+  }
+});
+
+router.post('/vaults/:vaultId/members', async (req: AuthRequest, res: Response) => {
+  try {
+    const schema = z.object({
+      userId: z.coerce.number().int().positive().optional(),
+      pmUserId: z.coerce.number().int().positive().optional(),
+      role: z.enum(['read', 'edit']),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        message: 'userId (or pmUserId) and role (read|edit) required',
+      });
+    }
+
+    let targetUserId = parsed.data.userId ?? null;
+    let pendingFirstLogin = false;
+
+    if (targetUserId == null && parsed.data.pmUserId != null) {
+      const [byId] = await pool.execute<RowDataPacket[]>(
+        'SELECT Id FROM Users WHERE Id = ?',
+        [parsed.data.pmUserId]
+      );
+      if (byId[0]) {
+        targetUserId = Number(byId[0].Id);
+      } else {
+        const [byPm] = await pool.execute<RowDataPacket[]>(
+          'SELECT Id FROM Users WHERE PmUserId = ?',
+          [parsed.data.pmUserId]
+        );
+        if (byPm[0]) {
+          targetUserId = Number(byPm[0].Id);
+        } else {
+          const [ins] = await pool.execute<ResultSetHeader>(
+            `INSERT INTO Users (Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive)
+             VALUES (?, ?, NULL, ?, 0, 1)`,
+            [
+              `user#${parsed.data.pmUserId}`,
+              `pending-pm-${parsed.data.pmUserId}@local`,
+              parsed.data.pmUserId,
+            ]
+          );
+          targetUserId = Number(ins.insertId);
+          pendingFirstLogin = true;
+        }
+      }
+    }
+
+    if (targetUserId == null) {
+      return res.status(400).json({
+        success: false,
+        message: 'userId (or pmUserId) and role (read|edit) required',
+      });
+    }
+
+    const result = await adminAddVaultMember({
+      vaultId: Number(req.params.vaultId),
+      targetUserId,
+      role: parsed.data.role,
+      invitedByUserId: req.user!.userId,
+    });
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, message: result.message });
+    }
+    res.status(201).json({
+      success: true,
+      data: {
+        userId: targetUserId,
+        pmUserId: targetUserId,
+        role: parsed.data.role,
+        pendingFirstLogin,
+      },
+    });
+  } catch (error) {
+    logger.error('POST settings/vaults/:id/members failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to add member' });
+  }
+});
+
+router.patch('/vaults/:vaultId/members/:memberUserId', async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await adminUpdateVaultMemberRole(
+      Number(req.params.vaultId),
+      Number(req.params.memberUserId),
+      req.body?.role
+    );
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, message: result.message });
+    }
+    res.json({
+      success: true,
+      data: { pmUserId: Number(req.params.memberUserId), role: result.role },
+    });
+  } catch (error) {
+    logger.error('PATCH settings/vaults members failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to update member' });
+  }
+});
+
+router.delete('/vaults/:vaultId/members/:memberUserId', async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await adminRemoveVaultMember(
+      Number(req.params.vaultId),
+      Number(req.params.memberUserId)
+    );
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, message: result.message });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('DELETE settings/vaults members failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to remove member' });
+  }
+});
+
+/** Transfer vault ownership (admin). Previous owner keeps Edit by default. */
+router.patch('/vaults/:vaultId/owner', async (req: AuthRequest, res: Response) => {
+  try {
+    const schema = z.object({
+      ownerUserId: z.coerce.number().int().positive(),
+      keepPreviousOwnerAsEdit: z.boolean().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'ownerUserId is required' });
+    }
+    const result = await transferVaultOwnership({
+      vaultId: Number(req.params.vaultId),
+      newOwnerUserId: parsed.data.ownerUserId,
+      invitedByUserId: req.user!.userId,
+      keepPreviousOwnerAsEdit: parsed.data.keepPreviousOwnerAsEdit,
+    });
+    if (!result.ok) {
+      return res.status(result.status).json({ success: false, message: result.message });
+    }
+    const members = await getVaultMembersForAdmin(Number(req.params.vaultId));
+    res.json({
+      success: true,
+      message: 'Ownership transferred',
+      data: members,
+    });
+  } catch (error) {
+    logger.error('PATCH settings/vaults/:id/owner failed', { error });
+    res.status(500).json({ success: false, message: 'Failed to transfer ownership' });
   }
 });
 

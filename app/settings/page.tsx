@@ -5,9 +5,10 @@ import Link from 'next/link';
 import AppUserMenu from '@/components/AppUserMenu';
 import ConfirmModal from '@/components/ConfirmModal';
 import PromptModal from '@/components/PromptModal';
+import VaultShareModal from '@/components/VaultShareModal';
 import WordExportHelpModal from '@/components/WordExportHelpModal';
 
-type Tab = 'general' | 'auth' | 'email' | 'pm' | 'templates' | 'export' | 'users';
+type Tab = 'general' | 'auth' | 'email' | 'pm' | 'templates' | 'export' | 'users' | 'vaults';
 
 interface SettingsData {
   general: { siteName: string; allowPublicWikiDirectory: boolean };
@@ -39,6 +40,19 @@ interface UserRow {
   lastLoginAt: string | null;
 }
 
+interface AdminVaultRow {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  defaultVisibility: string;
+  allowPublicPages: boolean;
+  noteCount: number;
+  memberCount: number;
+  owner: { userId: number; username: string; email: string } | null;
+  updatedAt: string | null;
+}
+
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('general');
   const [loading, setLoading] = useState(true);
@@ -47,6 +61,11 @@ export default function SettingsPage() {
   const [error, setError] = useState('');
   const [data, setData] = useState<SettingsData | null>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [adminVaults, setAdminVaults] = useState<AdminVaultRow[]>([]);
+  const [shareVault, setShareVault] = useState<AdminVaultRow | null>(null);
+  const [ownerVault, setOwnerVault] = useState<AdminVaultRow | null>(null);
+  const [ownerUserId, setOwnerUserId] = useState<number | ''>('');
+  const [ownerBusy, setOwnerBusy] = useState(false);
 
   const [siteName, setSiteName] = useState('');
   const [allowWikiDir, setAllowWikiDir] = useState(true);
@@ -142,6 +161,13 @@ export default function SettingsPage() {
     setUsers(json.data || []);
   }, []);
 
+  const loadAdminVaults = useCallback(async () => {
+    const res = await fetch('/api/settings/vaults', { credentials: 'include' });
+    if (!res.ok) return;
+    const json = await res.json();
+    setAdminVaults(json.data || []);
+  }, []);
+
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
@@ -149,6 +175,39 @@ export default function SettingsPage() {
   useEffect(() => {
     if (tab === 'users' && !forbidden) void loadUsers();
   }, [tab, forbidden, loadUsers]);
+
+  useEffect(() => {
+    if (tab === 'vaults' && !forbidden) {
+      void loadAdminVaults();
+      void loadUsers();
+    }
+  }, [tab, forbidden, loadAdminVaults, loadUsers]);
+
+  const transferOwner = async () => {
+    if (!ownerVault || ownerUserId === '') return;
+    setOwnerBusy(true);
+    setError('');
+    setStatus('');
+    try {
+      const res = await fetch(`/api/settings/vaults/${ownerVault.id}/owner`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerUserId: Number(ownerUserId) }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.message || 'Ownership transfer failed');
+        return;
+      }
+      setStatus(`Ownership of “${ownerVault.name}” transferred`);
+      setOwnerVault(null);
+      setOwnerUserId('');
+      await loadAdminVaults();
+    } finally {
+      setOwnerBusy(false);
+    }
+  };
 
   const loadPendingTemplates = useCallback(async () => {
     const res = await fetch('/api/templates/pending', { credentials: 'include' });
@@ -383,6 +442,7 @@ export default function SettingsPage() {
     { id: 'templates', label: 'Templates' },
     { id: 'export', label: 'Word export' },
     { id: 'users', label: 'Users' },
+    { id: 'vaults', label: 'Vaults' },
   ];
 
   return (
@@ -851,6 +911,90 @@ export default function SettingsPage() {
         </section>
       )}
 
+      {tab === 'vaults' && (
+        <section className="space-y-4">
+          <p className="max-w-xl text-xs text-[var(--muted)]">
+            All vaults on this Synapse instance. Admins can transfer ownership or manage share
+            memberships without being the vault owner. Transfer keeps the previous owner as Edit
+            access.
+          </p>
+          {adminVaults.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-[var(--border)] px-4 py-10 text-center text-sm text-[var(--muted)]">
+              No vaults yet.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-2xl border border-[var(--border)]">
+              <table className="w-full min-w-[40rem] text-left text-sm">
+                <thead className="border-b border-[var(--border)] bg-[var(--panel)]/80 text-[var(--muted)]">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Vault</th>
+                    <th className="px-3 py-2 font-medium">Owner</th>
+                    <th className="px-3 py-2 font-medium">Stats</th>
+                    <th className="px-3 py-2 font-medium">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {adminVaults.map((v) => (
+                    <tr key={v.id} className="border-b border-[var(--border)]/60">
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-[var(--text)]">{v.name}</div>
+                        <div className="font-mono text-xs text-[var(--muted)]">/{v.slug}</div>
+                        <div className="mt-0.5 text-[11px] text-[var(--muted)]">
+                          {v.defaultVisibility}
+                          {v.allowPublicPages ? ' · public wiki on' : ''}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        {v.owner ? (
+                          <>
+                            <div className="font-medium">{v.owner.username}</div>
+                            <div className="text-xs text-[var(--muted)]">{v.owner.email}</div>
+                          </>
+                        ) : (
+                          <span className="text-xs text-[var(--muted)]">Unknown</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-[var(--muted)]">
+                        {v.noteCount} note{v.noteCount === 1 ? '' : 's'}
+                        <br />
+                        {v.memberCount} share{v.memberCount === 1 ? '' : 's'}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          <Link
+                            href={`/vaults/${v.id}`}
+                            className="btn-ghost text-xs no-underline hover:no-underline"
+                          >
+                            Open
+                          </Link>
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs"
+                            onClick={() => setShareVault(v)}
+                          >
+                            Share
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost text-xs"
+                            onClick={() => {
+                              setOwnerVault(v);
+                              setOwnerUserId(v.owner?.userId ?? '');
+                            }}
+                          >
+                            Change owner
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
       {createOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
           <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-xl">
@@ -1030,6 +1174,80 @@ export default function SettingsPage() {
       />
 
       <WordExportHelpModal open={exportHelpOpen} onClose={() => setExportHelpOpen(false)} />
+
+      <VaultShareModal
+        open={shareVault != null}
+        vaultId={shareVault ? String(shareVault.id) : ''}
+        vaultName={shareVault?.name || ''}
+        isOwner
+        canManage
+        membersBasePath={shareVault ? `/api/settings/vaults/${shareVault.id}` : undefined}
+        onClose={() => {
+          setShareVault(null);
+          void loadAdminVaults();
+        }}
+      />
+
+      {ownerVault && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal
+            className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-2xl"
+          >
+            <h2 className="text-lg font-semibold tracking-tight">Change vault owner</h2>
+            <p className="mt-1 text-sm text-[var(--muted)]">
+              {ownerVault.name} — previous owner keeps <strong className="text-[var(--text)]">Edit</strong>{' '}
+              access.
+            </p>
+            <label className="mt-4 block text-sm">
+              New owner
+              <select
+                className="input mt-1 w-full"
+                value={ownerUserId === '' ? '' : String(ownerUserId)}
+                onChange={(e) =>
+                  setOwnerUserId(e.target.value ? Number(e.target.value) : '')
+                }
+              >
+                <option value="">Select user…</option>
+                {users
+                  .filter((u) => u.isActive)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.username} ({u.email})
+                      {ownerVault.owner?.userId === u.id ? ' — current' : ''}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={ownerBusy}
+                onClick={() => {
+                  setOwnerVault(null);
+                  setOwnerUserId('');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={
+                  ownerBusy ||
+                  ownerUserId === '' ||
+                  ownerUserId === ownerVault.owner?.userId
+                }
+                onClick={() => void transferOwner()}
+              >
+                {ownerBusy ? 'Transferring…' : 'Transfer ownership'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
