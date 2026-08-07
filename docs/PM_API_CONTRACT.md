@@ -96,7 +96,9 @@ Response shapes: `{ statuses: […] }` or `{ priorities: […] }` or raw arrays.
 
 **Done rule (Synapse):** `StatusIsClosed === 1` **or** `StatusIsCancelled === 1` ⇒ checkbox checked / YAML todo treated as done.
 
-**Status name match (Synapse):** On create, if a YAML todo `status` string matches a task status `Name` (case-insensitive), Synapse uses that status `Id`. Otherwise falls back to default open vs closed/cancelled by the done rule.
+**In progress rule (Synapse):** not done, and (`StatusIsInProgress === 1` **or** catalog `IsInProgress` **or** status name matches In Progress / doing / wip / …) ⇒ markdown `[-]` (partial).
+
+**Status name match (Synapse):** On create, if a YAML todo `status` string matches a task status `StatusName`/`Name` (case-insensitive), Synapse uses that status `Id`. Otherwise falls back to default open vs closed/cancelled by the done rule.
 
 ---
 
@@ -138,6 +140,7 @@ Task fields Synapse uses:
 | `Id` | Link / deep-link |
 | `StatusIsClosed` | Pull sync → checkbox / done |
 | `StatusIsCancelled` | Pull sync → checkbox / done |
+| `StatusName` | Pull sync → YAML todo status + `[-]` when In Progress |
 | `Status` | Pull sync → YAML todo `status` name (via status catalog) |
 
 ### Create

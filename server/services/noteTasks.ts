@@ -48,6 +48,12 @@ export function listNoteTaskCandidates(markdown: string): NoteTaskCandidate[] {
   const fmTasks: NoteTaskCandidate[] = todos.map((t, i) => ({
     index: startIndex + i,
     checked: t.checked,
+    partial: !t.checked && /in\s*progress|doing|wip|started|working|active/i.test(t.status),
+    mark: t.checked
+      ? ('x' as const)
+      : /in\s*progress|doing|wip|started|working|active/i.test(t.status)
+        ? ('-' as const)
+        : (' ' as const),
     text: t.content,
     displayText: t.content,
     taskText: t.content,

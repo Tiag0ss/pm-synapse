@@ -163,6 +163,15 @@ const LEGEND_SECTIONS: LegendSection[] = [
     ],
   },
   {
+    title: 'Checkboxes',
+    blurb: 'Task list markers in the note body. Linked Planner tasks sync status into these marks.',
+    items: [
+      { syntax: '- [x]', meaning: 'Done (closed / cancelled in Planner)' },
+      { syntax: '- [-]', meaning: 'Partial / stub — In Progress in Planner' },
+      { syntax: '- [ ]', meaning: 'Not started (open)' },
+    ],
+  },
+  {
     title: 'Properties (YAML)',
     blurb: 'Optional block at the very top of the note, between --- fences. Shown as the Properties card in preview.',
     items: [
@@ -248,8 +257,8 @@ type ListContinue =
 
 /** Detect bullet / numbered / task list on the current line for Enter continuation. */
 function listContinueForLine(line: string): ListContinue {
-  // Task: "- [ ] " / "- [x] " (also * +)
-  const task = line.match(/^(\s*)([-*+])\s+\[([ xX])\]\s+(.*)$/);
+  // Task: "- [ ] " / "- [x] " / "- [-] " (also * +)
+  const task = line.match(/^(\s*)([-*+])\s+\[([ xX\-])\]\s+(.*)$/);
   if (task) {
     const indent = task[1];
     const bullet = task[2];
@@ -646,35 +655,32 @@ export default function MarkdownNoteEditor({
       return;
     }
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes`, {
-            credentials: 'include',
-          });
-          const data = await res.json();
-          if (cancelled || !res.ok) return;
-          const payload = data.data;
-          const list = Array.isArray(payload) ? payload : payload?.items || [];
-          setFetchedPlannerLinks(
-            list.map(
-              (i: { markerId?: string | null; openUrl?: string | null; pmTaskId?: number | null }) => ({
-                markerId: i.markerId ?? null,
-                openUrl: i.openUrl ?? null,
-                pmTaskId: i.pmTaskId ?? null,
-              })
-            )
-          );
-        } catch {
-          if (!cancelled) setFetchedPlannerLinks([]);
-        }
-      })();
-    }, 400);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes`, {
+          credentials: 'include',
+        });
+        const data = await res.json();
+        if (cancelled || !res.ok) return;
+        const payload = data.data;
+        const list = Array.isArray(payload) ? payload : payload?.items || [];
+        setFetchedPlannerLinks(
+          list.map(
+            (i: { markerId?: string | null; openUrl?: string | null; pmTaskId?: number | null }) => ({
+              markerId: i.markerId ?? null,
+              openUrl: i.openUrl ?? null,
+              pmTaskId: i.pmTaskId ?? null,
+            })
+          )
+        );
+      } catch {
+        if (!cancelled) setFetchedPlannerLinks([]);
+      }
+    })();
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
-  }, [vaultId, noteId, plannerLinks, value]);
+  }, [vaultId, noteId, plannerLinks]);
 
   useLayoutEffect(() => {
     const root = previewRef.current;
@@ -682,6 +688,10 @@ export default function MarkdownNoteEditor({
     // Own the preview DOM so Mermaid SVG is not wiped by React's dangerouslySetInnerHTML
     root.innerHTML = html || '<p class="synapse-empty">Nothing to preview yet.</p>';
     applyPlannerButtons(root, fetchedPlannerLinks);
+    root.querySelectorAll<HTMLInputElement>('input.synapse-cb-partial[type="checkbox"]').forEach((el) => {
+      el.indeterminate = true;
+      el.checked = false;
+    });
     void renderMermaidInRoot(root);
   }, [html, fetchedPlannerLinks, mode]);
 

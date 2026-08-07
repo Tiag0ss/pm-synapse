@@ -239,11 +239,18 @@ export function promoteCheckboxMarkers(html: string): string {
 /**
  * Mark GFM task <li>s. Handles tight (`<li><input>`) and loose
  * (`<li><p><input>` — blank line between items in CommonMark).
+ * Also promotes `<!--synapse:partial-->` (from `[-]` preprocess) to indeterminate.
  */
 export function markTaskListItems(html: string): string {
   let out = (html || '').replace(
-    /<li(\b[^>]*)>((?:\s|<p\b[^>]*>)*)(<input\b[^>]*\btype\s*=\s*["']checkbox["'][^>]*>)/gi,
-    (_m, liAttrs: string, prefix: string, input: string) => {
+    /<li(\b[^>]*)>((?:\s|<p\b[^>]*>)*)(<input\b[^>]*\btype\s*=\s*["']checkbox["'][^>]*>)(\s*<!--\s*synapse:partial\s*-->)?/gi,
+    (
+      _m,
+      liAttrs: string,
+      prefix: string,
+      input: string,
+      partialComment: string | undefined
+    ) => {
       let attrs = String(liAttrs || '');
       if (!/\btask-list-item\b/.test(attrs)) {
         if (/\bclass\s*=\s*"/i.test(attrs)) {
@@ -252,13 +259,35 @@ export function markTaskListItems(html: string): string {
           attrs = ` class="task-list-item"${attrs}`;
         }
       }
+      if (partialComment) {
+        if (/\btask-list-item-partial\b/.test(attrs)) {
+          /* already */
+        } else if (/\bclass\s*=\s*"/i.test(attrs)) {
+          attrs = attrs.replace(/\bclass\s*=\s*"/i, 'class="task-list-item-partial ');
+        } else {
+          attrs = ` class="task-list-item-partial"${attrs}`;
+        }
+      }
       const killMarker = 'list-style:none;list-style-type:none;';
       if (/\bstyle\s*=\s*"/i.test(attrs)) {
         attrs = attrs.replace(/\bstyle\s*=\s*"/i, `style="${killMarker}`);
       } else {
         attrs += ` style="${killMarker}"`;
       }
-      return `<li${attrs}>${prefix}${input}`;
+      let nextInput = String(input || '');
+      if (partialComment) {
+        if (!/\bclass\s*=/.test(nextInput)) {
+          nextInput = nextInput.replace(/<input\b/i, '<input class="synapse-cb-partial"');
+        } else if (!/\bsynapse-cb-partial\b/.test(nextInput)) {
+          nextInput = nextInput.replace(/\bclass\s*=\s*"/i, 'class="synapse-cb-partial ');
+        }
+        if (!/\bindeterminate\b/i.test(nextInput)) {
+          nextInput = nextInput.replace(/\/?>$/, ' data-partial="1">');
+        }
+        // Drop checked so CSS :checked does not win over partial
+        nextInput = nextInput.replace(/\schecked(?:=["'][^"']*["'])?/gi, '');
+      }
+      return `<li${attrs}>${prefix}${nextInput}`;
     }
   );
 
@@ -411,6 +440,8 @@ export function highlightCodeBlocks(html: string): string {
 /** Full extras pass before Synapse wikilink preprocess (call on frontmatter body). */
 export function preprocessMarkdownExtras(md: string): string {
   let out = md || '';
+  // marked GFM only knows [ ] / [x] — keep partial semantics via HTML comment
+  out = out.replace(/^(\s*[-*+]\s+)\[-\](\s+)/gm, '$1[ ]$2<!--synapse:partial-->');
   out = preprocessToc(out);
   out = preprocessCallouts(out);
   out = preprocessFootnotes(out);

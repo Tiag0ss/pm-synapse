@@ -1,5 +1,8 @@
 import { pool, RowDataPacket } from '../config/database';
-import { setCheckboxCheckedByMarker } from './checkboxes';
+import {
+  setCheckboxMarkByMarker,
+  type CheckboxMark,
+} from './checkboxes';
 import {
   frontmatterTodoIdFromMarker,
   isFrontmatterTodoMarker,
@@ -11,6 +14,7 @@ import {
   fetchPmProjectTasks,
   fetchPmTaskStatuses,
   isPmTaskDone,
+  isPmTaskInProgress,
   normalizePmTaskStatusList,
   statusNameFromId,
   type PmTaskStatusValue,
@@ -152,16 +156,30 @@ export async function syncNoteCheckboxesFromPm(params: {
     }
 
     const wantChecked = isPmTaskDone(task);
+    const statusName =
+      String(task.StatusName || '').trim() ||
+      (statusList && task.Status != null
+        ? statusNameFromId(statusList, Number(task.Status))
+        : null);
+    const wantMark: CheckboxMark = wantChecked
+      ? 'x'
+      : isPmTaskInProgress(task, statusList)
+        ? '-'
+        : ' ';
+
     const candidates = listNoteTaskCandidates(body);
     const local = candidates.find((b) => b.markerId === markerId);
-    const localChecked = local ? local.checked : Boolean(Number(link.Checked));
+    const localMark: CheckboxMark = local
+      ? local.partial
+        ? '-'
+        : local.checked
+          ? 'x'
+          : ' '
+      : Number(link.Checked)
+        ? 'x'
+        : ' ';
 
-    const statusName =
-      statusList && task.Status != null
-        ? statusNameFromId(statusList, Number(task.Status))
-        : null;
-
-    const needsCheckedUpdate = localChecked !== wantChecked;
+    const needsCheckedUpdate = localMark !== wantMark;
     const needsLabelUpdate =
       isFrontmatterTodoMarker(markerId) &&
       Boolean(statusName) &&
@@ -188,7 +206,7 @@ export async function syncNoteCheckboxesFromPm(params: {
         }
       }
     } else if (needsCheckedUpdate) {
-      next = setCheckboxCheckedByMarker(body, markerId, wantChecked);
+      next = setCheckboxMarkByMarker(body, markerId, wantMark);
     }
 
     if (next == null) {

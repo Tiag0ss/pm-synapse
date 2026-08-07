@@ -306,9 +306,12 @@ export type PmTaskStatusValue = {
   Id: number;
   Name?: string | null;
   Label?: string | null;
+  /** PM column alias — normalized onto Name */
+  StatusName?: string | null;
   IsDefault?: number | boolean | null;
   IsClosed?: number | boolean | null;
   IsCancelled?: number | boolean | null;
+  IsInProgress?: number | boolean | null;
 };
 
 export async function fetchPmTaskStatuses(userId: number, organizationId: number) {
@@ -328,11 +331,15 @@ export async function fetchPmTaskPriorities(userId: number, organizationId: numb
 export type PmTaskSummary = {
   Id: number;
   Status?: number | null;
+  /** Present on GET /api/tasks/project/:id */
+  StatusName?: string | null;
   StatusIsClosed?: number | boolean | null;
   StatusIsCancelled?: number | boolean | null;
+  /** Present on some task detail endpoints; optional on project list */
+  StatusIsInProgress?: number | boolean | null;
 };
 
-/** Fetch tasks for a PM project (includes StatusIsClosed / StatusIsCancelled). */
+/** Fetch tasks for a PM project (includes StatusIsClosed / StatusIsCancelled / StatusName). */
 export async function fetchPmProjectTasks(userId: number, projectId: number) {
   return pmFetch<{ tasks?: PmTaskSummary[]; success?: boolean }>(
     userId,
@@ -344,13 +351,70 @@ export function isPmTaskDone(task: PmTaskSummary): boolean {
   return Number(task.StatusIsClosed || 0) === 1 || Number(task.StatusIsCancelled || 0) === 1;
 }
 
+/** True when Planner marks the status as in-progress (flag or name). */
+export function isPmTaskInProgress(
+  task: PmTaskSummary,
+  statusList?: PmTaskStatusValue[] | null
+): boolean {
+  if (isPmTaskDone(task)) return false;
+  if (Number(task.StatusIsInProgress || 0) === 1) return true;
+  if (statusList && task.Status != null) {
+    const row = statusList.find((s) => Number(s.Id) === Number(task.Status));
+    if (row && Number(row.IsInProgress || 0) === 1) return true;
+  }
+  const name =
+    String(task.StatusName || '').trim() ||
+    (statusList ? statusNameFromId(statusList, task.Status) : null) ||
+    '';
+  return isPmStatusNameInProgress(name);
+}
+
+export function isPmStatusNameInProgress(statusName: string | null | undefined): boolean {
+  const n = String(statusName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
+  if (!n) return false;
+  return (
+    n === 'in progress' ||
+    n === 'inprogress' ||
+    n === 'doing' ||
+    n === 'wip' ||
+    n === 'started' ||
+    n === 'working' ||
+    n === 'active' ||
+    n.includes('in progress')
+  );
+}
+
 export function normalizePmTaskStatusList(data: unknown): PmTaskStatusValue[] {
-  const nested = data as { statuses?: PmTaskStatusValue[]; data?: PmTaskStatusValue[] } | null;
-  const list =
+  const nested = data as { statuses?: unknown[]; data?: unknown[] } | null;
+  const raw =
     (nested && Array.isArray(nested.statuses) && nested.statuses) ||
     (nested && Array.isArray(nested.data) && nested.data) ||
-    (Array.isArray(data) ? (data as PmTaskStatusValue[]) : []);
-  return list.filter((s) => s && Number.isFinite(Number(s.Id)));
+    (Array.isArray(data) ? data : []);
+  const out: PmTaskStatusValue[] = [];
+  for (const row of raw) {
+    const s = row as Record<string, unknown>;
+    const Id = Number(s.Id ?? s.id);
+    if (!Number.isFinite(Id)) continue;
+    const StatusName = s.StatusName != null ? String(s.StatusName) : null;
+    const Name =
+      (s.Name != null ? String(s.Name) : null) ||
+      StatusName ||
+      (s.Label != null ? String(s.Label) : null);
+    out.push({
+      Id,
+      Name: Name ?? undefined,
+      Label: s.Label != null ? String(s.Label) : Name ?? undefined,
+      StatusName: StatusName ?? undefined,
+      IsDefault: s.IsDefault as number | boolean | null | undefined,
+      IsClosed: s.IsClosed as number | boolean | null | undefined,
+      IsCancelled: s.IsCancelled as number | boolean | null | undefined,
+      IsInProgress: s.IsInProgress as number | boolean | null | undefined,
+    });
+  }
+  return out;
 }
 
 export function statusNameFromId(
@@ -360,7 +424,7 @@ export function statusNameFromId(
   if (statusId == null || !Number.isFinite(Number(statusId))) return null;
   const row = statusList.find((s) => Number(s.Id) === Number(statusId));
   if (!row) return null;
-  const name = String(row.Name || row.Label || '').trim();
+  const name = String(row.Name || row.StatusName || row.Label || '').trim();
   return name || null;
 }
 
@@ -376,7 +440,7 @@ export function resolvePmTaskStatusId(
   const text = String(opts.statusText || '').trim().toLowerCase();
   if (text) {
     const byName = statusList.find((s) => {
-      const n = String(s.Name || '').trim().toLowerCase();
+      const n = String(s.Name || s.StatusName || '').trim().toLowerCase();
       const l = String(s.Label || '').trim().toLowerCase();
       return (n && n === text) || (l && l === text);
     });

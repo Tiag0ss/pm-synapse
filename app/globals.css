@@ -374,6 +374,31 @@ a:hover { text-decoration: underline; }
 .synapse-md-preview li:has(> p > input[type="checkbox"]:checked) {
   color: var(--muted);
 }
+
+/* Partial / In Progress — markdown `[-]` */
+.synapse-md-preview li.task-list-item-partial > input[type="checkbox"],
+.synapse-md-preview li.task-list-item-partial > p > input[type="checkbox"],
+.synapse-md-preview input.synapse-cb-partial[type="checkbox"] {
+  background: color-mix(in srgb, #f59e0b 28%, transparent) !important;
+  border-color: color-mix(in srgb, #fbbf24 70%, transparent) !important;
+}
+.synapse-md-preview li.task-list-item-partial > input[type="checkbox"]::after,
+.synapse-md-preview li.task-list-item-partial > p > input[type="checkbox"]::after,
+.synapse-md-preview input.synapse-cb-partial[type="checkbox"]::after {
+  content: "−";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -54%);
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #fde68a;
+  border: none;
+  width: auto;
+  height: auto;
+}
+
 .synapse-md-preview a.synapse-open-planner {
   display: inline-block;
   margin-left: 0.35rem;

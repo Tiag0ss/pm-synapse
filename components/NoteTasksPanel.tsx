@@ -22,6 +22,7 @@ interface NoteTaskItem {
   index: number;
   text: string;
   checked: boolean;
+  partial: boolean;
   markerId: string | null;
   indent: number;
   source: 'checkbox' | 'frontmatter';
@@ -57,6 +58,10 @@ interface NoteTasksPanelProps {
   linkableVaults?: LinkableVaultNotes[];
   onOpenNote?: (noteId: number) => void;
   onOpenCrossVaultNote?: (vaultId: number, noteId: number) => void;
+  /** Share Planner links with the editor so it does not re-fetch /checkboxes. */
+  onPlannerLinksChange?: (
+    links: Array<{ markerId: string | null; openUrl: string | null; pmTaskId: number | null }>
+  ) => void;
 }
 
 export default function NoteTasksPanel({
@@ -75,6 +80,7 @@ export default function NoteTasksPanel({
   linkableVaults = [],
   onOpenNote,
   onOpenCrossVaultNote,
+  onPlannerLinksChange,
 }: NoteTasksPanelProps) {
   const [items, setItems] = useState<NoteTaskItem[]>([]);
   const [notePmTaskId, setNotePmTaskId] = useState<number | null>(null);
@@ -114,6 +120,7 @@ export default function NoteTasksPanel({
             index: number;
             text: string;
             checked: boolean;
+            partial?: boolean;
             markerId: string | null;
             indent?: number;
             source?: 'checkbox' | 'frontmatter';
@@ -126,6 +133,7 @@ export default function NoteTasksPanel({
             index: b.index,
             text: b.text,
             checked: b.checked,
+            partial: Boolean(b.partial),
             markerId: b.markerId,
             indent: typeof b.indent === 'number' ? b.indent : 0,
             source:
@@ -141,6 +149,15 @@ export default function NoteTasksPanel({
                 : null,
             pmTaskId: b.pmTaskId,
             openUrl: b.openUrl,
+          })
+        )
+      );
+      onPlannerLinksChange?.(
+        list.map(
+          (b: { markerId: string | null; openUrl: string | null; pmTaskId: number | null }) => ({
+            markerId: b.markerId,
+            openUrl: b.openUrl,
+            pmTaskId: b.pmTaskId,
           })
         )
       );
@@ -177,6 +194,7 @@ export default function NoteTasksPanel({
         index: b.index,
         text: b.text,
         checked: b.checked,
+        partial: Boolean(b.partial),
         markerId: b.markerId,
         indent: b.indent,
         source: b.source,
@@ -188,8 +206,9 @@ export default function NoteTasksPanel({
         openUrl: null,
       }))
     );
+    onPlannerLinksChange?.([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- body only used as API failure fallback
-  }, [vaultId, noteId, applyBodyFromServer, onStatus]);
+  }, [vaultId, noteId, applyBodyFromServer, onStatus, onPlannerLinksChange]);
 
   useEffect(() => {
     void load();
@@ -227,6 +246,7 @@ export default function NoteTasksPanel({
           index: b.index,
           text: b.text,
           checked: b.checked,
+          partial: Boolean(b.partial),
           markerId: b.markerId || old?.markerId || null,
           indent: b.indent,
           source: b.source,
@@ -640,7 +660,9 @@ export default function NoteTasksPanel({
 
       {items.length === 0 ? (
         <p className="text-[11px] text-[var(--muted)]">
-          Add <code className="text-[var(--accent-soft)]">- [ ]</code> lines or YAML{' '}
+          Add <code className="text-[var(--accent-soft)]">- [ ]</code> /{' '}
+          <code className="text-[var(--accent-soft)]">[-]</code> /{' '}
+          <code className="text-[var(--accent-soft)]">[x]</code> lines or YAML{' '}
           <code className="text-[var(--accent-soft)]">todos:</code> for tasks. Indent nested
           checkboxes to create Planner subtasks.
         </p>
@@ -659,20 +681,24 @@ export default function NoteTasksPanel({
                 className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
                   item.checked
                     ? 'border-emerald-400/60 bg-emerald-500/25 text-emerald-200'
-                    : 'border-[var(--border-strong)] text-transparent hover:border-[var(--accent)]'
+                    : item.partial
+                      ? 'border-amber-400/60 bg-amber-500/25 text-amber-100'
+                      : 'border-[var(--border-strong)] text-transparent hover:border-[var(--accent)]'
                 }`}
                 title={
                   readOnly
                     ? item.checked
                       ? 'Done'
-                      : 'Open'
+                      : item.partial
+                        ? 'In progress'
+                        : 'Open'
                     : item.checked
                       ? 'Mark as open'
                       : 'Mark as done'
                 }
                 aria-label={item.checked ? 'Mark as open' : 'Mark as done'}
               >
-                ✓
+                {item.partial && !item.checked ? '−' : '✓'}
               </button>
               {item.source === 'frontmatter' && (
                 <span

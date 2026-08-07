@@ -1,9 +1,16 @@
 export const CHECKBOX_MARKER_RE = /<!--\s*synapse:cb:([a-zA-Z0-9_-]+)\s*-->/;
 
+/** GFM-style box mark: open, done, or partial (In Progress / stub). */
+export type CheckboxMark = ' ' | 'x' | '-';
+
 export interface ParsedCheckbox {
   /** 0-based index among checkbox lines in the document */
   index: number;
   checked: boolean;
+  /** True when markdown uses `[-]` (partial / in progress). */
+  partial: boolean;
+  /** Raw mark character inside `[…]`. */
+  mark: CheckboxMark;
   text: string;
   markerId: string | null;
   lineIndex: number;
@@ -12,7 +19,7 @@ export interface ParsedCheckbox {
   indent: number;
 }
 
-const LINE_RE = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/;
+const LINE_RE = /^(\s*)[-*+]\s+\[([ xX\-])\]\s+(.*)$/;
 
 function newMarkerId(): string {
   return `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -20,6 +27,17 @@ function newMarkerId(): string {
 
 export function leadingIndentWidth(leadingWs: string): number {
   return String(leadingWs || '').replace(/\t/g, '  ').length;
+}
+
+export function normalizeCheckboxMark(raw: string): CheckboxMark {
+  const c = String(raw || '').trim().toLowerCase();
+  if (c === 'x') return 'x';
+  if (c === '-') return '-';
+  return ' ';
+}
+
+export function markFromChecked(checked: boolean): CheckboxMark {
+  return checked ? 'x' : ' ';
 }
 
 export function parseCheckboxes(markdown: string): ParsedCheckbox[] {
@@ -33,9 +51,12 @@ export function parseCheckboxes(markdown: string): ParsedCheckbox[] {
     const rest = m[3];
     const markerMatch = rest.match(CHECKBOX_MARKER_RE);
     const text = rest.replace(CHECKBOX_MARKER_RE, '').trim();
+    const mark = normalizeCheckboxMark(m[2]);
     out.push({
       index,
-      checked: m[2].toLowerCase() === 'x',
+      checked: mark === 'x',
+      partial: mark === '-',
+      mark,
       text,
       markerId: markerMatch?.[1] || null,
       lineIndex,
@@ -71,20 +92,45 @@ export function ensureCheckboxMarker(
   return null;
 }
 
+export function setCheckboxMarkByMarker(
+  markdown: string,
+  markerId: string,
+  mark: CheckboxMark
+): string | null {
+  const lines = (markdown || '').replace(/\r\n/g, '\n').split('\n');
+  const needle = `<!--synapse:cb:${markerId}-->`;
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].includes(needle)) continue;
+    const m = lines[i].match(LINE_RE);
+    if (!m) continue;
+    const rest = m[3];
+    lines[i] = `${m[1]}- [${mark}] ${rest}`;
+    return lines.join('\n');
+  }
+  return null;
+}
+
 export function setCheckboxCheckedByMarker(
   markdown: string,
   markerId: string,
   checked: boolean
 ): string | null {
+  return setCheckboxMarkByMarker(markdown, markerId, markFromChecked(checked));
+}
+
+export function setCheckboxMarkByIndex(
+  markdown: string,
+  checkboxIndex: number,
+  mark: CheckboxMark
+): string | null {
   const lines = (markdown || '').replace(/\r\n/g, '\n').split('\n');
-  const mark = `<!--synapse:cb:${markerId}-->`;
+  let seen = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (!lines[i].includes(mark)) continue;
     const m = lines[i].match(LINE_RE);
     if (!m) continue;
-    const box = checked ? 'x' : ' ';
-    const rest = m[3];
-    lines[i] = `${m[1]}- [${box}] ${rest}`;
+    seen += 1;
+    if (seen !== checkboxIndex) continue;
+    lines[i] = `${m[1]}- [${mark}] ${m[3]}`;
     return lines.join('\n');
   }
   return null;
@@ -95,18 +141,7 @@ export function setCheckboxCheckedByIndex(
   checkboxIndex: number,
   checked: boolean
 ): string | null {
-  const lines = (markdown || '').replace(/\r\n/g, '\n').split('\n');
-  let seen = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(LINE_RE);
-    if (!m) continue;
-    seen += 1;
-    if (seen !== checkboxIndex) continue;
-    const box = checked ? 'x' : ' ';
-    lines[i] = `${m[1]}- [${box}] ${m[3]}`;
-    return lines.join('\n');
-  }
-  return null;
+  return setCheckboxMarkByIndex(markdown, checkboxIndex, markFromChecked(checked));
 }
 
 export function titleToPath(title: string): string {

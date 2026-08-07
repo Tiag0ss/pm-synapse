@@ -182,6 +182,10 @@ export default function VaultWorkspacePage() {
   const [zipOverwriteOpen, setZipOverwriteOpen] = useState(false);
   const [pendingZipBase64, setPendingZipBase64] = useState<string | null>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
+  /** Shared with editor preview — filled by NoteTasksPanel (single /checkboxes fetch). */
+  const [plannerLinks, setPlannerLinks] = useState<
+    Array<{ markerId: string | null; openUrl: string | null; pmTaskId?: number | null }>
+  >([]);
   const [editorInsertRequest, setEditorInsertRequest] = useState<{
     id: number;
     snippet: string;
@@ -298,6 +302,7 @@ export default function VaultWorkspacePage() {
     const n = data.data;
     skipNextAutosaveRef.current = true;
     setSelectedId(n.Id);
+    setPlannerLinks([]);
     setTitle(n.Title);
     setBody(n.BodyMarkdown || '');
     setVisibility(n.Visibility || '');
@@ -1368,6 +1373,7 @@ export default function VaultWorkspacePage() {
                 noteId={selectedId}
                 notes={noteIndex}
                 linkableVaults={linkableVaults}
+                plannerLinks={plannerLinks}
                 onOpenNote={(id) => void openNote(id)}
                 onOpenCrossVaultNote={(targetVaultId, noteId) => {
                   router.push(`/vaults/${targetVaultId}?note=${noteId}`);
@@ -1486,6 +1492,7 @@ export default function VaultWorkspacePage() {
                   onCommitBody={commitLocalBody}
                   onEnsureSaved={ensureNoteSaved}
                   onStatus={setStatus}
+                  onPlannerLinksChange={setPlannerLinks}
                   compact
                   readOnly={!canEdit}
                   notes={noteIndex}
