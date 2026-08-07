@@ -17,6 +17,7 @@ type Profile = {
     enabled: boolean;
     ssoToken: boolean;
     personalApiKey: { configured: boolean; prefix: string | null };
+    autoAssignOnCreate?: boolean;
   };
 };
 
@@ -34,6 +35,7 @@ export default function ProfilePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pmApiKey, setPmApiKey] = useState('');
   const [clearPmApiKey, setClearPmApiKey] = useState(false);
+  const [autoAssignOnCreate, setAutoAssignOnCreate] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -51,6 +53,7 @@ export default function ProfilePage() {
       setEmail(p.email);
       setPmApiKey('');
       setClearPmApiKey(false);
+      setAutoAssignOnCreate(Boolean(p.pmIntegration?.autoAssignOnCreate));
     } catch {
       setError('Failed to load profile');
     } finally {
@@ -89,6 +92,36 @@ export default function ProfilePage() {
         return;
       }
       setStatus('Profile saved');
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveAutoAssign = async (next: boolean) => {
+    if (!profile) return;
+    setBusy(true);
+    setError('');
+    setStatus('');
+    setAutoAssignOnCreate(next);
+    try {
+      const res = await fetch('/api/auth/me', {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pmAutoAssignOnCreate: next }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setAutoAssignOnCreate(Boolean(profile.pmIntegration?.autoAssignOnCreate));
+        setError(json.message || 'Failed to save auto-assign preference');
+        return;
+      }
+      setStatus(
+        next
+          ? 'New Planner tasks will be assigned to you'
+          : 'New Planner tasks stay unassigned'
+      );
       await load();
     } finally {
       setBusy(false);
@@ -347,6 +380,28 @@ export default function ProfilePage() {
                 }}
               />
               Clear stored personal token
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={autoAssignOnCreate}
+                disabled={busy}
+                onChange={(e) => void saveAutoAssign(e.target.checked)}
+              />
+              <span>
+                <span className="text-[var(--text)]">Auto-assign me on create</span>
+                <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                  When enabled, tasks created from Synapse are assigned to your linked Planner
+                  user (SSO / PM user id). Off = leave Unassigned.
+                  {profile.pmUserId == null ? (
+                    <span className="mt-1 block text-amber-200/90">
+                      No linked Planner user id yet — reconnect SSO (or ask an admin to sync PM
+                      users) so assignment can resolve.
+                    </span>
+                  ) : null}
+                </span>
+              </span>
             </label>
             <div className="flex flex-wrap gap-2">
               <button

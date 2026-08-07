@@ -395,6 +395,50 @@ export async function createPmProject(
   });
 }
 
+/** Read unsigned JWT payload `userId` (SSO access tokens only; not `pt_…`). */
+function peekJwtUserId(token: string): number | null {
+  if (!token || token.startsWith('pt_')) return null;
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8')) as {
+      userId?: unknown;
+    };
+    const id = Number(payload.userId);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * When the user enabled Profile → auto-assign, return their PM user id for `assignedTo`.
+ * Prefer `Users.PmUserId`; fall back to SSO JWT `userId` if linked session exists.
+ */
+export async function resolveAutoAssignPmUserId(synapseUserId: number): Promise<number | null> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT PmUserId, PmAutoAssignOnCreate FROM Users WHERE Id = ? LIMIT 1',
+    [synapseUserId]
+  );
+  const row = rows[0];
+  if (!row || Number(row.PmAutoAssignOnCreate) !== 1) return null;
+
+  if (row.PmUserId != null && Number(row.PmUserId) > 0) {
+    return Number(row.PmUserId);
+  }
+
+  const sso = await getSsoAccessToken(synapseUserId);
+  if (sso) {
+    const fromJwt = peekJwtUserId(sso);
+    if (fromJwt != null) return fromJwt;
+  }
+
+  logger.warn('PM auto-assign enabled but no PmUserId for Synapse user', { synapseUserId });
+  return null;
+}
+
 export async function createPmTask(
   userId: number,
   body: {
@@ -405,6 +449,8 @@ export async function createPmTask(
     priority: number;
     /** When set, creates a Planner subtask under this parent task */
     parentTaskId?: number | null;
+    /** PM user id to assign; if omitted, may auto-assign from profile preference */
+    assignedTo?: number | null;
     estimatedHours?: number;
     unscheduledWork?: boolean;
     synapseVaultId?: number;
@@ -429,6 +475,12 @@ export async function createPmTask(
   if (body.synapseNoteId != null) payload.synapseNoteId = body.synapseNoteId;
   if (body.synapseMarkerId != null) payload.synapseMarkerId = body.synapseMarkerId;
   if (body.synapseNoteUrl != null) payload.synapseNoteUrl = body.synapseNoteUrl;
+
+  const assignedTo =
+    body.assignedTo != null && Number.isFinite(body.assignedTo) && body.assignedTo > 0
+      ? Number(body.assignedTo)
+      : await resolveAutoAssignPmUserId(userId);
+  if (assignedTo != null) payload.assignedTo = assignedTo;
 
   return pmFetch<{ taskId?: number; id?: number; data?: { Id?: number } }>(userId, '/api/tasks', {
     method: 'POST',

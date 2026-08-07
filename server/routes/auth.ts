@@ -72,14 +72,49 @@ type UserRow = {
   IsAdmin: number;
   IsActive: number;
   SessionVersion: number;
+  PmAutoAssignOnCreate: number;
 };
 
 async function fetchUserById(id: number): Promise<UserRow | null> {
   const [rows] = await pool.execute<RowDataPacket[]>(
-    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive, SessionVersion FROM Users WHERE Id = ?`,
+    `SELECT Id, Username, Email, PasswordHash, PmUserId, IsAdmin, IsActive, SessionVersion,
+            COALESCE(PmAutoAssignOnCreate, 0) AS PmAutoAssignOnCreate
+     FROM Users WHERE Id = ?`,
     [id]
   );
   return (rows[0] as UserRow) || null;
+}
+
+function profilePayload(
+  row: UserRow,
+  extras: {
+    ssoToken: boolean;
+    personalConfigured: boolean;
+    personalPrefix: string | null;
+    pmEnabled: boolean;
+  }
+) {
+  return {
+    userId: Number(row.Id),
+    username: String(row.Username),
+    email: String(row.Email),
+    isAdmin: Number(row.IsAdmin) === 1,
+    pmUserId: row.PmUserId != null ? Number(row.PmUserId) : null,
+    hasPassword: Boolean(row.PasswordHash),
+    authMethods: {
+      local: Boolean(row.PasswordHash),
+      sso: row.PmUserId != null,
+    },
+    pmIntegration: {
+      enabled: extras.pmEnabled,
+      ssoToken: extras.ssoToken,
+      personalApiKey: {
+        configured: extras.personalConfigured,
+        prefix: extras.personalPrefix,
+      },
+      autoAssignOnCreate: Number(row.PmAutoAssignOnCreate) === 1,
+    },
+  };
 }
 
 function toSessionUser(row: UserRow): SynapseUser {
@@ -465,26 +500,12 @@ router.get('/me', authenticateSession, async (req: AuthRequest, res: Response) =
     ]);
     res.json({
       success: true,
-      data: {
-        userId: Number(row.Id),
-        username: String(row.Username),
-        email: String(row.Email),
-        isAdmin: Number(row.IsAdmin) === 1,
-        pmUserId: row.PmUserId != null ? Number(row.PmUserId) : null,
-        hasPassword: Boolean(row.PasswordHash),
-        authMethods: {
-          local: Boolean(row.PasswordHash),
-          sso: row.PmUserId != null,
-        },
-        pmIntegration: {
-          enabled: pmEnabled,
-          ssoToken,
-          personalApiKey: {
-            configured: personalConfigured,
-            prefix: personalPrefix,
-          },
-        },
-      },
+      data: profilePayload(row as UserRow, {
+        ssoToken,
+        personalConfigured,
+        personalPrefix,
+        pmEnabled,
+      }),
     });
   } catch (error) {
     logger.error('/me failed', { error });
@@ -509,6 +530,8 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
       newPassword: z.string().min(minLen).max(200).optional(),
       /** omit = leave unchanged; empty string/null = clear */
       pmApiKey: z.string().max(512).nullable().optional(),
+      /** Assign creator when pushing tasks to Planner */
+      pmAutoAssignOnCreate: z.boolean().optional(),
     });
     const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
@@ -564,6 +587,11 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
       sets.push('SessionVersion = SessionVersion + 1');
     }
 
+    if (parsed.data.pmAutoAssignOnCreate !== undefined) {
+      sets.push('PmAutoAssignOnCreate = ?');
+      params.push(parsed.data.pmAutoAssignOnCreate ? 1 : 0);
+    }
+
     let pmKeyChanged = false;
     if (parsed.data.pmApiKey !== undefined) {
       await setPersonalPmApiKey(
@@ -610,26 +638,12 @@ router.patch('/me', authenticateSession, async (req: AuthRequest, res: Response)
     res.json({
       success: true,
       message: 'Profile updated',
-      data: {
-        userId: user.userId,
-        username: user.username,
-        email: user.email,
-        isAdmin: user.isAdmin,
-        pmUserId: updated.PmUserId != null ? Number(updated.PmUserId) : null,
-        hasPassword: Boolean(updated.PasswordHash),
-        authMethods: {
-          local: Boolean(updated.PasswordHash),
-          sso: updated.PmUserId != null,
-        },
-        pmIntegration: {
-          enabled: pmEnabled,
-          ssoToken,
-          personalApiKey: {
-            configured: personalConfigured,
-            prefix: personalPrefix,
-          },
-        },
-      },
+      data: profilePayload(updated, {
+        ssoToken,
+        personalConfigured,
+        personalPrefix,
+        pmEnabled,
+      }),
     });
   } catch (error) {
     logger.error('PATCH /me failed', { error });

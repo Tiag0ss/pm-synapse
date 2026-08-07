@@ -1,0 +1,5 @@
+# Synapse — only login (/) and public wikis (/w…) may be crawled
+User-agent: *
+Allow: /$
+Allow: /w
+Disallow: /
