@@ -17,6 +17,8 @@ export function sanitizeSynapseHtml(html: string): string {
       'section',
       'input',
       'button',
+      // marked GFM strikethrough (`~~text~~`) emits <del>; defaults only allow <s>
+      'del',
       'svg',
       'path',
       'rect',

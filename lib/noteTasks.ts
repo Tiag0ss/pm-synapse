@@ -2,7 +2,7 @@
  * Unified note task candidates: markdown checkboxes + YAML frontmatter todos.
  * Keep in sync with server/services/noteTasks.ts
  */
-import { parseCheckboxes, type ParsedCheckbox } from '@/lib/checkboxes';
+import { parseCheckboxes, isStruckMarkdownText, withStruckMarkdownText, type ParsedCheckbox } from '@/lib/checkboxes';
 import { frontmatterTodoMarkerId, parseFrontmatterTodos } from '@/lib/frontmatter';
 import { stripTrailingEstimateMeta, type TaskEstimateMeta } from '@/lib/taskEstimate';
 
@@ -20,12 +20,15 @@ export type NoteTaskCandidate = ParsedCheckbox & {
   linkedNote?: string | null;
   /** Frontmatter `category:` or checkbox `(2h, Design)` category token */
   category?: string | null;
+  /** Planner Cancelled → label wrapped in `~~…~~` or cancelled status */
+  cancelled?: boolean;
 };
 
 /** Markdown checkboxes first, then frontmatter todos (indent 0). */
 export function listNoteTaskCandidates(markdown: string): NoteTaskCandidate[] {
   const boxes = parseCheckboxes(markdown).map((b) => {
-    const { text: taskText, meta } = stripTrailingEstimateMeta(b.text);
+    const plain = withStruckMarkdownText(b.text, false);
+    const { text: taskText, meta } = stripTrailingEstimateMeta(plain);
     const estimate =
       meta.estimatedHours != null || meta.unscheduledWork === true
         ? {
@@ -40,28 +43,39 @@ export function listNoteTaskCandidates(markdown: string): NoteTaskCandidate[] {
       taskText,
       estimate,
       category: meta.category || null,
+      cancelled: isStruckMarkdownText(b.text),
     };
   });
   const startIndex = boxes.length;
   const todos = parseFrontmatterTodos(markdown);
-  const fmTasks: NoteTaskCandidate[] = todos.map((t, i) => ({
-    index: startIndex + i,
-    checked: t.checked,
-    partial: !t.checked && /in\s*progress|doing|wip|started|working|active/i.test(t.status),
-    mark: t.checked ? ('x' as const) : /in\s*progress|doing|wip|started|working|active/i.test(t.status) ? ('-' as const) : (' ' as const),
-    text: t.content,
-    displayText: t.content,
-    taskText: t.content,
-    markerId: t.id ? frontmatterTodoMarkerId(t.id) : null,
-    lineIndex: -1,
-    rawLine: '',
-    indent: 0,
-    source: 'frontmatter' as const,
-    statusText: t.status,
-    estimate: t.estimate,
-    linkedNote: t.noteTarget,
-    category: t.category,
-  }));
+  const fmTasks: NoteTaskCandidate[] = todos.map((t, i) => {
+    const cancelledStatus = /cancell?ed/i.test(t.status);
+    const plain = withStruckMarkdownText(t.content, false);
+    const cancelled = cancelledStatus || isStruckMarkdownText(t.content);
+    return {
+      index: startIndex + i,
+      checked: t.checked,
+      partial: !t.checked && /in\s*progress|doing|wip|started|working|active/i.test(t.status),
+      mark: t.checked
+        ? ('x' as const)
+        : /in\s*progress|doing|wip|started|working|active/i.test(t.status)
+          ? ('-' as const)
+          : (' ' as const),
+      text: t.content,
+      displayText: t.content,
+      taskText: plain,
+      markerId: t.id ? frontmatterTodoMarkerId(t.id) : null,
+      lineIndex: -1,
+      rawLine: '',
+      indent: 0,
+      source: 'frontmatter' as const,
+      statusText: t.status,
+      estimate: t.estimate,
+      linkedNote: t.noteTarget,
+      category: t.category,
+      cancelled,
+    };
+  });
   return [...boxes, ...fmTasks];
 }
 

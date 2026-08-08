@@ -94,9 +94,11 @@ Used when creating projects/tasks and mapping checkbox checked → closed status
 
 Response shapes: `{ statuses: […] }` or `{ priorities: […] }` or raw arrays.
 
-**Done rule (Synapse):** `StatusIsClosed === 1` **or** `StatusIsCancelled === 1` ⇒ checkbox checked / YAML todo treated as done.
+**Done rule (Synapse):** `StatusIsClosed === 1` ⇒ checkbox checked `[x]` / YAML todo treated as done.
 
-**In progress rule (Synapse):** not done, and (`StatusIsInProgress === 1` **or** catalog `IsInProgress` **or** status name matches In Progress / doing / wip / …) ⇒ markdown `[-]` (partial).
+**Cancelled rule (Synapse):** `StatusIsCancelled === 1` (or catalog / name) ⇒ checkbox checked `[x]` **and** label wrapped in `~~…~~` (strikethrough). Leaving Cancelled unwraps the strike.
+
+**In progress rule (Synapse):** not done/cancelled, and (`StatusIsInProgress === 1` **or** catalog `IsInProgress` **or** status name matches In Progress / doing / wip / …) ⇒ markdown `[-]` (partial).
 
 **Status name match (Synapse):** On create, if a YAML todo `status` string matches a task status `StatusName`/`Name` (case-insensitive), Synapse uses that status `Id`. Otherwise falls back to default open vs closed/cancelled by the done rule.
 
@@ -138,8 +140,8 @@ Task fields Synapse uses:
 | Field | Use |
 |-------|-----|
 | `Id` | Link / deep-link |
-| `StatusIsClosed` | Pull sync → checkbox / done |
-| `StatusIsCancelled` | Pull sync → checkbox / done |
+| `StatusIsClosed` | Pull sync → checkbox `[x]` / done |
+| `StatusIsCancelled` | Pull sync → checkbox `[x]` + `~~label~~` |
 | `StatusName` | Pull sync → YAML todo status + `[-]` when In Progress |
 | `Status` | Pull sync → YAML todo `status` name (via status catalog) |
 

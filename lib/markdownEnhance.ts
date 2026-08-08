@@ -161,7 +161,7 @@ export function preprocessCallouts(md: string): string {
     let bodyHtml = '';
     if (bodyMd) {
       try {
-        bodyHtml = marked.parse(bodyMd, { async: false, gfm: true }) as string;
+        bodyHtml = marked.parse(bodyMd, { async: false, gfm: true, breaks: true }) as string;
       } catch {
         bodyHtml = `<p>${escapeHtml(bodyMd)}</p>`;
       }

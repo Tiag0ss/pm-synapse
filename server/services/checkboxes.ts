@@ -44,6 +44,24 @@ export function markFromChecked(checked: boolean): CheckboxMark {
   return checked ? 'x' : ' ';
 }
 
+/** True when the whole label is wrapped in GFM strikethrough `~~…~~`. */
+export function isStruckMarkdownText(text: string): boolean {
+  const t = String(text || '').trim();
+  return t.length >= 4 && t.startsWith('~~') && t.endsWith('~~');
+}
+
+/** Wrap or unwrap a checkbox/todo label for Planner Cancelled → strike. */
+export function withStruckMarkdownText(text: string, struck: boolean): string {
+  const t = String(text || '').trim();
+  if (struck) {
+    if (!t) return t;
+    if (isStruckMarkdownText(t)) return t;
+    return `~~${t}~~`;
+  }
+  if (isStruckMarkdownText(t)) return t.slice(2, -2).trim();
+  return t;
+}
+
 export function parseCheckboxes(markdown: string): ParsedCheckbox[] {
   const lines = (markdown || '').replace(/\r\n/g, '\n').split('\n');
   const out: ParsedCheckbox[] = [];
@@ -100,13 +118,28 @@ export function setCheckboxMarkByMarker(
   markerId: string,
   mark: CheckboxMark
 ): string | null {
+  return setCheckboxLineByMarker(markdown, markerId, { mark });
+}
+
+/** Update mark and/or label text for a checkbox line (keeps `<!--synapse:cb:…-->`). */
+export function setCheckboxLineByMarker(
+  markdown: string,
+  markerId: string,
+  opts: { mark?: CheckboxMark; text?: string }
+): string | null {
   const lines = (markdown || '').replace(/\r\n/g, '\n').split('\n');
   const needle = `<!--synapse:cb:${markerId}-->`;
   for (let i = 0; i < lines.length; i++) {
     if (!lines[i].includes(needle)) continue;
     const m = lines[i].match(LINE_RE);
     if (!m) continue;
-    lines[i] = `${m[1]}- [${mark}] ${m[3]}`;
+    const rest = m[3];
+    const mark = opts.mark ?? normalizeCheckboxMark(m[2]);
+    const text =
+      opts.text != null
+        ? String(opts.text).trim()
+        : rest.replace(CHECKBOX_MARKER_RE, '').trim();
+    lines[i] = `${m[1]}- [${mark}] ${text} <!--synapse:cb:${markerId}-->`;
     return lines.join('\n');
   }
   return null;

@@ -23,6 +23,7 @@ interface NoteTaskItem {
   text: string;
   checked: boolean;
   partial: boolean;
+  cancelled: boolean;
   markerId: string | null;
   indent: number;
   source: 'checkbox' | 'frontmatter';
@@ -121,6 +122,7 @@ export default function NoteTasksPanel({
             text: string;
             checked: boolean;
             partial?: boolean;
+            cancelled?: boolean;
             markerId: string | null;
             indent?: number;
             source?: 'checkbox' | 'frontmatter';
@@ -134,6 +136,7 @@ export default function NoteTasksPanel({
             text: b.text,
             checked: b.checked,
             partial: Boolean(b.partial),
+            cancelled: Boolean(b.cancelled),
             markerId: b.markerId,
             indent: typeof b.indent === 'number' ? b.indent : 0,
             source:
@@ -195,6 +198,7 @@ export default function NoteTasksPanel({
         text: b.text,
         checked: b.checked,
         partial: Boolean(b.partial),
+        cancelled: Boolean(b.cancelled),
         markerId: b.markerId,
         indent: b.indent,
         source: b.source,
@@ -247,6 +251,7 @@ export default function NoteTasksPanel({
           text: b.text,
           checked: b.checked,
           partial: Boolean(b.partial),
+          cancelled: Boolean(b.cancelled),
           markerId: b.markerId || old?.markerId || null,
           indent: b.indent,
           source: b.source,
@@ -723,7 +728,11 @@ export default function NoteTasksPanel({
               ) : null}
               <span
                 className={`synapse-task-label min-w-0 flex-1 text-sm leading-snug ${
-                  item.checked ? 'text-[var(--muted)] line-through' : 'text-[var(--text)]'
+                  item.cancelled
+                    ? 'text-[var(--muted)] line-through'
+                    : item.checked
+                      ? 'text-[var(--muted)]'
+                      : 'text-[var(--text)]'
                 }`}
                 onClick={(e) => {
                   const a = (e.target as HTMLElement).closest(

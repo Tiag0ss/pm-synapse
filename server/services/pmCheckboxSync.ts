@@ -1,11 +1,13 @@
 import { pool, RowDataPacket } from '../config/database';
 import {
-  setCheckboxMarkByMarker,
+  setCheckboxLineByMarker,
+  withStruckMarkdownText,
   type CheckboxMark,
 } from './checkboxes';
 import {
   frontmatterTodoIdFromMarker,
   isFrontmatterTodoMarker,
+  setFrontmatterTodoContent,
   setFrontmatterTodoStatus,
   setFrontmatterTodoStatusLabel,
 } from './frontmatter';
@@ -13,6 +15,7 @@ import { listNoteTaskCandidates } from './noteTasks';
 import {
   fetchPmProjectTasks,
   fetchPmTaskStatuses,
+  isPmTaskCancelled,
   isPmTaskDone,
   isPmTaskInProgress,
   normalizePmTaskStatusList,
@@ -156,6 +159,7 @@ export async function syncNoteCheckboxesFromPm(params: {
     }
 
     const wantChecked = isPmTaskDone(task);
+    const wantStruck = isPmTaskCancelled(task, statusList);
     const statusName =
       String(task.StatusName || '').trim() ||
       (statusList && task.Status != null
@@ -178,8 +182,11 @@ export async function syncNoteCheckboxesFromPm(params: {
       : Number(link.Checked)
         ? 'x'
         : ' ';
+    const baseText = withStruckMarkdownText(String(local?.text || ''), false);
+    const wantText = withStruckMarkdownText(baseText, wantStruck);
+    const needsStrikeUpdate = Boolean(local?.text != null && local.text.trim() !== wantText);
 
-    const needsCheckedUpdate = localMark !== wantMark;
+    const needsCheckedUpdate = localMark !== wantMark || needsStrikeUpdate;
     const needsLabelUpdate =
       isFrontmatterTodoMarker(markerId) &&
       Boolean(statusName) &&
@@ -204,9 +211,16 @@ export async function syncNoteCheckboxesFromPm(params: {
         } else {
           next = setFrontmatterTodoStatus(body, todoId, wantChecked);
         }
+        if (next != null && needsStrikeUpdate) {
+          const struck = setFrontmatterTodoContent(next, todoId, wantText);
+          if (struck != null) next = struck;
+        }
       }
     } else if (needsCheckedUpdate) {
-      next = setCheckboxMarkByMarker(body, markerId, wantMark);
+      next = setCheckboxLineByMarker(body, markerId, {
+        mark: wantMark,
+        ...(local ? { text: wantText } : {}),
+      });
     }
 
     if (next == null) {

@@ -1718,6 +1718,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
           text: box.text,
           checked: box.checked,
           partial: Boolean(box.partial),
+          cancelled: Boolean(box.cancelled),
           markerId: box.markerId,
           indent: box.indent,
           source: box.source,

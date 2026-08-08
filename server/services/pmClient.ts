@@ -348,7 +348,37 @@ export async function fetchPmProjectTasks(userId: number, projectId: number) {
 }
 
 export function isPmTaskDone(task: PmTaskSummary): boolean {
-  return Number(task.StatusIsClosed || 0) === 1 || Number(task.StatusIsCancelled || 0) === 1;
+  return isPmTaskClosed(task) || isPmTaskCancelled(task);
+}
+
+export function isPmTaskClosed(task: PmTaskSummary): boolean {
+  return Number(task.StatusIsClosed || 0) === 1;
+}
+
+/** True when Planner marks the task cancelled (flag, catalog, or status name). */
+export function isPmTaskCancelled(
+  task: PmTaskSummary,
+  statusList?: PmTaskStatusValue[] | null
+): boolean {
+  if (Number(task.StatusIsCancelled || 0) === 1) return true;
+  if (statusList && task.Status != null) {
+    const row = statusList.find((s) => Number(s.Id) === Number(task.Status));
+    if (row && Number(row.IsCancelled || 0) === 1) return true;
+  }
+  const name =
+    String(task.StatusName || '').trim() ||
+    (statusList ? statusNameFromId(statusList, task.Status) : null) ||
+    '';
+  return isPmStatusNameCancelled(name);
+}
+
+export function isPmStatusNameCancelled(statusName: string | null | undefined): boolean {
+  const n = String(statusName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
+  if (!n) return false;
+  return n === 'cancelled' || n === 'canceled' || n.includes('cancel');
 }
 
 /** True when Planner marks the status as in-progress (flag or name). */
@@ -356,7 +386,7 @@ export function isPmTaskInProgress(
   task: PmTaskSummary,
   statusList?: PmTaskStatusValue[] | null
 ): boolean {
-  if (isPmTaskDone(task)) return false;
+  if (isPmTaskDone(task) || isPmTaskCancelled(task, statusList)) return false;
   if (Number(task.StatusIsInProgress || 0) === 1) return true;
   if (statusList && task.Status != null) {
     const row = statusList.find((s) => Number(s.Id) === Number(task.Status));

@@ -713,6 +713,28 @@ export function setFrontmatterTodoStatusLabel(
   return stringifyWithFrontmatter(nextData, parsed.body);
 }
 
+/** Set frontmatter todo `content` (e.g. wrap/unwrap `~~…~~` for Cancelled). */
+export function setFrontmatterTodoContent(
+  markdown: string,
+  todoId: string,
+  content: string
+): string | null {
+  const parsed = parseFrontmatter(markdown);
+  if (!parsed.hasFrontmatter || !Array.isArray(parsed.data.todos)) return null;
+
+  const nextContent = String(content || '').trim();
+  if (!nextContent) return null;
+  let found = false;
+  const nextData = rewriteTodosInData(parsed.data, (item) => {
+    if (!isPlainObject(item)) return item;
+    if (String(item.id || '').trim() !== todoId) return item;
+    found = true;
+    return { ...item, content: nextContent };
+  });
+  if (!found) return null;
+  return stringifyWithFrontmatter(nextData, parsed.body);
+}
+
 const TOTAL_HOURS_KEYS = new Set(['totalhours', 'total_hours', 'total']);
 const ESTIMATE_SECTION_KEYS = new Set(['estimate', 'estimates', 'categories', 'categorias']);
 

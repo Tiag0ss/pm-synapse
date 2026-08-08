@@ -129,6 +129,8 @@ const LEGEND_SECTIONS: LegendSection[] = [
       { syntax: '**bold**', meaning: 'Bold' },
       { syntax: '_italic_', meaning: 'Italic' },
       { syntax: '~~strike~~', meaning: 'Strikethrough' },
+      { syntax: 'line ⏎ line', meaning: 'Single Enter → new line in preview' },
+      { syntax: 'line ⏎⏎ line', meaning: 'Blank line → new paragraph' },
       { syntax: '# / ## / ###', meaning: 'Headings' },
       { syntax: '- item', meaning: 'Bullet list' },
       { syntax: '1. item', meaning: 'Numbered list' },
@@ -166,7 +168,8 @@ const LEGEND_SECTIONS: LegendSection[] = [
     title: 'Checkboxes',
     blurb: 'Task list markers in the note body. Linked Planner tasks sync status into these marks.',
     items: [
-      { syntax: '- [x]', meaning: 'Done (closed / cancelled in Planner)' },
+      { syntax: '- [x]', meaning: 'Done (closed in Planner)' },
+      { syntax: '- [x] ~~task~~', meaning: 'Cancelled in Planner (checked + strike)' },
       { syntax: '- [-]', meaning: 'Partial / stub — In Progress in Planner' },
       { syntax: '- [ ]', meaning: 'Not started (open)' },
     ],

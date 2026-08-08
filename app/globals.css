@@ -512,6 +512,12 @@ a:hover { text-decoration: underline; }
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+.synapse-md-preview del,
+.synapse-md-preview s {
+  text-decoration: line-through;
+  text-decoration-thickness: from-font;
+  opacity: 0.85;
+}
 .synapse-md-preview hr {
   border: 0;
   border-top: 1px solid var(--border);

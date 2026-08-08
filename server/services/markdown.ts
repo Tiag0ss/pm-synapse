@@ -324,6 +324,7 @@ export function markdownToSafeHtml(
   const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId), {
     async: false,
     gfm: true,
+    breaks: true,
   }) as string;
   return sanitizeSynapseHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)));
 }
@@ -343,6 +344,7 @@ export function markdownToPmDescriptionHtml(
   const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, [], excludeNoteId), {
     async: false,
     gfm: true,
+    breaks: true,
   }) as string;
   return sanitizeSynapseHtml(postprocessMarkdownHtml(html)).trim();
 }
