@@ -1,12 +1,4 @@
 # >>> PM-ACTIVE-TASK:START
 # Managed by Project Management Kanban extension — do not edit this block by hand.
-# Cursor "Generate commit message" reads .cursorrules (not .cursor/rules).
-When generating a Git commit message for this repository, include ALL of these task references
-(tasks worked on since the last successful commit):
-- Task #1354 - No modal nas tarefas que falta adicionar ao planner em vez de adicionar directamente a tarefa deve também permitir associar tarefas já existentes e deve apenas permitir associar tarefas sem referência ao synapse
-- Task #1355 - Deve ser possível remover a associação de uma tarefa do planner
-- Task #1356 - A manutenção das tarefas deve ser feita no modal de integração com o pm
-Always keep every of these references in the message: Task #1354, Task #1355, Task #1356.
-Prefer starting the subject with the most recently activated task, then briefly describe the staged changes.
-If more than one task is listed, put the others in the subject or body — do not drop any Task #Id.
+# No active PM tasks since the last commit.
 # >>> PM-ACTIVE-TASK:END
