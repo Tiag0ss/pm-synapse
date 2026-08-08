@@ -287,7 +287,7 @@ async function loadProjectTaskIdSet(
   return ids;
 }
 
-async function clearCheckboxPmLink(noteId: number, markerId: string): Promise<void> {
+export async function clearCheckboxPmLink(noteId: number, markerId: string): Promise<void> {
   await pool.execute(
     `UPDATE NoteCheckboxTasks
      SET PmTaskId = NULL, PmProjectId = NULL, PmTaskLinkedAt = NULL
@@ -309,7 +309,7 @@ function findExistingLink(
   return links.find((l) => checkboxTextKey(noteId, l.Text) === key) || null;
 }
 
-async function persistCheckboxLink(params: {
+export async function persistCheckboxLink(params: {
   noteId: number;
   markerId: string;
   text: string;

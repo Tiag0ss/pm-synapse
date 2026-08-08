@@ -106,6 +106,12 @@ Response shapes: `{ statuses: […] }` or `{ priorities: […] }` or raw arrays.
 
 ## Projects
 
+### List
+
+`GET /api/projects?organizationId={organizationId}`
+
+Success: `{ success: true, projects: Project[] }` (or a top-level / `data` array). Synapse uses `Id` and `ProjectName` to offer **cross-project** link targets within the vault’s organization.
+
 ### Create
 
 `POST /api/projects`
@@ -140,10 +146,14 @@ Task fields Synapse uses:
 | Field | Use |
 |-------|-----|
 | `Id` | Link / deep-link |
+| `TaskName` | Link picker labels |
 | `StatusIsClosed` | Pull sync → checkbox `[x]` / done |
 | `StatusIsCancelled` | Pull sync → checkbox `[x]` + `~~label~~` |
 | `StatusName` | Pull sync → YAML todo status + `[-]` when In Progress |
 | `Status` | Pull sync → YAML todo `status` name (via status catalog) |
+| `SynapseVaultId` / `SynapseNoteId` / `SynapseMarkerId` / `SynapseNoteUrl` | Linkability: empty ⇒ may associate; set ⇒ already linked to Synapse |
+
+**Link existing (Synapse):** Only tasks with **no** Synapse refs may be associated. Synapse lists projects via `GET /api/projects?organizationId=` and may link a checkbox to a task in **any** project in that organization (not only the vault’s linked project). Synapse also excludes ids already stored in `NoteCheckboxTasks` / `Notes.PmTaskId`.
 
 ### Create
 
@@ -206,6 +216,14 @@ And optionally backfills (PM uses `COALESCE` so nulls do not clear):
   "synapseNoteUrl": "http://localhost:3010/vaults/1?note=2"
 }
 ```
+
+**Clear Synapse link (unlink):** When Synapse unlinks a checkbox from a Planner task, it sends:
+
+```json
+{ "clearSynapseLink": true }
+```
+
+PM must set `SynapseVaultId`, `SynapseNoteId`, `SynapseMarkerId`, and `SynapseNoteUrl` to NULL. Without this, `COALESCE` would leave stale refs and the task would never reappear as linkable.
 
 ### Deep link into PM UI
 

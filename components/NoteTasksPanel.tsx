@@ -17,6 +17,7 @@ import AiTodosReviewModal, {
   type ExistingTodoSuggestion,
   type ProposedTodoSuggestion,
 } from '@/components/AiTodosReviewModal';
+import LinkOrCreatePmTaskModal from '@/components/LinkOrCreatePmTaskModal';
 
 interface NoteTaskItem {
   index: number;
@@ -59,6 +60,8 @@ interface NoteTasksPanelProps {
   linkableVaults?: LinkableVaultNotes[];
   onOpenNote?: (noteId: number) => void;
   onOpenCrossVaultNote?: (vaultId: number, noteId: number) => void;
+  /** Open Vault Planner / PM integration settings (link/create/unlink lives there). */
+  onOpenPmSettings?: () => void;
   /** Share Planner links with the editor so it does not re-fetch /checkboxes. */
   onPlannerLinksChange?: (
     links: Array<{ markerId: string | null; openUrl: string | null; pmTaskId: number | null }>
@@ -81,6 +84,7 @@ export default function NoteTasksPanel({
   linkableVaults = [],
   onOpenNote,
   onOpenCrossVaultNote,
+  onOpenPmSettings,
   onPlannerLinksChange,
 }: NoteTasksPanelProps) {
   const [items, setItems] = useState<NoteTaskItem[]>([]);
@@ -94,6 +98,7 @@ export default function NoteTasksPanel({
   const [aiExisting, setAiExisting] = useState<ExistingTodoSuggestion[]>([]);
   const [aiProposed, setAiProposed] = useState<ProposedTodoSuggestion[]>([]);
   const [aiEnabled, setAiEnabled] = useState(false);
+  const [chooserItem, setChooserItem] = useState<NoteTaskItem | null>(null);
   const bodyRef = useRef(body);
   bodyRef.current = body;
 
@@ -327,6 +332,7 @@ export default function NoteTasksPanel({
             ? `Created PM task #${data.data.pmTaskId}`
             : `Already linked as PM #${data.data.pmTaskId}`
         );
+        setChooserItem(null);
         await load();
       } else {
         if (data.reauth) setNeedsReauth(true);
@@ -337,73 +343,32 @@ export default function NoteTasksPanel({
     }
   };
 
-  const createNoteTask = async (withCheckboxes: boolean) => {
+  const linkTask = async (item: NoteTaskItem, pmTaskId: number, pmProjectId: number) => {
     if (!hasProject) {
       onStatus?.('Link a PM project in Vault settings first');
       return;
     }
     if (!(await ensureSaved())) {
-      onStatus?.('Save the note before creating tasks');
+      onStatus?.('Save the note before linking tasks');
       return;
     }
     setBusy(true);
     try {
-      const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/push-task`, {
+      const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes/link`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ withCheckboxes }),
+        body: JSON.stringify({ index: item.index, pmTaskId, pmProjectId }),
       });
       const data = await res.json();
       if (res.ok) {
         applyBodyFromServer(data.data?.bodyMarkdown);
-        const created = data.data?.checkboxes?.created;
-        onStatus?.(
-          data.data?.alreadyLinked
-            ? `Note already linked as PM #${data.data.pmTaskId}${
-                created != null ? ` · created ${created} checkbox task(s)` : ''
-              }`
-            : `Created note task #${data.data.pmTaskId}${
-                created != null ? ` · created ${created} checkbox task(s)` : ''
-              }`
-        );
+        onStatus?.(`Linked to PM #${data.data?.pmTaskId ?? pmTaskId}`);
+        setChooserItem(null);
         await load();
       } else {
         if (data.reauth) setNeedsReauth(true);
-        onStatus?.(data.message || 'Could not create note task');
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const createAllMissing = async () => {
-    if (!hasProject) {
-      onStatus?.('Link a PM project in Vault settings first');
-      return;
-    }
-    if (!(await ensureSaved())) {
-      onStatus?.('Save the note before creating tasks');
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/checkboxes/push-missing`, {
-        method: 'POST',
-        credentials: 'include',
-      });
-      const data = await res.json();
-      if (res.ok) {
-        applyBodyFromServer(data.data?.bodyMarkdown);
-        onStatus?.(
-          `Created ${data.data.created} task(s)` +
-            (data.data.skipped ? ` · skipped ${data.data.skipped}` : '') +
-            (data.data.failed ? ` · failed ${data.data.failed}` : '')
-        );
-        await load();
-      } else {
-        if (data.reauth) setNeedsReauth(true);
-        onStatus?.(data.message || 'Could not create tasks');
+        onStatus?.(data.message || 'Could not link task');
       }
     } finally {
       setBusy(false);
@@ -612,55 +577,27 @@ export default function NoteTasksPanel({
               Planner #{notePmTaskId}
             </a>
           ) : (
-            !readOnly && (
-              <>
-                <button
-                  type="button"
-                  className="btn-primary py-1 text-[11px]"
-                  disabled={busy || !hasProject}
-                  title={
-                    hasProject
-                      ? 'Creates one Planner task named after this note. Does not create tasks for checkboxes or YAML todos.'
-                      : 'Link a vault project first'
-                  }
-                  onClick={() => void createNoteTask(false)}
-                >
-                  Create note task
-                </button>
-                {items.length > 0 && (
-                  <button
-                    type="button"
-                    className="btn-ghost py-1 text-[11px]"
-                    disabled={busy || !hasProject}
-                    title={
-                      hasProject
-                        ? 'Creates the note task and Planner tasks for all unlinked items (checkboxes and YAML todos). Indented checkboxes become nested subtasks; top-level ones nest under the note task.'
-                        : 'Link a vault project first'
-                    }
-                    onClick={() => void createNoteTask(true)}
-                  >
-                    Note + Subtasks
-                  </button>
-                )}
-              </>
-            )
-          )}
-          {!readOnly && missingCount > 0 && (
-            <button
-              type="button"
-              className="btn-ghost py-1 text-[11px]"
-              disabled={busy || !hasProject}
-              title={
-                hasProject
-                  ? 'Creates Planner tasks only for unlinked checkboxes (not a note-level task). Indented lines become subtasks of their parent checkbox.'
-                  : 'Link a vault project first'
-              }
-              onClick={() => void createAllMissing()}
-            >
-              Create missing ({missingCount})
-            </button>
+            <span className="text-[11px] text-[var(--muted)]">No note-level Planner task</span>
           )}
         </div>
+        {!readOnly && hasProject && missingCount > 0 && (
+          <p className="text-[11px] text-[var(--muted)]">
+            {missingCount} unlinked — use{' '}
+            <span className="text-[var(--text)]">Link / create</span> on a task, or open{' '}
+            {onOpenPmSettings ? (
+              <button
+                type="button"
+                className="font-medium text-[var(--accent-soft)] underline-offset-2 hover:underline"
+                onClick={() => onOpenPmSettings()}
+              >
+                Vault → Planner settings
+              </button>
+            ) : (
+              <span className="text-[var(--text)]">Vault → Planner settings</span>
+            )}{' '}
+            for bulk actions.
+          </p>
+        )}
       </div>
 
       {items.length === 0 ? (
@@ -815,19 +752,16 @@ export default function NoteTasksPanel({
                   Planner #{item.pmTaskId}
                 </a>
               ) : (
-                !readOnly && (
+                !readOnly &&
+                hasProject && (
                   <button
                     type="button"
                     className="shrink-0 text-[10px] font-medium text-[var(--accent-soft)] disabled:opacity-40"
-                    disabled={busy || !hasProject}
-                    title={
-                      hasProject
-                        ? 'Create a Planner task for this checkbox only. If indented, also creates missing parents and nests it as a subtask.'
-                        : 'Link a vault project first'
-                    }
-                    onClick={() => void createTask(item)}
+                    disabled={busy}
+                    title="Create a new Planner task or link an existing one"
+                    onClick={() => setChooserItem(item)}
                   >
-                    Create task
+                    Link / create
                   </button>
                 )
               )}
@@ -847,6 +781,21 @@ export default function NoteTasksPanel({
         if (!aiBusy) setAiModalOpen(false);
       }}
       onApply={applyAiTodos}
+    />
+    <LinkOrCreatePmTaskModal
+      open={chooserItem != null}
+      vaultId={vaultId}
+      checkboxLabel={chooserItem?.text || ''}
+      busy={busy}
+      onClose={() => {
+        if (!busy) setChooserItem(null);
+      }}
+      onCreate={async () => {
+        if (chooserItem) await createTask(chooserItem);
+      }}
+      onLink={async (pmTaskId, pmProjectId) => {
+        if (chooserItem) await linkTask(chooserItem, pmTaskId, pmProjectId);
+      }}
     />
     </>
   );

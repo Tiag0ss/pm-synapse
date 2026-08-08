@@ -1501,6 +1501,7 @@ export default function VaultWorkspacePage() {
                   onOpenCrossVaultNote={(targetVaultId, noteId) => {
                     router.push(`/vaults/${targetVaultId}?note=${noteId}`);
                   }}
+                  onOpenPmSettings={() => setPmTasksOpen(true)}
                 />
                 <div className="mt-4">
                   <NoteAttachmentsPanel

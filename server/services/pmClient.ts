@@ -295,6 +295,51 @@ export async function fetchPmOrganizations(userId: number) {
   return pmFetch<{ organizations?: unknown[]; data?: unknown[] }>(userId, '/api/organizations');
 }
 
+/** List PM projects the user can access (optionally scoped to an organization). */
+export async function fetchPmProjects(userId: number, organizationId?: number | null) {
+  const qs =
+    organizationId != null && Number(organizationId) > 0
+      ? `?organizationId=${Number(organizationId)}`
+      : '';
+  return pmFetch<{ projects?: unknown[]; data?: unknown[]; success?: boolean }>(
+    userId,
+    `/api/projects${qs}`
+  );
+}
+
+export type PmProjectSummary = {
+  Id: number;
+  ProjectName?: string | null;
+  Name?: string | null;
+};
+
+export function normalizePmProjectList(data: unknown): PmProjectSummary[] {
+  const nested = data as { projects?: unknown[]; data?: unknown[] } | null;
+  const raw =
+    (nested && Array.isArray(nested.projects) && nested.projects) ||
+    (nested && Array.isArray(nested.data) && nested.data) ||
+    (Array.isArray(data) ? data : []);
+  const out: PmProjectSummary[] = [];
+  for (const row of raw) {
+    const p = row as Record<string, unknown>;
+    const Id = Number(p.Id ?? p.id);
+    if (!Number.isFinite(Id) || Id <= 0) continue;
+    out.push({
+      Id,
+      ProjectName:
+        p.ProjectName != null
+          ? String(p.ProjectName)
+          : p.projectName != null
+            ? String(p.projectName)
+            : p.Name != null
+              ? String(p.Name)
+              : null,
+      Name: p.Name != null ? String(p.Name) : null,
+    });
+  }
+  return out;
+}
+
 export async function fetchPmProjectStatuses(userId: number, organizationId: number) {
   return pmFetch<{ statuses?: Array<{ Id: number }>; data?: Array<{ Id: number }> }>(
     userId,
@@ -330,6 +375,7 @@ export async function fetchPmTaskPriorities(userId: number, organizationId: numb
 
 export type PmTaskSummary = {
   Id: number;
+  TaskName?: string | null;
   Status?: number | null;
   /** Present on GET /api/tasks/project/:id */
   StatusName?: string | null;
@@ -337,6 +383,10 @@ export type PmTaskSummary = {
   StatusIsCancelled?: number | boolean | null;
   /** Present on some task detail endpoints; optional on project list */
   StatusIsInProgress?: number | boolean | null;
+  SynapseVaultId?: number | null;
+  SynapseNoteId?: number | null;
+  SynapseMarkerId?: string | null;
+  SynapseNoteUrl?: string | null;
 };
 
 /** Fetch tasks for a PM project (includes StatusIsClosed / StatusIsCancelled / StatusName). */
@@ -345,6 +395,88 @@ export async function fetchPmProjectTasks(userId: number, projectId: number) {
     userId,
     `/api/tasks/project/${projectId}`
   );
+}
+
+function hasNonEmptySynapseField(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+  const s = String(value).trim();
+  return s.length > 0 && s !== '0';
+}
+
+/** True when the PM task already carries any Synapse reference. */
+export function isPmTaskSynapseLinked(task: PmTaskSummary): boolean {
+  return (
+    hasNonEmptySynapseField(task.SynapseVaultId) ||
+    hasNonEmptySynapseField(task.SynapseNoteId) ||
+    hasNonEmptySynapseField(task.SynapseMarkerId) ||
+    hasNonEmptySynapseField(task.SynapseNoteUrl)
+  );
+}
+
+/** Normalize project task list payload into PmTaskSummary[]. */
+export function normalizePmProjectTasks(data: unknown): PmTaskSummary[] {
+  const nested = data as { tasks?: unknown[]; data?: unknown[] } | null;
+  const raw =
+    (nested && Array.isArray(nested.tasks) && nested.tasks) ||
+    (nested && Array.isArray(nested.data) && nested.data) ||
+    (Array.isArray(data) ? data : []);
+  const out: PmTaskSummary[] = [];
+  for (const row of raw) {
+    const t = row as Record<string, unknown>;
+    const Id = Number(t.Id ?? t.id);
+    if (!Number.isFinite(Id) || Id <= 0) continue;
+    out.push({
+      Id,
+      TaskName:
+        t.TaskName != null
+          ? String(t.TaskName)
+          : t.taskName != null
+            ? String(t.taskName)
+            : t.Name != null
+              ? String(t.Name)
+              : null,
+      Status: t.Status != null ? Number(t.Status) : null,
+      StatusName: t.StatusName != null ? String(t.StatusName) : t.statusName != null ? String(t.statusName) : null,
+      StatusIsClosed: t.StatusIsClosed as number | boolean | null | undefined,
+      StatusIsCancelled: t.StatusIsCancelled as number | boolean | null | undefined,
+      StatusIsInProgress: t.StatusIsInProgress as number | boolean | null | undefined,
+      SynapseVaultId: t.SynapseVaultId != null ? Number(t.SynapseVaultId) : t.synapseVaultId != null ? Number(t.synapseVaultId) : null,
+      SynapseNoteId: t.SynapseNoteId != null ? Number(t.SynapseNoteId) : t.synapseNoteId != null ? Number(t.synapseNoteId) : null,
+      SynapseMarkerId:
+        t.SynapseMarkerId != null
+          ? String(t.SynapseMarkerId)
+          : t.synapseMarkerId != null
+            ? String(t.synapseMarkerId)
+            : null,
+      SynapseNoteUrl:
+        t.SynapseNoteUrl != null
+          ? String(t.SynapseNoteUrl)
+          : t.synapseNoteUrl != null
+            ? String(t.synapseNoteUrl)
+            : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Tasks with no Synapse refs, optionally excluding ids already linked in Synapse.
+ */
+export function listLinkablePmTasks(
+  tasks: PmTaskSummary[],
+  excludePmTaskIds?: Set<number> | Iterable<number> | null
+): PmTaskSummary[] {
+  const exclude =
+    excludePmTaskIds instanceof Set
+      ? excludePmTaskIds
+      : new Set(excludePmTaskIds ? [...excludePmTaskIds] : []);
+  return tasks.filter((t) => {
+    const id = Number(t.Id);
+    if (!Number.isFinite(id) || id <= 0) return false;
+    if (exclude.has(id)) return false;
+    return !isPmTaskSynapseLinked(t);
+  });
 }
 
 export function isPmTaskDone(task: PmTaskSummary): boolean {
@@ -592,6 +724,8 @@ export async function updatePmTask(
     synapseNoteId?: number;
     synapseMarkerId?: string;
     synapseNoteUrl?: string;
+    /** When true, PM clears all Synapse* columns on the task. */
+    clearSynapseLink?: boolean;
   }
 ) {
   return pmFetch<{ success?: boolean }>(userId, `/api/tasks/${taskId}`, {

@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { resolveNoteId, type NoteResolveEntry } from '@/lib/notePaths';
 import { renderInlineMarkdown } from '@/lib/renderMarkdown';
+import ConfirmModal from '@/components/ConfirmModal';
+import LinkOrCreatePmTaskModal from '@/components/LinkOrCreatePmTaskModal';
 
 export interface VaultCheckboxItem {
   noteId: number;
@@ -73,6 +75,8 @@ export default function VaultPmSettingsModal({
   const [loadingOrgs, setLoadingOrgs] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unlinked' | 'open'>('unlinked');
   const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
+  const [chooserItem, setChooserItem] = useState<VaultCheckboxItem | null>(null);
+  const [unlinkItem, setUnlinkItem] = useState<VaultCheckboxItem | null>(null);
 
   const load = async () => {
     setLoadingOrgs(true);
@@ -233,11 +237,71 @@ export default function VaultPmSettingsModal({
         if (!data.data?.alreadyLinked && data.data?.openUrl) {
           window.open(data.data.openUrl, '_blank');
         }
+        setChooserItem(null);
         onChanged();
         await load();
       } else {
         if (data.reauth || res.status === 401) setNeedsReauth(true);
         setStatus(data.message || 'Could not create task');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const linkCheckbox = async (item: VaultCheckboxItem, pmTaskId: number, pmProjectId: number) => {
+    if (!linkedProjectId) {
+      setStatus('Link a PM project first');
+      return;
+    }
+    setBusy(true);
+    setStatus('Linking task…');
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/notes/${item.noteId}/checkboxes/link`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index: item.index, pmTaskId, pmProjectId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatus(`Linked to PM #${data.data?.pmTaskId ?? pmTaskId}`);
+        setChooserItem(null);
+        onChanged();
+        await load();
+      } else {
+        if (data.reauth || res.status === 401) setNeedsReauth(true);
+        setStatus(data.message || 'Could not link task');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unlinkCheckbox = async (item: VaultCheckboxItem) => {
+    if (!item.pmTaskId) return;
+    setBusy(true);
+    setStatus('Unlinking…');
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/notes/${item.noteId}/checkboxes/unlink`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          item.markerId
+            ? { markerId: item.markerId }
+            : { index: item.index }
+        ),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setStatus(`Unlinked from PM #${data.data?.clearedPmTaskId ?? item.pmTaskId}`);
+        setUnlinkItem(null);
+        onChanged();
+        await load();
+      } else {
+        if (data.reauth || res.status === 401) setNeedsReauth(true);
+        setStatus(data.message || 'Could not unlink task');
       }
     } finally {
       setBusy(false);
@@ -532,9 +596,9 @@ export default function VaultPmSettingsModal({
               </div>
             </div>
             <p className="mb-3 text-xs text-[var(--muted)]">
-              From notes with <code className="text-[var(--accent-soft)]">- [ ]</code> lines. Create a PM task
-              per checkbox, or create all missing in one click. Indented checkboxes become Planner subtasks;
-              create a note task from the note sidebar to nest top-level checkboxes under the note.
+              From notes with <code className="text-[var(--accent-soft)]">- [ ]</code> lines. Create a
+              new Planner task or link an existing one (no Synapse reference). Unlink keeps the
+              Planner task. Indented checkboxes become Planner subtasks when created.
             </p>
             {bulkProgress && (
               <div
@@ -662,23 +726,38 @@ export default function VaultPmSettingsModal({
                       </button>
                     </div>
                     {item.pmTaskId ? (
-                      <a
-                        className="btn-ghost shrink-0 py-1 text-xs no-underline"
-                        href={item.openUrl || '#'}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        PM #{item.pmTaskId}
-                      </a>
+                      <div className="flex shrink-0 flex-wrap items-center gap-1">
+                        <a
+                          className="btn-ghost py-1 text-xs no-underline"
+                          href={item.openUrl || '#'}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          PM #{item.pmTaskId}
+                        </a>
+                        <button
+                          type="button"
+                          className="btn-ghost py-1 text-xs text-red-300"
+                          disabled={busy || !linkedProjectId}
+                          title="Remove Synapse link; keep the Planner task"
+                          onClick={() => setUnlinkItem(item)}
+                        >
+                          Unlink
+                        </button>
+                      </div>
                     ) : (
                       <button
                         type="button"
                         className="btn-primary shrink-0 py-1 text-xs"
                         disabled={busy || !linkedProjectId}
-                        title={linkedProjectId ? 'Create PM task' : 'Link a project first'}
-                        onClick={() => void pushCheckbox(item)}
+                        title={
+                          linkedProjectId
+                            ? 'Create a new Planner task or link an existing one'
+                            : 'Link a project first'
+                        }
+                        onClick={() => setChooserItem(item)}
                       >
-                        Create task
+                        Link / create
                       </button>
                     )}
                   </li>
@@ -693,6 +772,36 @@ export default function VaultPmSettingsModal({
             {status}
           </footer>
         )}
+
+      <LinkOrCreatePmTaskModal
+        open={chooserItem != null}
+        vaultId={vaultId}
+        checkboxLabel={chooserItem?.text || ''}
+        busy={busy}
+        onClose={() => {
+          if (!busy) setChooserItem(null);
+        }}
+        onCreate={async () => {
+          if (chooserItem) await pushCheckbox(chooserItem);
+        }}
+        onLink={async (pmTaskId, pmProjectId) => {
+          if (chooserItem) await linkCheckbox(chooserItem, pmTaskId, pmProjectId);
+        }}
+      />
+
+      <ConfirmModal
+        open={unlinkItem != null}
+        title="Unlink from Planner?"
+        message="This removes the Synapse association. The Planner task is kept and can be linked again later."
+        confirmLabel={busy ? 'Unlinking…' : 'Unlink'}
+        danger
+        onCancel={() => {
+          if (!busy) setUnlinkItem(null);
+        }}
+        onConfirm={() => {
+          if (unlinkItem && !busy) void unlinkCheckbox(unlinkItem);
+        }}
+      />
     </>
   );
 

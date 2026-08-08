@@ -51,6 +51,11 @@ import {
   pushNoteAsPmTask,
   pushSingleCheckboxTask,
 } from '../services/pushCheckboxTasks';
+import {
+  linkCheckboxToPmTask,
+  listLinkablePmTasksForVault,
+  unlinkCheckboxFromPmTask,
+} from '../services/linkCheckboxTask';
 import { normalizeNoteIcon } from '../services/noteIcons';
 import {
   accessibleVault,
@@ -1872,6 +1877,134 @@ router.post('/:vaultId/notes/:noteId/checkboxes/push', async (req: AuthRequest, 
     const status = err.status || 500;
     if (status >= 500) logger.error('Checkbox push failed', { error });
     return pmFail(res, status, err.message || 'Failed to create PM task');
+  }
+});
+
+/** Project tasks with no Synapse refs (for link picker). Optional ?projectId= filters one project. */
+router.get('/:vaultId/pm-tasks/linkable', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+  const defaultProjectId = Number(vault.PmProjectId);
+  const orgId = Number(vault.PmOrganizationId);
+  if (!defaultProjectId || !orgId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Link or create a PM project on this vault first',
+    });
+  }
+
+  const filterProjectId = req.query.projectId != null ? Number(req.query.projectId) : null;
+
+  try {
+    const data = await listLinkablePmTasksForVault({
+      pmUserId: req.user!.userId,
+      defaultProjectId,
+      organizationId: orgId,
+      projectId: Number.isFinite(filterProjectId) && filterProjectId! > 0 ? filterProjectId : null,
+    });
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('List linkable PM tasks failed', { error });
+    return pmFail(res, status, err.message || 'Failed to list linkable tasks');
+  }
+});
+
+/** Associate an existing Synapse-free PM task with a checkbox / YAML todo. */
+router.post('/:vaultId/notes/:noteId/checkboxes/link', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+  const schema = z.object({
+    index: z.coerce.number().int().min(0),
+    pmTaskId: z.coerce.number().int().positive(),
+    /** Project that owns the task (required for cross-project link). Defaults to vault project. */
+    pmProjectId: z.coerce.number().int().positive().optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'index and pmTaskId required' });
+  }
+
+  const defaultProjectId = Number(vault.PmProjectId);
+  const orgId = Number(vault.PmOrganizationId);
+  if (!defaultProjectId || !orgId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Link or create a PM project on this vault first',
+    });
+  }
+
+  const pmProjectId = parsed.data.pmProjectId || defaultProjectId;
+
+  try {
+    const data = await linkCheckboxToPmTask({
+      vaultId: Number(vault.Id),
+      noteId: Number(req.params.noteId),
+      checkboxIndex: parsed.data.index,
+      pmTaskId: parsed.data.pmTaskId,
+      pmProjectId,
+      pmUserId: req.user!.userId,
+      defaultProjectId,
+      organizationId: orgId,
+    });
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string; data?: unknown };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Checkbox link failed', { error });
+    return res.status(status).json({
+      success: false,
+      message: err.message || 'Failed to link PM task',
+      ...(status === 401 ? { reauth: true } : {}),
+      ...(err.data ? { data: err.data } : {}),
+    });
+  }
+});
+
+/** Remove Synapse↔Planner association (keeps the PM task). */
+router.post('/:vaultId/notes/:noteId/checkboxes/unlink', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+  const schema = z
+    .object({
+      index: z.coerce.number().int().min(0).optional(),
+      markerId: z.string().min(1).max(64).optional(),
+    })
+    .refine((d) => d.index != null || Boolean(d.markerId), {
+      message: 'index or markerId required',
+    });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'index or markerId required' });
+  }
+
+  const projectId = Number(vault.PmProjectId);
+  if (!projectId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Link or create a PM project on this vault first',
+    });
+  }
+
+  try {
+    const data = await unlinkCheckboxFromPmTask({
+      vaultId: Number(vault.Id),
+      noteId: Number(req.params.noteId),
+      checkboxIndex: parsed.data.index,
+      markerId: parsed.data.markerId,
+      pmUserId: req.user!.userId,
+      projectId,
+    });
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Checkbox unlink failed', { error });
+    return pmFail(res, status, err.message || 'Failed to unlink PM task');
   }
 });
 
