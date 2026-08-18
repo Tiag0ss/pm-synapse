@@ -357,6 +357,7 @@ export type PmTaskStatusValue = {
   IsClosed?: number | boolean | null;
   IsCancelled?: number | boolean | null;
   IsInProgress?: number | boolean | null;
+  HideFromPlanningAndStatistics?: number | boolean | null;
 };
 
 export async function fetchPmTaskStatuses(userId: number, organizationId: number) {
@@ -383,10 +384,14 @@ export type PmTaskSummary = {
   StatusIsCancelled?: number | boolean | null;
   /** Present on some task detail endpoints; optional on project list */
   StatusIsInProgress?: number | boolean | null;
+  /** Joined from task status catalog on project task list */
+  StatusHideFromPlanningAndStatistics?: number | boolean | null;
   SynapseVaultId?: number | null;
   SynapseNoteId?: number | null;
   SynapseMarkerId?: string | null;
   SynapseNoteUrl?: string | null;
+  /** PM user id the task is assigned to (project task list). */
+  AssignedTo?: number | null;
 };
 
 /** Fetch tasks for a PM project (includes StatusIsClosed / StatusIsCancelled / StatusName). */
@@ -441,6 +446,15 @@ export function normalizePmProjectTasks(data: unknown): PmTaskSummary[] {
       StatusIsClosed: t.StatusIsClosed as number | boolean | null | undefined,
       StatusIsCancelled: t.StatusIsCancelled as number | boolean | null | undefined,
       StatusIsInProgress: t.StatusIsInProgress as number | boolean | null | undefined,
+      StatusHideFromPlanningAndStatistics: (() => {
+        const raw =
+          t.StatusHideFromPlanningAndStatistics ??
+          t.statusHideFromPlanningAndStatistics ??
+          t.HideFromPlanningAndStatistics ??
+          t.hideFromPlanningAndStatistics;
+        if (raw == null) return null;
+        return Number(raw) === 1 ? 1 : 0;
+      })(),
       SynapseVaultId: t.SynapseVaultId != null ? Number(t.SynapseVaultId) : t.synapseVaultId != null ? Number(t.synapseVaultId) : null,
       SynapseNoteId: t.SynapseNoteId != null ? Number(t.SynapseNoteId) : t.synapseNoteId != null ? Number(t.synapseNoteId) : null,
       SynapseMarkerId:
@@ -455,6 +469,12 @@ export function normalizePmProjectTasks(data: unknown): PmTaskSummary[] {
           : t.synapseNoteUrl != null
             ? String(t.synapseNoteUrl)
             : null,
+      AssignedTo: (() => {
+        const n = Number(
+          t.AssignedTo ?? t.assignedTo ?? t.AssignedToUserId ?? t.AssigneeId ?? t.assigneeId
+        );
+        return Number.isFinite(n) && n > 0 ? n : null;
+      })(),
     });
   }
   return out;
@@ -549,6 +569,19 @@ export function isPmStatusNameInProgress(statusName: string | null | undefined):
   );
 }
 
+/** True when Planner hides this status from planning views and statistics. */
+export function isPmTaskHiddenFromPlanning(
+  task: PmTaskSummary,
+  statusList?: PmTaskStatusValue[] | null
+): boolean {
+  if (Number(task.StatusHideFromPlanningAndStatistics || 0) === 1) return true;
+  if (statusList && task.Status != null) {
+    const row = statusList.find((s) => Number(s.Id) === Number(task.Status));
+    if (row && Number(row.HideFromPlanningAndStatistics || 0) === 1) return true;
+  }
+  return false;
+}
+
 export function normalizePmTaskStatusList(data: unknown): PmTaskStatusValue[] {
   const nested = data as { statuses?: unknown[]; data?: unknown[] } | null;
   const raw =
@@ -574,6 +607,7 @@ export function normalizePmTaskStatusList(data: unknown): PmTaskStatusValue[] {
       IsClosed: s.IsClosed as number | boolean | null | undefined,
       IsCancelled: s.IsCancelled as number | boolean | null | undefined,
       IsInProgress: s.IsInProgress as number | boolean | null | undefined,
+      HideFromPlanningAndStatistics: s.HideFromPlanningAndStatistics as number | boolean | null | undefined,
     });
   }
   return out;
@@ -662,6 +696,23 @@ export async function resolveAutoAssignPmUserId(synapseUserId: number): Promise<
   }
 
   logger.warn('PM auto-assign enabled but no PmUserId for Synapse user', { synapseUserId });
+  return null;
+}
+
+/** PM user id linked to this Synapse account (SSO / Users.PmUserId), if any. */
+export async function resolveLinkedPmUserId(synapseUserId: number): Promise<number | null> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT PmUserId FROM Users WHERE Id = ? LIMIT 1',
+    [synapseUserId]
+  );
+  const linked = rows[0]?.PmUserId != null ? Number(rows[0].PmUserId) : 0;
+  if (Number.isFinite(linked) && linked > 0) return linked;
+
+  const sso = await getSsoAccessToken(synapseUserId);
+  if (sso) {
+    const fromJwt = peekJwtUserId(sso);
+    if (fromJwt != null) return fromJwt;
+  }
   return null;
 }
 

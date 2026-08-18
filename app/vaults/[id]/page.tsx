@@ -153,6 +153,8 @@ export default function VaultWorkspacePage() {
     AllowPublicPages?: number | boolean;
     DefaultVisibility?: string;
     AccessRole?: 'owner' | 'edit' | 'read';
+    IsPersonalWork?: number | boolean;
+    HubNoteId?: number | null;
   }>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [vaultOptionsOpen, setVaultOptionsOpen] = useState(false);
@@ -191,6 +193,8 @@ export default function VaultWorkspacePage() {
     snippet: string;
   } | null>(null);
   const [attachmentsRefresh, setAttachmentsRefresh] = useState(0);
+  const [hubRefreshing, setHubRefreshing] = useState(false);
+  const [hubLinkBusy, setHubLinkBusy] = useState(false);
   const [savedSnapshot, setSavedSnapshot] = useState({
     title: '',
     body: '',
@@ -214,6 +218,12 @@ export default function VaultWorkspacePage() {
   const accessRole = vaultMeta.AccessRole || 'owner';
   const canEdit = accessRole === 'owner' || accessRole === 'edit';
   const isOwner = accessRole === 'owner';
+  const isPersonalWork = Number(vaultMeta.IsPersonalWork || 0) === 1;
+  const hubNoteId =
+    vaultMeta.HubNoteId != null
+      ? Number(vaultMeta.HubNoteId)
+      : notes.find((n) => n.Path === 'planner/overview.md')?.Id ?? null;
+  const isHubNote = selectedId != null && hubNoteId != null && selectedId === hubNoteId;
   const notePublicUrl =
     vaultMeta.slug &&
     selectedId &&
@@ -606,6 +616,61 @@ export default function VaultWorkspacePage() {
     await loadNotes();
     await loadGraph();
     if (!skipOpen) await openNote(newId, { force: true });
+  };
+
+  const refreshHubTasks = async () => {
+    if (!canEdit || !isPersonalWork) return;
+    setHubRefreshing(true);
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/planner-overview/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.message || 'Could not refresh Planner tasks');
+        return;
+      }
+      const added = Number(data.data?.added || 0);
+      const removed = Number(data.data?.removed || 0);
+      const updated = Number(data.data?.updated || 0);
+      setStatus(`Tasks updated · ${added} added · ${removed} removed · ${updated} kept`);
+      await loadNotes();
+      const noteId = Number(data.data?.noteId || hubNoteId || 0);
+      if (noteId && (isHubNote || selectedId == null)) {
+        await openNote(noteId, { force: true });
+      } else if (isHubNote && selectedId) {
+        await openNote(selectedId, { force: true });
+      }
+    } catch {
+      setStatus('Could not refresh Planner tasks');
+    } finally {
+      setHubRefreshing(false);
+    }
+  };
+
+  const linkSelectedToHub = async () => {
+    if (!canEdit || !isPersonalWork || !selectedId || isHubNote) return;
+    setHubLinkBusy(true);
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/planner-overview/link-note`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteId: selectedId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.message || 'Could not link to My work');
+        return;
+      }
+      setStatus('Linked to My work overview');
+      await loadGraph();
+    } catch {
+      setStatus('Could not link to My work');
+    } finally {
+      setHubLinkBusy(false);
+    }
   };
 
   const deleteNote = async () => {
@@ -1201,7 +1266,7 @@ export default function VaultWorkspacePage() {
                     aria-label="Note title"
                     placeholder="meta/risks"
                     title="Use folder/name for nesting (e.g. meta/risks)"
-                    disabled={!canEdit}
+                    disabled={!canEdit || isHubNote}
                   />
                 </div>
                 {title.includes('/') && (
@@ -1215,7 +1280,7 @@ export default function VaultWorkspacePage() {
                     value={visibility}
                     onChange={(e) => setVisibility(e.target.value)}
                     aria-label="Visibility"
-                    disabled={!canEdit}
+                    disabled={!canEdit || isHubNote}
                   >
                     <option value="">
                       Default ({(vaultMeta.DefaultVisibility || 'private').toLowerCase()})
@@ -1253,7 +1318,19 @@ export default function VaultWorkspacePage() {
                       />
                     </svg>
                   </button>
-                  {canEdit && (
+                  {canEdit && isPersonalWork && selectedId && !isHubNote && (
+                    <button
+                      type="button"
+                      className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
+                      disabled={hubLinkBusy}
+                      onClick={() => void linkSelectedToHub()}
+                      title="Link to My work"
+                      aria-label="Link to My work"
+                    >
+                      {hubLinkBusy ? '…' : 'Link'}
+                    </button>
+                  )}
+                  {canEdit && !isHubNote && (
                     <button
                       type="button"
                       className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
@@ -1272,7 +1349,7 @@ export default function VaultWorkspacePage() {
                       </svg>
                     </button>
                   )}
-                  {canEdit && (
+                  {canEdit && !isHubNote && (
                     <button
                       type="button"
                       className="btn-danger shrink-0 px-2.5 py-1.5 text-sm"
@@ -1345,7 +1422,18 @@ export default function VaultWorkspacePage() {
                 >
                   Export
                 </button>
-                {canEdit && (
+                {canEdit && isPersonalWork && selectedId && !isHubNote && (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    disabled={hubLinkBusy}
+                    onClick={() => void linkSelectedToHub()}
+                    title="Add a wikilink to this note on the My work overview"
+                  >
+                    {hubLinkBusy ? 'Linking…' : 'Link to My work'}
+                  </button>
+                )}
+                {canEdit && !isHubNote && (
                   <button
                     type="button"
                     className="btn-ghost"
@@ -1355,7 +1443,7 @@ export default function VaultWorkspacePage() {
                     Send…
                   </button>
                 )}
-                {canEdit && (
+                {canEdit && !isHubNote && (
                   <button
                     type="button"
                     className="btn-danger"
@@ -1366,6 +1454,13 @@ export default function VaultWorkspacePage() {
                   </button>
                 )}
               </div>
+              {isHubNote && (
+                <p className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)]/50 px-3 py-2 text-xs text-[var(--muted)]">
+                  Pull-only from Planner. Use <span className="text-[var(--text)]">Refresh tasks</span>{' '}
+                  in the tasks panel (right sidebar) to update work assigned to you. Linked notes below
+                  the task block are kept.
+                </p>
+              )}
               <MarkdownNoteEditor
                 value={body}
                 onChange={setBody}
@@ -1501,7 +1596,12 @@ export default function VaultWorkspacePage() {
                   onOpenCrossVaultNote={(targetVaultId, noteId) => {
                     router.push(`/vaults/${targetVaultId}?note=${noteId}`);
                   }}
-                  onOpenPmSettings={() => setPmTasksOpen(true)}
+                  pullOnly={isHubNote}
+                  onRefreshPlanner={
+                    isHubNote && canEdit ? () => refreshHubTasks() : undefined
+                  }
+                  refreshingPlanner={hubRefreshing}
+                  onOpenPmSettings={isPersonalWork ? undefined : () => setPmTasksOpen(true)}
                 />
                 <div className="mt-4">
                   <NoteAttachmentsPanel
@@ -1772,6 +1872,7 @@ export default function VaultWorkspacePage() {
           setVaultOptionsTab(undefined);
           void openNote(id);
         }}
+        isPersonalWork={isPersonalWork}
         onCreateMissingNote={async (wikilinkTitle, linkFromNoteId) => {
           await createNote(wikilinkTitle, { linkFromNoteId, skipOpen: true });
         }}

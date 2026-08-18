@@ -35,6 +35,21 @@ import { importVaultZip } from '../services/vaultZipImport';
 import { exportVaultZip } from '../services/vaultZipExport';
 import { renderNoteDocx } from '../services/carboneExport';
 import {
+  ensureHubNote,
+  ensurePersonalWorkVault,
+  findHubNoteId,
+  HUB_NOTE_PATH,
+  HUB_NOTE_TITLE,
+  isPersonalWorkVault,
+  isPlannerOverviewNote,
+  overviewNoteRow,
+} from '../services/personalWorkVault';
+import {
+  linkNoteToHub,
+  refreshPlannerOverview,
+  unlinkNoteFromHub,
+} from '../services/plannerOverview';
+import {
   frontmatterJsonString,
   frontmatterTodoIdFromMarker,
   isFrontmatterTodoMarker,
@@ -273,7 +288,16 @@ async function syncCheckboxRows(noteId: number, bodyMarkdown: string): Promise<v
   }
 }
 
+function overviewPullOnlyMessage(): string {
+  return 'The My work overview is pull-only from Planner. Use Refresh tasks.';
+}
+
 router.get('/', async (req: AuthRequest, res: Response) => {
+  try {
+    await ensurePersonalWorkVault(req.user!.userId);
+  } catch (error) {
+    logger.error('Ensure personal work vault failed', { error, userId: req.user!.userId });
+  }
   const rows = await listAccessibleVaults(req.user!.userId);
   res.json({ success: true, data: rows });
 });
@@ -375,6 +399,12 @@ router.get('/:vaultId/members', async (req: AuthRequest, res: Response) => {
 router.post('/:vaultId/members', async (req: AuthRequest, res: Response) => {
   const vault = await ownedVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  if (isPersonalWorkVault(vault as Record<string, unknown>)) {
+    return res.status(403).json({
+      success: false,
+      message: 'The My work vault cannot be shared',
+    });
+  }
   const schema = z.object({
     userId: z.coerce.number().int().positive().optional(),
     pmUserId: z.coerce.number().int().positive().optional(), // Synapse user id (legacy) or PM id for stub
@@ -503,6 +533,12 @@ router.post('/:vaultId/leave', async (req: AuthRequest, res: Response) => {
 router.post('/:vaultId/delete', async (req: AuthRequest, res: Response) => {
   const vault = await ownedVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  if (isPersonalWorkVault(vault as Record<string, unknown>)) {
+    return res.status(403).json({
+      success: false,
+      message: 'The My work vault cannot be deleted',
+    });
+  }
   const confirm = String(req.body?.confirmName || '').trim();
   if (!confirm || confirm !== String(vault.Name)) {
     return res.status(400).json({
@@ -610,7 +646,22 @@ router.post('/', async (req: AuthRequest, res: Response) => {
 router.get('/:vaultId', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
-  res.json({ success: true, data: vault });
+  let hubNoteId: number | null = null;
+  if (isPersonalWorkVault(vault as Record<string, unknown>)) {
+    try {
+      hubNoteId =
+        Number(vault.OwnerPmUserId) === req.user!.userId
+          ? await ensureHubNote(Number(vault.Id))
+          : await findHubNoteId(Number(vault.Id));
+    } catch (error) {
+      logger.warn('Ensure hub note failed', { error, vaultId: vault.Id });
+      hubNoteId = await findHubNoteId(Number(vault.Id));
+    }
+  }
+  res.json({
+    success: true,
+    data: { ...vault, HubNoteId: hubNoteId, IsPersonalWork: isPersonalWorkVault(vault as Record<string, unknown>) ? 1 : 0 },
+  });
 });
 
 router.get('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
@@ -893,11 +944,14 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     return res.status(400).json({ success: false, message: 'Invalid note payload' });
   }
 
-  const title = parsed.data.title ?? String(existing.Title);
+  const titleRaw = parsed.data.title ?? String(existing.Title);
+  const hubNote = isPlannerOverviewNote(String(existing.Path), String(existing.BodyMarkdown));
+  const title = hubNote ? HUB_NOTE_TITLE : titleRaw;
   // Path is auto-managed from title unless an explicit path is sent
-  let path =
-    parsed.data.path ??
-    (parsed.data.title ? titleToPath(title) : String(existing.Path));
+  let path = hubNote
+    ? HUB_NOTE_PATH
+    : parsed.data.path ??
+      (parsed.data.title ? titleToPath(title) : String(existing.Path));
   const safePath = sanitizeNotePath(path);
   if (!safePath) {
     return res.status(400).json({ success: false, message: 'Invalid note path' });
@@ -959,6 +1013,12 @@ router.delete('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response)
     return res.status(404).json({ success: false, message: 'Note not found' });
   }
   const existing = existingRows[0];
+  if (isPlannerOverviewNote(String(existing.Path), String(existing.BodyMarkdown || ''))) {
+    return res.status(403).json({
+      success: false,
+      message: 'The My work overview note cannot be deleted',
+    });
+  }
   if (hard || existing.DeletedAt) {
     await pool.execute('DELETE FROM Notes WHERE Id = ? AND VaultId = ?', [noteId, vault.Id]);
     logger.info('Note permanently deleted', { vaultId: vault.Id, noteId, title: existing.Title });
@@ -1000,6 +1060,18 @@ router.post('/:vaultId/notes/:noteId/transfer', async (req: AuthRequest, res: Re
   }
 
   const noteId = Number(req.params.noteId);
+  const [srcNotes] = await pool.execute<RowDataPacket[]>(
+    'SELECT Path, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ?',
+    [noteId, sourceVault.Id]
+  );
+  if (!srcNotes.length) return res.status(404).json({ success: false, message: 'Note not found' });
+  if (isPlannerOverviewNote(String(srcNotes[0].Path), String(srcNotes[0].BodyMarkdown || ''))) {
+    return res.status(403).json({
+      success: false,
+      message: 'The My work overview note cannot be moved or copied',
+    });
+  }
+
   let targetVaultId = parsed.data.targetVaultId ? Number(parsed.data.targetVaultId) : 0;
   let createdVault: { id: number; slug: string } | undefined;
 
@@ -1675,6 +1747,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
   if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
   const note = notes[0];
   const noteId = Number(note.Id);
+  const overview = isPlannerOverviewNote(String(note.Path), String(note.BodyMarkdown || ''));
   const [linkRows] = await pool.execute<RowDataPacket[]>(
     'SELECT MarkerId, Text, PmTaskId, PmProjectId, Checked FROM NoteCheckboxTasks WHERE NoteId = ?',
     [noteId]
@@ -1687,14 +1760,20 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
     PmProjectId: l.PmProjectId != null ? Number(l.PmProjectId) : null,
     Checked: l.Checked,
   }));
-  const synced = await syncNoteCheckboxesFromPm({
-    pmUserId: req.user!.userId,
-    noteId,
-    bodyMarkdown: String(note.BodyMarkdown || ''),
-    links,
-    defaultProjectId: vault.PmProjectId ? Number(vault.PmProjectId) : null,
-    organizationId: vault.PmOrganizationId ? Number(vault.PmOrganizationId) : null,
-  });
+  const synced = overview
+    ? {
+        bodyMarkdown: String(note.BodyMarkdown || ''),
+        updated: 0,
+        cleared: 0,
+      }
+    : await syncNoteCheckboxesFromPm({
+        pmUserId: req.user!.userId,
+        noteId,
+        bodyMarkdown: String(note.BodyMarkdown || ''),
+        links,
+        defaultProjectId: vault.PmProjectId ? Number(vault.PmProjectId) : null,
+        organizationId: vault.PmOrganizationId ? Number(vault.PmOrganizationId) : null,
+      });
   const body = synced.bodyMarkdown;
   const boxes = listNoteTaskCandidates(body);
   const byMarker = new Map(links.map((l) => [`${noteId}:${l.MarkerId}`, l] as const));
@@ -1716,6 +1795,7 @@ router.get('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res: R
       notePmTaskId,
       noteOpenUrl:
         notePmTaskId && projectId ? buildPmTaskOpenUrl(projectId, notePmTaskId) : null,
+      pullOnly: overview,
       items: boxes.map((box) => {
         const link = resolveCheckboxLink(noteId, box, byMarker, byText);
         return {
@@ -1837,6 +1917,13 @@ router.post('/:vaultId/checkboxes/push-missing', async (req: AuthRequest, res: R
 router.post('/:vaultId/notes/:noteId/checkboxes/push', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const [hubCheck] = await pool.execute<RowDataPacket[]>(
+    'SELECT Path, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ?',
+    [req.params.noteId, vault.Id]
+  );
+  if (hubCheck[0] && overviewNoteRow(hubCheck[0] as Record<string, unknown>)) {
+    return res.status(403).json({ success: false, message: overviewPullOnlyMessage() });
+  }
 
   const schema = z.object({
     index: z.coerce.number().int().min(0),
@@ -1916,6 +2003,13 @@ router.get('/:vaultId/pm-tasks/linkable', async (req: AuthRequest, res: Response
 router.post('/:vaultId/notes/:noteId/checkboxes/link', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const [hubCheck] = await pool.execute<RowDataPacket[]>(
+    'SELECT Path, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ?',
+    [req.params.noteId, vault.Id]
+  );
+  if (hubCheck[0] && overviewNoteRow(hubCheck[0] as Record<string, unknown>)) {
+    return res.status(403).json({ success: false, message: overviewPullOnlyMessage() });
+  }
 
   const schema = z.object({
     index: z.coerce.number().int().min(0),
@@ -1968,6 +2062,13 @@ router.post('/:vaultId/notes/:noteId/checkboxes/link', async (req: AuthRequest, 
 router.post('/:vaultId/notes/:noteId/checkboxes/unlink', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const [hubCheck] = await pool.execute<RowDataPacket[]>(
+    'SELECT Path, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ?',
+    [req.params.noteId, vault.Id]
+  );
+  if (hubCheck[0] && overviewNoteRow(hubCheck[0] as Record<string, unknown>)) {
+    return res.status(403).json({ success: false, message: overviewPullOnlyMessage() });
+  }
 
   const schema = z
     .object({
@@ -2115,6 +2216,9 @@ router.patch('/:vaultId/notes/:noteId/checkboxes', async (req: AuthRequest, res:
   );
   if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
   const note = notes[0];
+  if (overviewNoteRow(note as Record<string, unknown>)) {
+    return res.status(403).json({ success: false, message: overviewPullOnlyMessage() });
+  }
 
   const schema = z.object({
     index: z.coerce.number().int().min(0).optional(),
@@ -2245,6 +2349,95 @@ router.post('/:vaultId/notes/:noteId/push-task', async (req: AuthRequest, res: R
     message:
       'Pushing a whole note as one task is removed. Use checkbox tasks from vault settings or the note tasks panel.',
   });
+});
+
+router.post('/:vaultId/planner-overview/refresh', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  try {
+    const data = await refreshPlannerOverview({
+      vault,
+      synapseUserId: req.user!.userId,
+    });
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Planner overview refresh failed', { error });
+    return res.status(status).json({
+      success: false,
+      message: err.message || 'Failed to refresh Planner overview',
+      ...(status === 401 ? { reauth: true } : {}),
+    });
+  }
+});
+
+router.post('/:vaultId/planner-overview/link-note', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  if (!isPersonalWorkVault(vault as Record<string, unknown>)) {
+    return res.status(400).json({ success: false, message: 'Link to My work is only for the My work vault' });
+  }
+  const schema = z.object({ noteId: z.coerce.number().int().positive() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'noteId required' });
+  }
+  const hubNoteId = await ensureHubNote(Number(vault.Id));
+  if (parsed.data.noteId === hubNoteId) {
+    return res.status(400).json({ success: false, message: 'The overview note is already the hub' });
+  }
+  const [child] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, Title FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL`,
+    [parsed.data.noteId, vault.Id]
+  );
+  if (!child.length) return res.status(404).json({ success: false, message: 'Note not found' });
+  try {
+    const bodyMarkdown = await linkNoteToHub({
+      vaultId: Number(vault.Id),
+      hubNoteId,
+      childTitle: String(child[0].Title),
+    });
+    res.json({ success: true, data: { hubNoteId, bodyMarkdown } });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Link to My work failed', { error });
+    return res.status(status).json({ success: false, message: err.message || 'Failed to link note' });
+  }
+});
+
+router.post('/:vaultId/planner-overview/unlink-note', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  if (!isPersonalWorkVault(vault as Record<string, unknown>)) {
+    return res.status(400).json({ success: false, message: 'Unlink from My work is only for the My work vault' });
+  }
+  const schema = z.object({ noteId: z.coerce.number().int().positive() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'noteId required' });
+  }
+  const hubNoteId = await findHubNoteId(Number(vault.Id));
+  if (!hubNoteId) return res.status(404).json({ success: false, message: 'Overview note not found' });
+  const [child] = await pool.execute<RowDataPacket[]>(
+    'SELECT Title FROM Notes WHERE Id = ? AND VaultId = ?',
+    [parsed.data.noteId, vault.Id]
+  );
+  if (!child.length) return res.status(404).json({ success: false, message: 'Note not found' });
+  try {
+    const bodyMarkdown = await unlinkNoteFromHub({
+      vaultId: Number(vault.Id),
+      hubNoteId,
+      childTitle: String(child[0].Title),
+    });
+    res.json({ success: true, data: { hubNoteId, bodyMarkdown } });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Unlink from My work failed', { error });
+    return res.status(status).json({ success: false, message: err.message || 'Failed to unlink note' });
+  }
 });
 
 router.post('/:vaultId/unlink-pm', async (req: AuthRequest, res: Response) => {

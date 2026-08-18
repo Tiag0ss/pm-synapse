@@ -20,6 +20,7 @@ interface Vault {
   Description?: string;
   PmProjectId?: number | null;
   AccessRole?: 'owner' | 'edit' | 'read';
+  IsPersonalWork?: number | boolean;
 }
 
 interface Providers {
@@ -523,7 +524,11 @@ export default function HomePage() {
                           <span className="rounded border border-[var(--border)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--muted)]">
                             /{v.slug}
                           </span>
-                          {v.PmProjectId ? (
+                          {Number(v.IsPersonalWork) === 1 ? (
+                            <span className="rounded border border-[color-mix(in_srgb,var(--accent)_35%,var(--border))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-soft)]">
+                              My work
+                            </span>
+                          ) : v.PmProjectId ? (
                             <span className="rounded border border-[color-mix(in_srgb,var(--accent)_35%,var(--border))] px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent-soft)]">
                               Planner #{v.PmProjectId}
                             </span>

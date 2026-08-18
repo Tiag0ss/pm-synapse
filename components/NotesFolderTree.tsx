@@ -85,12 +85,12 @@ function NoteRowButton({
       type="button"
       onClick={() => onOpenNote(note.id)}
       title={note.path.replace(/\.md$/i, '')}
-      className={`mb-0.5 flex w-full items-start gap-2 rounded-lg py-1.5 text-left transition ${
+      className={`mb-0.5 flex w-full min-w-0 items-start gap-2 rounded-lg py-1.5 text-left transition ${
         selected
           ? 'bg-[var(--surface-2)] ring-1 ring-[var(--accent)]/40'
           : 'hover:bg-[var(--surface-2)]/70'
       }`}
-      style={{ paddingLeft: `${0.5 + depth * 0.75}rem`, paddingRight: '0.625rem' }}
+      style={{ paddingLeft: `${0.5 + depth * 0.75}rem`, paddingRight: '0.375rem' }}
     >
       <span className="mt-0.5 text-[var(--accent-soft)]" aria-hidden>
         <NoteIcon icon={note.icon} size={14} />

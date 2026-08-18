@@ -53,9 +53,12 @@ const STATEMENTS = [
     PmOrganizationId INT NULL,
     PmProjectId INT NULL,
     PmProjectLinkedAt DATETIME NULL,
+    IsPersonalWork TINYINT NOT NULL DEFAULT 0,
+    PersonalWorkOwnerId INT GENERATED ALWAYS AS (IF(IsPersonalWork = 1, OwnerPmUserId, NULL)) STORED,
     CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uq_vault_owner_slug (OwnerPmUserId, slug),
+    UNIQUE KEY uq_personal_work_owner (PersonalWorkOwnerId),
     KEY idx_vault_owner (OwnerPmUserId)
   )`,
   `CREATE TABLE IF NOT EXISTS Notes (
@@ -212,6 +215,9 @@ const ALTERS = [
   'ALTER TABLE VaultMedia ADD COLUMN NoteId INT NULL',
   'ALTER TABLE VaultMedia ADD KEY idx_media_note (NoteId)',
   'ALTER TABLE VaultMedia ADD CONSTRAINT fk_media_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE SET NULL',
+  'ALTER TABLE Vaults ADD COLUMN IsPersonalWork TINYINT NOT NULL DEFAULT 0',
+  'ALTER TABLE Vaults ADD COLUMN PersonalWorkOwnerId INT GENERATED ALWAYS AS (IF(IsPersonalWork = 1, OwnerPmUserId, NULL)) STORED',
+  'ALTER TABLE Vaults ADD UNIQUE KEY uq_personal_work_owner (PersonalWorkOwnerId)',
 ];
 
 /** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */

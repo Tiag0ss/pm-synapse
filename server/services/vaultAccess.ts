@@ -147,7 +147,7 @@ export async function listAccessibleVaults(pmUserId: number): Promise<VaultAcces
      LEFT JOIN VaultMembers m ON m.VaultId = v.Id AND m.PmUserId = ?
      WHERE v.OwnerPmUserId = ?
         OR (m.PmUserId IS NOT NULL AND LOWER(m.Role) = 'edit')
-     ORDER BY v.Name ASC`,
+     ORDER BY v.IsPersonalWork DESC, v.Name ASC`,
     [pmUserId, pmUserId, pmUserId]
   );
   return rows.map((row) => ({

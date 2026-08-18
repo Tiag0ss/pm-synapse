@@ -62,6 +62,11 @@ interface NoteTasksPanelProps {
   onOpenCrossVaultNote?: (vaultId: number, noteId: number) => void;
   /** Open Vault Planner / PM integration settings (link/create/unlink lives there). */
   onOpenPmSettings?: () => void;
+  /** Hub overview: checkboxes are pull-only (no toggle / push). */
+  pullOnly?: boolean;
+  /** Pull Planner tasks into the hub overview (My work vault only). */
+  onRefreshPlanner?: () => void | Promise<void>;
+  refreshingPlanner?: boolean;
   /** Share Planner links with the editor so it does not re-fetch /checkboxes. */
   onPlannerLinksChange?: (
     links: Array<{ markerId: string | null; openUrl: string | null; pmTaskId: number | null }>
@@ -86,6 +91,9 @@ export default function NoteTasksPanel({
   onOpenCrossVaultNote,
   onOpenPmSettings,
   onPlannerLinksChange,
+  pullOnly = false,
+  onRefreshPlanner,
+  refreshingPlanner = false,
 }: NoteTasksPanelProps) {
   const [items, setItems] = useState<NoteTaskItem[]>([]);
   const [notePmTaskId, setNotePmTaskId] = useState<number | null>(null);
@@ -276,7 +284,13 @@ export default function NoteTasksPanel({
     return onEnsureSaved();
   };
 
+  const toggleLocked = readOnly || pullOnly;
+
   const toggle = async (item: NoteTaskItem) => {
+    if (pullOnly) {
+      onStatus?.('This overview is pull-only. Use Refresh tasks above.');
+      return;
+    }
     if (!(await ensureSaved())) {
       onStatus?.('Save the note before updating tasks');
       return;
@@ -466,7 +480,18 @@ export default function NoteTasksPanel({
     await load();
   };
 
-  const showPanel = items.length > 0 || !readOnly;
+  const showPanel = items.length > 0 || !readOnly || pullOnly;
+
+  const refreshPlanner = async () => {
+    if (!onRefreshPlanner) return;
+    setBusy(true);
+    try {
+      await onRefreshPlanner();
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (!showPanel) return null;
 
@@ -491,7 +516,7 @@ export default function NoteTasksPanel({
       )}
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
-          Tasks · {items.length}
+          {pullOnly ? 'Planner tasks' : `Tasks · ${items.length}`}
           {totalHours > 0 ? (
             <>
               {' · '}
@@ -528,13 +553,34 @@ export default function NoteTasksPanel({
             </>
           ) : null}
         </h3>
-        <span className="text-[10px] text-[var(--muted)]">
-          {items.filter((i) => i.checked).length} done
-          {missingCount > 0 ? ` · ${missingCount} unlinked` : ''}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          {pullOnly && onRefreshPlanner ? (
+            <button
+              type="button"
+              className="btn-primary py-1 text-[11px]"
+              disabled={busy || refreshingPlanner}
+              title="Refresh tasks from Planner"
+              onClick={() => void refreshPlanner()}
+            >
+              {refreshingPlanner || busy ? 'Refreshing…' : 'Refresh tasks'}
+            </button>
+          ) : (
+            <span className="text-[10px] text-[var(--muted)]">
+              {items.filter((i) => i.checked).length} done
+              {missingCount > 0 ? ` · ${missingCount} unlinked` : ''}
+            </span>
+          )}
+        </div>
       </div>
 
-      {!readOnly && (hasEstimateSources || aiEnabled) && (
+      {pullOnly && (
+        <p className="mb-3 text-[11px] text-[var(--muted)]">
+          Pull-only from Planner — adds, removes, and updates tasks assigned to you. Linked notes on
+          the overview are kept.
+        </p>
+      )}
+
+      {!readOnly && !pullOnly && (hasEstimateSources || aiEnabled) && (
         <div className="mb-3 flex flex-wrap gap-1.5">
           {hasEstimateSources && (
             <button
@@ -561,6 +607,7 @@ export default function NoteTasksPanel({
         </div>
       )}
 
+      {!pullOnly && (
       <div className="mb-3 space-y-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]/40 px-2.5 py-2">
         <p className="text-[11px] text-[var(--muted)]">
           Note task{noteTitle ? ` · ${noteTitle}` : ''}
@@ -580,7 +627,7 @@ export default function NoteTasksPanel({
             <span className="text-[11px] text-[var(--muted)]">No note-level Planner task</span>
           )}
         </div>
-        {!readOnly && hasProject && missingCount > 0 && (
+        {!readOnly && !pullOnly && hasProject && missingCount > 0 && (
           <p className="text-[11px] text-[var(--muted)]">
             {missingCount} unlinked — use{' '}
             <span className="text-[var(--text)]">Link / create</span> on a task, or open{' '}
@@ -599,14 +646,21 @@ export default function NoteTasksPanel({
           </p>
         )}
       </div>
+      )}
 
       {items.length === 0 ? (
         <p className="text-[11px] text-[var(--muted)]">
+          {pullOnly
+            ? 'No Planner tasks assigned to you right now. Use Refresh tasks when work is assigned in Planner.'
+            : (
+              <>
           Add <code className="text-[var(--accent-soft)]">- [ ]</code> /{' '}
           <code className="text-[var(--accent-soft)]">[-]</code> /{' '}
           <code className="text-[var(--accent-soft)]">[x]</code> lines or YAML{' '}
           <code className="text-[var(--accent-soft)]">todos:</code> for tasks. Indent nested
           checkboxes to create Planner subtasks.
+              </>
+            )}
         </p>
       ) : (
         <ul className="space-y-1.5">
@@ -618,7 +672,7 @@ export default function NoteTasksPanel({
             >
               <button
                 type="button"
-                disabled={busy || readOnly}
+                disabled={busy || toggleLocked}
                 onClick={() => void toggle(item)}
                 className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition ${
                   item.checked
@@ -628,8 +682,10 @@ export default function NoteTasksPanel({
                       : 'border-[var(--border-strong)] text-transparent hover:border-[var(--accent)]'
                 }`}
                 title={
-                  readOnly
-                    ? item.checked
+                  toggleLocked
+                    ? pullOnly
+                      ? 'Pull-only — refresh from Planner to update'
+                      : item.checked
                       ? 'Done'
                       : item.partial
                         ? 'In progress'
@@ -753,6 +809,7 @@ export default function NoteTasksPanel({
                 </a>
               ) : (
                 !readOnly &&
+                !pullOnly &&
                 hasProject && (
                   <button
                     type="button"

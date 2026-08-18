@@ -40,6 +40,7 @@ interface VaultOptionsModalProps {
   onChanged: () => void;
   onStatus?: (msg: string) => void;
   onOpenNote: (noteId: number) => void;
+  isPersonalWork?: boolean;
   onCreateMissingNote: (title: string, linkFromNoteId: number) => Promise<void> | void;
 }
 
@@ -60,6 +61,7 @@ export default function VaultOptionsModal({
   onStatus,
   onOpenNote,
   onCreateMissingNote,
+  isPersonalWork = false,
 }: VaultOptionsModalProps) {
   const router = useRouter();
   const [tab, setTab] = useState<OptionsTab>(initialTab);
@@ -168,9 +170,9 @@ export default function VaultOptionsModal({
 
   const tabs: Array<{ id: OptionsTab; label: string; hidden?: boolean }> = [
     { id: 'links', label: 'Broken links' },
-    { id: 'share', label: 'Share' },
+    { id: 'share', label: 'Share', hidden: isPersonalWork },
     { id: 'trash', label: 'Trash', hidden: !canEdit },
-    { id: 'pm', label: 'Project Management', hidden: !canEdit },
+    { id: 'pm', label: 'Project Management', hidden: !canEdit || isPersonalWork },
     { id: 'vault', label: 'Vault' },
   ];
 
@@ -667,7 +669,7 @@ export default function VaultOptionsModal({
                 </section>
               )}
 
-              {isOwner && (
+              {isOwner && !isPersonalWork && (
                 <section className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
                   <h3 className="text-sm font-semibold text-red-300">Delete vault</h3>
                   <p className="mt-1 text-xs text-[var(--muted)]">
