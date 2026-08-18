@@ -136,6 +136,8 @@ const CALLOUT_TYPES: Record<string, string> = {
 /**
  * Obsidian / GitHub-style callouts:
  * > [!NOTE] Optional title
+ * > [!NOTE]- Title   (foldable, starts collapsed)
+ * > [!NOTE]+ Title   (foldable, starts expanded)
  * > body
  */
 export function preprocessCallouts(md: string): string {
@@ -143,15 +145,16 @@ export function preprocessCallouts(md: string): string {
   const out: string[] = [];
   let i = 0;
   while (i < lines.length) {
-    const m = lines[i].match(/^>\s*\[!([A-Za-z]+)\]\s*(.*)$/);
+    const m = lines[i].match(/^>\s*\[!([A-Za-z]+)\]([+-])?\s*(.*)$/);
     if (!m) {
       out.push(lines[i]);
       i += 1;
       continue;
     }
     const typeKey = m[1].toLowerCase();
+    const foldFlag = m[2] as '+' | '-' | undefined;
     const typeLabel = CALLOUT_TYPES[typeKey] || m[1];
-    const title = m[2].trim() || typeLabel;
+    const title = m[3].trim() || typeLabel;
     const bodyLines: string[] = [];
     i += 1;
     while (i < lines.length && /^>/.test(lines[i])) {
@@ -167,13 +170,91 @@ export function preprocessCallouts(md: string): string {
         bodyHtml = `<p>${escapeHtml(bodyMd)}</p>`;
       }
     }
+    const bodyBlock = bodyHtml ? `<div class="synapse-callout-body">${bodyHtml}</div>` : '';
+    if (foldFlag) {
+      const openAttr = foldFlag === '+' ? ' open' : '';
+      out.push(
+        `<details class="synapse-callout synapse-callout-${escapeAttr(typeKey)}" data-callout="${escapeAttr(typeKey)}"${openAttr}>` +
+          `<summary class="synapse-callout-title">${escapeHtml(title)}</summary>` +
+          bodyBlock +
+          `</details>`
+      );
+    } else {
+      out.push(
+        `<aside class="synapse-callout synapse-callout-${escapeAttr(typeKey)}" data-callout="${escapeAttr(typeKey)}">` +
+          `<p class="synapse-callout-title">${escapeHtml(title)}</p>` +
+          bodyBlock +
+          `</aside>`
+      );
+    }
+    out.push('');
+  }
+  return out.join('\n');
+}
+
+const FOLD_OPEN = /^:::fold([+-])?\s*(.*)$/;
+const FOLD_CLOSE = /^:::\s*$/;
+
+/**
+ * Neutral collapsible sections (Wikipedia-style, not callouts):
+ * :::fold Title          starts expanded
+ * :::fold- Title         starts collapsed
+ * :::fold+ Title         starts expanded
+ * body
+ * :::
+ */
+export function preprocessFolds(md: string): string {
+  return mapProtectedMd(md || '', preprocessFoldsUnprotected);
+}
+
+function preprocessFoldsUnprotected(chunk: string): string {
+  const lines = chunk.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const m = lines[i].match(FOLD_OPEN);
+    if (!m) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    let close = -1;
+    let depth = 1;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (FOLD_OPEN.test(lines[j])) depth += 1;
+      else if (FOLD_CLOSE.test(lines[j])) {
+        depth -= 1;
+        if (depth === 0) {
+          close = j;
+          break;
+        }
+      }
+    }
+    if (close < 0) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    const foldFlag = m[1] as '+' | '-' | undefined;
+    const title = m[2].trim() || 'Section';
+    const bodyMd = preprocessFoldsUnprotected(lines.slice(i + 1, close).join('\n')).trim();
+    let bodyHtml = '';
+    if (bodyMd) {
+      try {
+        bodyHtml = marked.parse(bodyMd, { async: false, gfm: true, breaks: true }) as string;
+      } catch {
+        bodyHtml = `<p>${escapeHtml(bodyMd)}</p>`;
+      }
+    }
+    const openAttr = foldFlag === '-' ? '' : ' open';
     out.push(
-      `<aside class="synapse-callout synapse-callout-${escapeAttr(typeKey)}" data-callout="${escapeAttr(typeKey)}">` +
-        `<p class="synapse-callout-title">${escapeHtml(title)}</p>` +
-        (bodyHtml ? `<div class="synapse-callout-body">${bodyHtml}</div>` : '') +
-        `</aside>`
+      `<details class="synapse-fold"${openAttr}>` +
+        `<summary class="synapse-fold-title">${escapeHtml(title)}</summary>` +
+        (bodyHtml ? `<div class="synapse-fold-body">${bodyHtml}</div>` : '') +
+        `</details>`
     );
     out.push('');
+    i = close + 1;
   }
   return out.join('\n');
 }
@@ -415,6 +496,7 @@ export function preprocessMarkdownExtras(md: string): string {
   out = preprocessCallouts(out);
   out = preprocessFootnotes(out);
   out = preprocessMath(out);
+  out = preprocessFolds(out);
   return out;
 }
 

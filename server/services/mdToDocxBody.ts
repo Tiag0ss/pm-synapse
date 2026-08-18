@@ -472,6 +472,19 @@ export async function markdownToDocxFragment(
       continue;
     }
 
+    // Foldable section fence — title as bold, body as normal Markdown, closing ::: skipped
+    const foldOpen = /^:::fold([+-])?\s*(.*)$/.exec(line);
+    if (foldOpen) {
+      const title = (foldOpen[2] || '').trim() || 'Section';
+      parts.push(wordParagraph(stripInlineMd(replaceMathInLine(title)), { bold: true }));
+      i++;
+      continue;
+    }
+    if (/^:::\s*$/.test(line)) {
+      i++;
+      continue;
+    }
+
     // Callout / blockquote
     if (/^>\s?/.test(line)) {
       const chunk: string[] = [];
@@ -480,10 +493,10 @@ export async function markdownToDocxFragment(
         i++;
       }
       const joined = chunk.join(' ').trim();
-      const callout = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i.exec(joined);
+      const callout = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]([+-])?\s*(.*)$/i.exec(joined);
       if (callout) {
         const kind = callout[1].toUpperCase();
-        const rest = callout[2] || '';
+        const rest = callout[3] || '';
         parts.push(
           wordParagraph(`${kind}${rest ? `: ${stripInlineMd(replaceMathInLine(rest))}` : ''}`, {
             bold: true,

@@ -160,6 +160,9 @@ const LEGEND_SECTIONS: LegendSection[] = [
     title: 'Callouts & structure',
     items: [
       { syntax: '> [!NOTE]', meaning: 'Callout (also tip, warning, danger, …)' },
+      { syntax: '> [!NOTE]- / +', meaning: 'Foldable callout (starts closed / open)' },
+      { syntax: ':::fold Title … :::', meaning: 'Collapsible section (starts open; not a callout)' },
+      { syntax: ':::fold- Title … :::', meaning: 'Collapsible section (starts closed)' },
       { syntax: '[[toc]]', meaning: 'Table of contents from #–######' },
       { syntax: '[^1] / [^1]:', meaning: 'Footnote reference + definition' },
     ],

@@ -597,6 +597,38 @@ a:hover { text-decoration: underline; }
   font-size: 0.95em;
   color: var(--text);
 }
+.synapse-md-preview details.synapse-callout > summary.synapse-callout-title {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  user-select: none;
+}
+.synapse-md-preview details.synapse-callout > summary.synapse-callout-title::-webkit-details-marker {
+  display: none;
+}
+.synapse-md-preview details.synapse-callout > summary.synapse-callout-title::before {
+  content: '';
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid var(--text-muted, var(--text));
+  border-bottom: 2px solid var(--text-muted, var(--text));
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+.synapse-md-preview details.synapse-callout[open] > summary.synapse-callout-title::before {
+  transform: rotate(45deg);
+}
+.synapse-md-preview details.synapse-callout > summary.synapse-callout-title:hover {
+  color: var(--accent);
+}
+.synapse-md-preview details.synapse-callout:not([open]) > summary.synapse-callout-title {
+  margin-bottom: 0;
+}
 .synapse-md-preview .synapse-callout-body {
   margin: 0;
 }
@@ -635,6 +667,53 @@ a:hover { text-decoration: underline; }
   border-left-color: #a78bfa;
   background: color-mix(in srgb, #a78bfa 12%, var(--surface-2));
 }
+
+/* —— Foldable sections (:::fold) —— */
+.synapse-md-preview details.synapse-fold {
+  margin: 0.85rem 0;
+  background: transparent;
+  font-family: var(--font-sans);
+}
+.synapse-md-preview details.synapse-fold > summary.synapse-fold-title {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  user-select: none;
+  margin: 0;
+  padding: 0.15rem 0;
+  font-weight: 600;
+  font-size: 0.95em;
+  color: var(--text);
+}
+.synapse-md-preview details.synapse-fold > summary.synapse-fold-title::-webkit-details-marker {
+  display: none;
+}
+.synapse-md-preview details.synapse-fold > summary.synapse-fold-title::before {
+  content: '';
+  display: inline-block;
+  width: 0.4rem;
+  height: 0.4rem;
+  border-right: 2px solid var(--text-muted, var(--text));
+  border-bottom: 2px solid var(--text-muted, var(--text));
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+  opacity: 0.75;
+}
+.synapse-md-preview details.synapse-fold[open] > summary.synapse-fold-title::before {
+  transform: rotate(45deg);
+}
+.synapse-md-preview details.synapse-fold > summary.synapse-fold-title:hover {
+  color: var(--accent);
+}
+.synapse-md-preview .synapse-fold-body {
+  margin: 0;
+  padding: 0.15rem 0 0 1.05rem;
+}
+.synapse-md-preview .synapse-fold-body > :first-child { margin-top: 0.65rem; }
+.synapse-md-preview .synapse-fold-body > :last-child { margin-bottom: 0; }
 
 /* —— Footnotes —— */
 .synapse-md-preview .synapse-fn-ref a {
