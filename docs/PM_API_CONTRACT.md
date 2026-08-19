@@ -153,6 +153,7 @@ Task fields Synapse uses:
 | `Status` | Pull sync → YAML todo `status` name (via status catalog) |
 | `SynapseVaultId` / `SynapseNoteId` / `SynapseMarkerId` / `SynapseNoteUrl` | Linkability: empty ⇒ may associate; set ⇒ already linked to Synapse |
 | `StatusHideFromPlanningAndStatistics` | When `1`, Synapse **My work** overview excludes the task (status catalog: `HideFromPlanningAndStatistics`) |
+| `ClosedAt` | Date the task was closed (`YYYY-MM-DD` on the project list). Synapse **My work** overview excludes closed/cancelled tasks whose close date is more than 7 days ago. |
 | `AssignedTo` | PM user id the task is assigned to. Synapse **My work** overview keeps tasks where this equals the signed-in user’s linked PM id (`assignedTo` / `AssignedToUserId` aliases accepted). |
 
 **Link existing (Synapse):** Only tasks with **no** Synapse refs may be associated. Synapse lists projects via `GET /api/projects?organizationId=` and may link a checkbox to a task in **any** project in that organization (not only the vault’s linked project). Synapse also excludes ids already stored in `NoteCheckboxTasks` / `Notes.PmTaskId`.

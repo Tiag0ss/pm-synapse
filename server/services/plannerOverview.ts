@@ -1,12 +1,13 @@
 import { pool, RowDataPacket } from '../config/database';
 import { withStruckMarkdownText } from './checkboxes';
 import { parseFrontmatter } from './frontmatter';
-import { rebuildNoteGraph } from './notesGraph';
+import { rebuildNoteGraph, snapshotRevision } from './notesGraph';
 import {
   fetchPmOrganizations,
   fetchPmProjectTasks,
   fetchPmProjects,
   isPmTaskCancelled,
+  isPmTaskClosedOlderThanDays,
   isPmTaskHiddenFromPlanning,
   isPmTaskClosed,
   isPmTaskInProgress,
@@ -18,6 +19,7 @@ import {
 } from './pmClient';
 import {
   HUB_NOTE_PATH,
+  HUB_NOTE_TITLE,
   HUB_SEED_BODY,
   ensureHubNote,
   isPersonalWorkVault,
@@ -153,6 +155,7 @@ async function loadAssignedTasks(synapseUserId: number, pmUserId: number): Promi
       for (const task of normalizePmProjectTasks(taskRes.data)) {
         if (Number(task.AssignedTo || 0) !== pmUserId) continue;
         if (isPmTaskHiddenFromPlanning(task)) continue;
+        if (isPmTaskClosedOlderThanDays(task, 7)) continue;
         out.push({ ...task, projectId: project.Id, projectName });
       }
     }
@@ -248,7 +251,7 @@ export async function refreshPlannerOverview(params: {
   const vaultId = Number(params.vault.Id);
   const noteId = await ensureHubNote(vaultId);
   const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ?',
+    'SELECT Id, Title, Path, BodyMarkdown, FrontmatterJson, Visibility FROM Notes WHERE Id = ? AND VaultId = ?',
     [noteId, vaultId]
   );
   if (!notes.length) {
@@ -287,12 +290,36 @@ export async function refreshPlannerOverview(params: {
   const built = buildTasksMarkdown(tasks, markerByTaskId);
   const nextBody = replaceTasksBlock(body, built.markdown);
   const fmJson = JSON.stringify(parseFrontmatter(nextBody).data);
+  const visibility = notes[0].Visibility != null ? String(notes[0].Visibility) : null;
+  const prevFmJson = notes[0].FrontmatterJson != null ? String(notes[0].FrontmatterJson) : null;
+
+  if (nextBody !== body) {
+    await snapshotRevision(noteId, params.synapseUserId, {
+      title: String(notes[0].Title || HUB_NOTE_TITLE),
+      path: String(notes[0].Path || HUB_NOTE_PATH),
+      bodyMarkdown: body,
+      frontmatterJson: prevFmJson,
+      visibility,
+      source: 'refresh',
+    });
+  }
 
   await pool.execute(
     `UPDATE Notes SET BodyMarkdown = ?, FrontmatterJson = ?, Path = ?, Title = ?
      WHERE Id = ? AND VaultId = ?`,
-    [nextBody, fmJson, HUB_NOTE_PATH, 'planner/overview', noteId, vaultId]
+    [nextBody, fmJson, HUB_NOTE_PATH, HUB_NOTE_TITLE, noteId, vaultId]
   );
+
+  if (nextBody !== body) {
+    await snapshotRevision(noteId, params.synapseUserId, {
+      title: HUB_NOTE_TITLE,
+      path: HUB_NOTE_PATH,
+      bodyMarkdown: nextBody,
+      frontmatterJson: fmJson,
+      visibility,
+      source: 'refresh',
+    });
+  }
 
   await pool.execute('DELETE FROM NoteCheckboxTasks WHERE NoteId = ?', [noteId]);
   for (const row of built.rows) {

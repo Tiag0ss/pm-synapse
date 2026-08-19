@@ -392,6 +392,8 @@ export type PmTaskSummary = {
   SynapseNoteUrl?: string | null;
   /** PM user id the task is assigned to (project task list). */
   AssignedTo?: number | null;
+  /** First close date (YYYY-MM-DD) when currently closed/cancelled; from GET /api/tasks/project/:id */
+  ClosedAt?: string | null;
 };
 
 /** Fetch tasks for a PM project (includes StatusIsClosed / StatusIsCancelled / StatusName). */
@@ -475,6 +477,12 @@ export function normalizePmProjectTasks(data: unknown): PmTaskSummary[] {
         );
         return Number.isFinite(n) && n > 0 ? n : null;
       })(),
+      ClosedAt: (() => {
+        const raw = t.ClosedAt ?? t.closedAt;
+        if (raw == null) return null;
+        const s = String(raw).trim();
+        return s || null;
+      })(),
     });
   }
   return out;
@@ -501,6 +509,36 @@ export function listLinkablePmTasks(
 
 export function isPmTaskDone(task: PmTaskSummary): boolean {
   return isPmTaskClosed(task) || isPmTaskCancelled(task);
+}
+
+/** Parse PM date-only (`YYYY-MM-DD`) or ISO datetime to a UTC calendar date. */
+export function parsePmDateValue(value: unknown): Date | null {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const m = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) {
+    const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+/**
+ * True when the task is currently closed/cancelled and `ClosedAt` is more than `days` ago.
+ * Missing/unparseable `ClosedAt` does not exclude the task.
+ */
+export function isPmTaskClosedOlderThanDays(task: PmTaskSummary, days: number): boolean {
+  if (!isPmTaskDone(task)) return false;
+  const closed = parsePmDateValue(task.ClosedAt);
+  if (!closed) return false;
+  const now = new Date();
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const closedUtc = Date.UTC(closed.getUTCFullYear(), closed.getUTCMonth(), closed.getUTCDate());
+  const ageDays = Math.floor((todayUtc - closedUtc) / 86_400_000);
+  return ageDays > days;
 }
 
 export function isPmTaskClosed(task: PmTaskSummary): boolean {

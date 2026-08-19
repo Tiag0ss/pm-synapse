@@ -5,7 +5,7 @@ import { parseCrossVaultWikilinkTarget, pathStem, resolveNoteId } from './notePa
 
 const MAX_REVISIONS = 50;
 
-export type RevisionSource = 'manual' | 'auto';
+export type RevisionSource = 'manual' | 'auto' | 'refresh';
 
 function sameNullable(a: string | null, b: string | null): boolean {
   return (a ?? null) === (b ?? null);
@@ -23,7 +23,8 @@ export async function snapshotRevision(
     source?: RevisionSource;
   }
 ): Promise<boolean> {
-  const source: RevisionSource = snapshot.source === 'auto' ? 'auto' : 'manual';
+  const source: RevisionSource =
+    snapshot.source === 'auto' || snapshot.source === 'refresh' ? snapshot.source : 'manual';
 
   const [latestRows] = await pool.execute<RowDataPacket[]>(
     `SELECT Title, Path, BodyMarkdown, FrontmatterJson, Visibility

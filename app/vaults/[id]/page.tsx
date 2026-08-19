@@ -43,7 +43,7 @@ interface Revision {
   RevisionNumber: number;
   Title: string;
   CreatedAt: string;
-  Source?: 'manual' | 'auto';
+  Source?: 'manual' | 'auto' | 'refresh';
 }
 
 interface Backlink {
@@ -1701,8 +1701,13 @@ export default function VaultWorkspacePage() {
                 {visibleRevisions.map((r) => (
                   <div key={r.RevisionNumber} className="mb-2 flex items-center justify-between gap-2">
                     <span className="text-[11px] text-[var(--muted)]">
-                      #{r.RevisionNumber} · {r.Source === 'auto' ? 'Autosave' : 'Manual'} ·{' '}
-                      {new Date(r.CreatedAt).toLocaleString()}
+                      #{r.RevisionNumber} ·{' '}
+                      {r.Source === 'auto'
+                        ? 'Autosave'
+                        : r.Source === 'refresh'
+                          ? 'Refresh'
+                          : 'Manual'}{' '}
+                      · {new Date(r.CreatedAt).toLocaleString()}
                     </span>
                     <button
                       type="button"
