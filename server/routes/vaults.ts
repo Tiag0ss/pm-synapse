@@ -67,6 +67,7 @@ import {
   pushSingleCheckboxTask,
 } from '../services/pushCheckboxTasks';
 import {
+  autoLinkCheckboxesByDescription,
   linkCheckboxToPmTask,
   listLinkablePmTasksForVault,
   unlinkCheckboxFromPmTask,
@@ -1913,6 +1914,54 @@ router.post('/:vaultId/checkboxes/push-missing', async (req: AuthRequest, res: R
   }
 });
 
+/** Match unlinked checkboxes in one note to existing PM tasks by name / description. */
+router.post('/:vaultId/checkboxes/auto-link', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+
+  const schema = z.object({ noteId: z.coerce.number().int().positive() });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'noteId required' });
+  }
+
+  const [noteCheck] = await pool.execute<RowDataPacket[]>(
+    'SELECT Path, BodyMarkdown FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL',
+    [parsed.data.noteId, vault.Id]
+  );
+  if (!noteCheck.length) {
+    return res.status(404).json({ success: false, message: 'Note not found' });
+  }
+  if (overviewNoteRow(noteCheck[0] as Record<string, unknown>)) {
+    return res.status(403).json({ success: false, message: overviewPullOnlyMessage() });
+  }
+
+  const defaultProjectId = Number(vault.PmProjectId);
+  const orgId = Number(vault.PmOrganizationId);
+  if (!defaultProjectId || !orgId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Link or create a PM project on this vault first',
+    });
+  }
+
+  try {
+    const data = await autoLinkCheckboxesByDescription({
+      vaultId: Number(vault.Id),
+      noteId: parsed.data.noteId,
+      pmUserId: req.user!.userId,
+      defaultProjectId,
+      organizationId: orgId,
+    });
+    res.json({ success: true, data });
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    const status = err.status || 500;
+    if (status >= 500) logger.error('Auto-link checkboxes failed', { error });
+    return pmFail(res, status, err.message || 'Auto-link failed');
+  }
+});
+
 /** Create a PM task from a checkbox in the note (nested → Planner subtasks). */
 router.post('/:vaultId/notes/:noteId/checkboxes/push', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
@@ -1985,6 +2034,7 @@ router.get('/:vaultId/pm-tasks/linkable', async (req: AuthRequest, res: Response
 
   try {
     const data = await listLinkablePmTasksForVault({
+      vaultId: Number(vault.Id),
       pmUserId: req.user!.userId,
       defaultProjectId,
       organizationId: orgId,

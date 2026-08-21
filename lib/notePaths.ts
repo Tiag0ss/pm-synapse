@@ -140,6 +140,8 @@ export type CrossVaultResolveResult =
       status: 'missing';
       vaultId: number;
       vaultSlug: string;
+      /** Note path/title to create (not display alias). */
+      noteTarget: string;
       label: string;
     }
   | { status: 'locked'; label: string };
@@ -230,6 +232,7 @@ export function resolveCrossVaultWikilink(
       status: 'missing',
       vaultId: vault.vaultId,
       vaultSlug: vault.vaultSlug,
+      noteTarget: parsed.noteTarget,
       label,
     };
   }

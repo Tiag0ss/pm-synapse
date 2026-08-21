@@ -394,6 +394,8 @@ export type PmTaskSummary = {
   AssignedTo?: number | null;
   /** First close date (YYYY-MM-DD) when currently closed/cancelled; from GET /api/tasks/project/:id */
   ClosedAt?: string | null;
+  /** HTML description from PM (project task list). */
+  Description?: string | null;
 };
 
 /** Fetch tasks for a PM project (includes StatusIsClosed / StatusIsCancelled / StatusName). */
@@ -483,27 +485,51 @@ export function normalizePmProjectTasks(data: unknown): PmTaskSummary[] {
         const s = String(raw).trim();
         return s || null;
       })(),
+      Description:
+        t.Description != null
+          ? String(t.Description)
+          : t.description != null
+            ? String(t.description)
+            : null,
     });
   }
   return out;
 }
 
+export type ListLinkablePmTasksOptions = {
+  /** When set, tasks already linked in this vault remain linkable for additional checkboxes. */
+  vaultId?: number;
+  vaultLinkedPmTaskIds?: Set<number> | Iterable<number> | null;
+};
+
 /**
  * Tasks with no Synapse refs, optionally excluding ids already linked in Synapse.
+ * Within one vault, tasks linked on another note may be linked again (Synapse-only).
  */
 export function listLinkablePmTasks(
   tasks: PmTaskSummary[],
-  excludePmTaskIds?: Set<number> | Iterable<number> | null
+  excludePmTaskIds?: Set<number> | Iterable<number> | null,
+  options?: ListLinkablePmTasksOptions
 ): PmTaskSummary[] {
   const exclude =
     excludePmTaskIds instanceof Set
       ? excludePmTaskIds
       : new Set(excludePmTaskIds ? [...excludePmTaskIds] : []);
+  const vaultLinked =
+    options?.vaultLinkedPmTaskIds instanceof Set
+      ? options.vaultLinkedPmTaskIds
+      : new Set(options?.vaultLinkedPmTaskIds ? [...options.vaultLinkedPmTaskIds] : []);
+  const vaultId = options?.vaultId != null ? Number(options.vaultId) : 0;
   return tasks.filter((t) => {
     const id = Number(t.Id);
     if (!Number.isFinite(id) || id <= 0) return false;
+    if (vaultLinked.has(id)) return true;
     if (exclude.has(id)) return false;
-    return !isPmTaskSynapseLinked(t);
+    if (isPmTaskSynapseLinked(t)) {
+      if (vaultId > 0 && Number(t.SynapseVaultId) === vaultId) return true;
+      return false;
+    }
+    return true;
   });
 }
 

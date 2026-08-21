@@ -146,7 +146,8 @@ Task fields Synapse uses:
 | Field | Use |
 |-------|-----|
 | `Id` | Link / deep-link |
-| `TaskName` | Link picker labels |
+| `TaskName` | Link picker labels; Synapse auto-link matches checkbox text to `TaskName` / `Description` |
+| `Description` | HTML body; used when auto-linking checkboxes to existing PM tasks (normalized text match) |
 | `StatusIsClosed` | Pull sync → checkbox `[x]` / done |
 | `StatusIsCancelled` | Pull sync → checkbox `[x]` + `~~label~~` |
 | `StatusName` | Pull sync → YAML todo status + `[-]` when In Progress |
@@ -156,7 +157,7 @@ Task fields Synapse uses:
 | `ClosedAt` | Date the task was closed (`YYYY-MM-DD` on the project list). Synapse **My work** overview excludes closed/cancelled tasks whose close date is more than 7 days ago. |
 | `AssignedTo` | PM user id the task is assigned to. Synapse **My work** overview keeps tasks where this equals the signed-in user’s linked PM id (`assignedTo` / `AssignedToUserId` aliases accepted). |
 
-**Link existing (Synapse):** Only tasks with **no** Synapse refs may be associated. Synapse lists projects via `GET /api/projects?organizationId=` and may link a checkbox to a task in **any** project in that organization (not only the vault’s linked project). Synapse also excludes ids already stored in `NoteCheckboxTasks` / `Notes.PmTaskId`.
+**Link existing (Synapse):** Only tasks with **no** Synapse refs may receive the **first** association (PM fields updated). Synapse lists projects via `GET /api/projects?organizationId=` and may link a checkbox to a task in **any** project in that organization (not only the vault’s linked project). Synapse excludes ids already stored in `NoteCheckboxTasks` / `Notes.PmTaskId`, **except** within the same vault: a task already linked on one note may be linked to additional checkboxes on other notes (Synapse DB only; PM Synapse fields stay on the primary link).
 
 ### Create
 

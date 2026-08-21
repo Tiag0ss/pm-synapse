@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { resolveNoteId, type NoteResolveEntry } from '@/lib/notePaths';
 import { renderInlineMarkdown } from '@/lib/renderMarkdown';
 import ConfirmModal from '@/components/ConfirmModal';
@@ -77,6 +77,7 @@ export default function VaultPmSettingsModal({
   const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
   const [chooserItem, setChooserItem] = useState<VaultCheckboxItem | null>(null);
   const [unlinkItem, setUnlinkItem] = useState<VaultCheckboxItem | null>(null);
+  const [autoLinkNoteId, setAutoLinkNoteId] = useState<number | ''>('');
 
   const load = async () => {
     setLoadingOrgs(true);
@@ -124,6 +125,22 @@ export default function VaultPmSettingsModal({
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, vaultId, pmOrganizationId, pmProjectId]);
+
+  const missingCount = items.filter((i) => !i.pmTaskId).length;
+
+  const notesWithUnlinked = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const item of items) {
+      if (!item.pmTaskId) map.set(item.noteId, item.noteTitle);
+    }
+    return [...map.entries()]
+      .map(([id, title]) => ({ id, title }))
+      .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+  }, [items]);
+
+  const autoLinkCandidates = autoLinkNoteId
+    ? items.filter((i) => i.noteId === autoLinkNoteId && !i.pmTaskId).length
+    : 0;
 
   if (!open) return null;
 
@@ -440,7 +457,48 @@ export default function VaultPmSettingsModal({
     }
   };
 
-  const missingCount = items.filter((i) => !i.pmTaskId).length;
+  const autoLinkByDescription = async () => {
+    if (!linkedProjectId) {
+      setStatus('Link a PM project first');
+      return;
+    }
+    if (!autoLinkNoteId) {
+      setStatus('Select a note first');
+      return;
+    }
+    if (!autoLinkCandidates) {
+      setStatus('No unlinked checkboxes in that note');
+      return;
+    }
+    setBusy(true);
+    setStatus('Matching Planner tasks by description…');
+    try {
+      const res = await fetch(`/api/vaults/${vaultId}/checkboxes/auto-link`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ noteId: autoLinkNoteId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        if (data.reauth || res.status === 401) setNeedsReauth(true);
+        setStatus(data.message || 'Auto-link failed');
+        return;
+      }
+      const linked = Number(data.data?.linked?.length || 0);
+      const unmatched = Number(data.data?.unmatched?.length || 0);
+      const ambiguous = Number(data.data?.ambiguous?.length || 0);
+      const failed = Number(data.data?.failed?.length || 0);
+      const failedPart = failed > 0 ? ` · ${failed} failed` : '';
+      setStatus(
+        `Auto-linked ${linked} · ${unmatched} unmatched · ${ambiguous} ambiguous${failedPart} — use Link / create for the rest`
+      );
+      onChanged();
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const inner = (
     <>
@@ -600,6 +658,42 @@ export default function VaultPmSettingsModal({
               new Planner task or link an existing one (no Synapse reference). Unlink keeps the
               Planner task. Indented checkboxes become Planner subtasks when created.
             </p>
+            {notesWithUnlinked.length > 0 && (
+              <div className="mb-3 flex flex-wrap items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)]/40 p-3">
+                <label className="min-w-[12rem] flex-1 text-xs">
+                  <span className="mb-1 block font-medium text-[var(--text)]">Auto-link by description</span>
+                  <select
+                    className="input w-full py-1.5 text-xs"
+                    value={autoLinkNoteId === '' ? '' : String(autoLinkNoteId)}
+                    onChange={(e) =>
+                      setAutoLinkNoteId(e.target.value ? Number(e.target.value) : '')
+                    }
+                  >
+                    <option value="">Select note…</option>
+                    {notesWithUnlinked.map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {n.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="btn-primary py-1 text-xs"
+                  disabled={busy || !linkedProjectId || !autoLinkNoteId || autoLinkCandidates === 0}
+                  title={
+                    !autoLinkNoteId
+                      ? 'Select a note with unlinked checkboxes'
+                      : autoLinkCandidates === 0
+                        ? 'No unlinked checkboxes in this note'
+                        : `Match ${autoLinkCandidates} checkbox${autoLinkCandidates === 1 ? '' : 'es'} to Planner tasks by name / description`
+                  }
+                  onClick={() => void autoLinkByDescription()}
+                >
+                  Auto-link note
+                </button>
+              </div>
+            )}
             {bulkProgress && (
               <div
                 className="mb-3 rounded-xl border border-[var(--border)] bg-[var(--surface)]/60 px-3 py-3"

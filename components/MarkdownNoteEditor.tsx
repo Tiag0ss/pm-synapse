@@ -846,11 +846,34 @@ export default function MarkdownNoteEditor({
       const target = (e.target as HTMLElement).closest(
         'a.synapse-wikilink, a.synapse-mention'
       ) as HTMLAnchorElement | null;
-      if (!target) return;
+      if (!target || !root.contains(target)) return;
       e.preventDefault();
       const id = Number(target.dataset.noteId || 0);
       const crossVaultId = Number(target.dataset.vaultId || 0);
       const currentVaultId = vaultId ? Number(vaultId) : 0;
+      const missingTitle = String(target.dataset.noteTitle || '').trim();
+      const isMissingWikilink =
+        target.classList.contains('synapse-wikilink') &&
+        (target.classList.contains('is-missing') || !id);
+
+      if (isMissingWikilink) {
+        if (!missingTitle) return;
+        const externalVault =
+          crossVaultId && currentVaultId && crossVaultId !== currentVaultId;
+        if (externalVault && onCreateCrossVaultNote) {
+          onCreateCrossVaultNote(crossVaultId, missingTitle);
+          return;
+        }
+        if (onCreateNoteFromWikilink) {
+          onCreateNoteFromWikilink(missingTitle);
+          return;
+        }
+        if (crossVaultId && onCreateCrossVaultNote) {
+          onCreateCrossVaultNote(crossVaultId, missingTitle);
+        }
+        return;
+      }
+
       if (
         id &&
         crossVaultId &&
@@ -863,18 +886,6 @@ export default function MarkdownNoteEditor({
       }
       if (id && onOpenNote) {
         onOpenNote(id);
-        return;
-      }
-      if (target.classList.contains('synapse-wikilink')) {
-        const missingTitle = String(target.dataset.noteTitle || '').trim();
-        if (!missingTitle) return;
-        if (crossVaultId && onCreateCrossVaultNote) {
-          onCreateCrossVaultNote(crossVaultId, missingTitle);
-          return;
-        }
-        if (onCreateNoteFromWikilink && !crossVaultId) {
-          onCreateNoteFromWikilink(missingTitle);
-        }
       }
     };
     root.addEventListener('click', onClick);

@@ -175,10 +175,10 @@ function renderNoteLinkHtml(
         `</span>`
       );
     }
-    if (r.status === 'missing') {
-      const href = `#wiki-${encodeURIComponent(`@${r.vaultSlug}/${r.label}`)}`;
-      return `<a class="synapse-wikilink is-missing" href="${href}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-id="" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
-    }
+        if (r.status === 'missing') {
+          const href = `#wiki-${encodeURIComponent(`@${r.vaultSlug}/${r.noteTarget}`)}`;
+          return `<a class="synapse-wikilink is-missing" href="${href}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-id="" data-note-title="${escapeAttr(r.noteTarget)}">${escapeHtml(r.label)}</a>`;
+        }
     return `<a class="synapse-wikilink" href="#note-${r.noteId}" data-note-id="${r.noteId}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
   }
 
