@@ -290,23 +290,24 @@ export async function linkCheckboxToPmTask(params: {
     });
   }
 
-  const resolved = await resolvePmTaskForLink({
-    pmUserId: params.pmUserId,
-    pmTaskId: params.pmTaskId,
-    pmProjectId: params.pmProjectId,
-    defaultProjectId: params.defaultProjectId,
-  });
-  if (!resolved) {
-    throw Object.assign(new Error('PM task not found in the selected project'), { status: 404 });
-  }
-  const task = resolved.task;
-  const linkedProjectId = resolved.projectId;
-
   const vaultLinked = await linkedPmTaskIdsInVault(params.vaultId);
   const reuseInVault = vaultLinked.has(params.pmTaskId);
 
+  let linkedProjectId = params.pmProjectId > 0 ? params.pmProjectId : params.defaultProjectId;
+
   if (!reuseInVault) {
-    if (isPmTaskSynapseLinked(task)) {
+    const resolved = await resolvePmTaskForLink({
+      pmUserId: params.pmUserId,
+      pmTaskId: params.pmTaskId,
+      pmProjectId: params.pmProjectId,
+      defaultProjectId: params.defaultProjectId,
+    });
+    if (!resolved) {
+      throw Object.assign(new Error('PM task not found in the selected project'), { status: 404 });
+    }
+    linkedProjectId = resolved.projectId;
+
+    if (isPmTaskSynapseLinked(resolved.task)) {
       throw Object.assign(new Error('PM task already has a Synapse reference'), { status: 409 });
     }
 
@@ -728,6 +729,10 @@ export function suggestPmTaskForCheckbox(
   return task;
 }
 
+/**
+ * Ensure checkbox / YAML todo markers once, then persist links locally.
+ * Avoids per-checkbox PM project fetches + pull-sync (was ~7s each).
+ */
 export async function autoLinkCheckboxesByDescription(params: {
   vaultId: number;
   noteId: number;
@@ -748,8 +753,28 @@ export async function autoLinkCheckboxesByDescription(params: {
     throw Object.assign(new Error('Note not found'), { status: 404 });
   }
 
-  const body = String(notes[0].BodyMarkdown || '');
-  const candidates = listNoteTaskCandidates(body);
+  let body = String(notes[0].BodyMarkdown || '');
+  let bodyChanged = false;
+  const ensuredFm = ensureFrontmatterTodoIds(body);
+  if (ensuredFm.changed) {
+    body = ensuredFm.markdown;
+    bodyChanged = true;
+  }
+
+  let candidates = listNoteTaskCandidates(body);
+  for (let i = 0; i < candidates.length; i++) {
+    const box = candidates[i];
+    if (box.source !== 'checkbox' || box.markerId) continue;
+    const ensured = ensureCheckboxMarker(body, i);
+    if (!ensured) continue;
+    body = ensured.markdown;
+    bodyChanged = true;
+  }
+  if (bodyChanged) {
+    await pool.execute('UPDATE Notes SET BodyMarkdown = ? WHERE Id = ?', [body, params.noteId]);
+  }
+  candidates = listNoteTaskCandidates(body);
+
   const [linkRows] = await pool.execute<RowDataPacket[]>(
     'SELECT MarkerId, PmTaskId FROM NoteCheckboxTasks WHERE NoteId = ?',
     [params.noteId]
@@ -770,6 +795,7 @@ export async function autoLinkCheckboxesByDescription(params: {
   });
   const reuseAllowed = computeReuseAllowedPmTaskIds(vaultRefs, linkableTasks, vaultLinkedIds);
   const linkableById = new Map(linkableTasks.map((t) => [t.id, t]));
+  const excludeGlobal = await linkedPmTaskIdsInSynapse();
 
   const linked: Array<{ index: number; pmTaskId: number; taskName: string }> = [];
   const unmatched: Array<{ index: number; text: string }> = [];
@@ -819,20 +845,54 @@ export async function autoLinkCheckboxesByDescription(params: {
       continue;
     }
 
+    const target = candidates[box.index];
+    if (!target?.markerId) {
+      failed.push({ index: box.index, text: box.text, message: 'Checkbox missing marker' });
+      continue;
+    }
+
     const pmProjectId =
       resolved.projectId > 0 ? resolved.projectId : params.defaultProjectId;
+    const reuseInVault = vaultLinkedIds.has(resolved.id);
 
     try {
-      await linkCheckboxToPmTask({
-        vaultId: params.vaultId,
+      if (!reuseInVault) {
+        if (excludeGlobal.has(resolved.id)) {
+          failed.push({
+            index: box.index,
+            text: box.text,
+            message: 'PM task is already linked in Synapse',
+          });
+          continue;
+        }
+        const synapseNoteUrl = buildSynapseNoteUrl(params.vaultId, params.noteId);
+        const upd = await updatePmTask(params.pmUserId, resolved.id, {
+          synapseVaultId: params.vaultId,
+          synapseNoteId: params.noteId,
+          synapseMarkerId: target.markerId,
+          synapseNoteUrl,
+        });
+        if (!upd.ok) {
+          failed.push({
+            index: box.index,
+            text: box.text,
+            message: upd.data.message || 'Failed to set Synapse refs on PM task',
+          });
+          continue;
+        }
+        vaultLinkedIds.add(resolved.id);
+        excludeGlobal.add(resolved.id);
+      }
+
+      await persistCheckboxLink({
         noteId: params.noteId,
-        checkboxIndex: box.index,
-        pmTaskId: resolved.id,
-        pmProjectId,
-        pmUserId: params.pmUserId,
-        defaultProjectId: params.defaultProjectId,
-        organizationId: params.organizationId,
+        markerId: target.markerId,
+        text: target.text,
+        checked: target.checked,
+        taskId: resolved.id,
+        projectId: pmProjectId,
       });
+      linkedMarkers.add(target.markerId);
       notePmTaskIdAfterLink(resolved, usedTaskIds, reuseAllowed);
       linked.push({ index: box.index, pmTaskId: resolved.id, taskName: resolved.taskName });
     } catch (error: unknown) {
@@ -847,13 +907,26 @@ export async function autoLinkCheckboxesByDescription(params: {
     }
   }
 
-  if (failed.length) {
-    logger.info('Auto-link completed with failures', {
+  if (linked.length) {
+    const links = await loadNoteCheckboxLinks(params.noteId);
+    const synced = await syncNoteCheckboxesFromPm({
+      pmUserId: params.pmUserId,
       noteId: params.noteId,
-      linked: linked.length,
-      failed: failed.length,
+      bodyMarkdown: body,
+      links,
+      defaultProjectId: params.defaultProjectId,
+      organizationId: params.organizationId,
     });
+    body = synced.bodyMarkdown;
   }
+
+  logger.info('Auto-link by description finished', {
+    noteId: params.noteId,
+    linked: linked.length,
+    unmatched: unmatched.length,
+    ambiguous: ambiguous.length,
+    failed: failed.length,
+  });
 
   return { linked, unmatched, ambiguous, failed };
 }
