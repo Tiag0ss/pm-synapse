@@ -42,18 +42,129 @@ export async function clearSsoToken(userId: number): Promise<void> {
   ssoTokenCache.delete(userId);
 }
 
+/** Persist access (+ optional refresh) after SSO login or silent renew. */
+export async function persistSsoTokenPair(
+  userId: number,
+  accessToken: string,
+  expiresInSec: number,
+  refreshToken?: string | null
+): Promise<void> {
+  const expiresAt = new Date(Date.now() + Math.max(60, expiresInSec || 28800) * 1000);
+  const refreshEnc =
+    refreshToken && String(refreshToken).trim()
+      ? encryptSecret(String(refreshToken).trim())
+      : null;
+  await pool.execute(
+    `INSERT INTO SsoTokens (UserId, AccessTokenEnc, RefreshTokenEnc, ExpiresAt)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       AccessTokenEnc = VALUES(AccessTokenEnc),
+       RefreshTokenEnc = COALESCE(VALUES(RefreshTokenEnc), RefreshTokenEnc),
+       ExpiresAt = VALUES(ExpiresAt)`,
+    [userId, encryptSecret(accessToken), refreshEnc, expiresAt]
+  );
+  ssoTokenCache.set(userId, {
+    token: accessToken,
+    expiresAtMs: Math.min(expiresAt.getTime(), Date.now() + TOKEN_CACHE_TTL_MS),
+  });
+}
+
+async function loadStoredRefreshToken(userId: number): Promise<string | null> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT RefreshTokenEnc FROM SsoTokens WHERE UserId = ?',
+    [userId]
+  );
+  const enc = rows[0]?.RefreshTokenEnc != null ? String(rows[0].RefreshTokenEnc) : '';
+  if (!enc) return null;
+  try {
+    return decryptSecret(enc);
+  } catch (error) {
+    logger.error('Failed to decrypt PM SSO refresh token', { error, userId });
+    return null;
+  }
+}
+
+/**
+ * Exchange stored refresh token at PM for a new access (+ refresh) pair.
+ * Returns true when a new access token was stored.
+ */
+export async function refreshPmSsoAccessToken(userId: number): Promise<boolean> {
+  const refreshToken = await loadStoredRefreshToken(userId);
+  if (!refreshToken) return false;
+
+  const clientId = process.env.SSO_CLIENT_ID || 'pm-synapse';
+  const clientSecret = process.env.SSO_CLIENT_SECRET || '';
+  if (!clientSecret) {
+    logger.warn('Cannot refresh PM SSO token — SSO_CLIENT_SECRET not set', { userId });
+    return false;
+  }
+
+  try {
+    const res = await fetch(`${PM_BASE_URL}/api/sso/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+        client_id: clientId,
+        client_secret: clientSecret,
+      }),
+    });
+    const payload = (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      message?: string;
+      data?: {
+        accessToken?: string;
+        refreshToken?: string;
+        expiresIn?: number;
+      };
+    };
+    if (!res.ok || !payload.data?.accessToken) {
+      logger.warn('PM SSO refresh failed', {
+        userId,
+        status: res.status,
+        message: payload.message,
+      });
+      if (res.status === 401 || res.status === 403) {
+        await clearSsoToken(userId);
+      }
+      return false;
+    }
+    await persistSsoTokenPair(
+      userId,
+      payload.data.accessToken,
+      payload.data.expiresIn || 28800,
+      payload.data.refreshToken || refreshToken
+    );
+    logger.info('PM SSO access token refreshed', { userId });
+    return true;
+  } catch (error) {
+    logger.error('PM SSO refresh network error', { error, userId, pmBase: PM_BASE_URL });
+    return false;
+  }
+}
+
 export async function hasValidSsoToken(userId: number): Promise<boolean> {
   const [rows] = await pool.execute<RowDataPacket[]>(
-    'SELECT ExpiresAt FROM SsoTokens WHERE UserId = ?',
+    'SELECT ExpiresAt, RefreshTokenEnc FROM SsoTokens WHERE UserId = ?',
     [userId]
   );
   if (!rows.length) return false;
   const expiresAt = new Date(rows[0].ExpiresAt);
-  if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60_000) {
-    await clearSsoToken(userId);
-    return false;
+  if (!Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() > Date.now() + 60_000) {
+    return true;
   }
-  return true;
+  if (rows[0].RefreshTokenEnc && (await refreshPmSsoAccessToken(userId))) {
+    const [again] = await pool.execute<RowDataPacket[]>(
+      'SELECT ExpiresAt FROM SsoTokens WHERE UserId = ?',
+      [userId]
+    );
+    if (!again.length) return false;
+    const next = new Date(again[0].ExpiresAt);
+    return !Number.isNaN(next.getTime()) && next.getTime() > Date.now() + 60_000;
+  }
+  if (!rows[0].RefreshTokenEnc) await clearSsoToken(userId);
+  return false;
 }
 
 export async function hasPersonalPmApiKey(userId: number): Promise<boolean> {
@@ -76,7 +187,7 @@ async function getSsoAccessToken(userId: number): Promise<string | null> {
   }
 
   const [rows] = await pool.execute<RowDataPacket[]>(
-    'SELECT AccessTokenEnc, ExpiresAt FROM SsoTokens WHERE UserId = ?',
+    'SELECT AccessTokenEnc, RefreshTokenEnc, ExpiresAt FROM SsoTokens WHERE UserId = ?',
     [userId]
   );
   if (!rows.length) {
@@ -84,9 +195,16 @@ async function getSsoAccessToken(userId: number): Promise<string | null> {
     return null;
   }
   const expiresAt = new Date(rows[0].ExpiresAt);
-  if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60_000) {
-    await clearSsoToken(userId);
-    return null;
+  const nearExpiry =
+    Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 120_000;
+  if (nearExpiry) {
+    if (rows[0].RefreshTokenEnc && (await refreshPmSsoAccessToken(userId))) {
+      return getSsoAccessTokenAfterRefresh(userId);
+    }
+    if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now() + 60_000) {
+      if (!rows[0].RefreshTokenEnc) await clearSsoToken(userId);
+      return null;
+    }
   }
   try {
     const token = decryptSecret(String(rows[0].AccessTokenEnc));
@@ -96,6 +214,23 @@ async function getSsoAccessToken(userId: number): Promise<string | null> {
   } catch (error) {
     ssoTokenCache.delete(userId);
     logger.error('Failed to decrypt PM SSO token', { error, userId });
+    return null;
+  }
+}
+
+async function getSsoAccessTokenAfterRefresh(userId: number): Promise<string | null> {
+  const [rows] = await pool.execute<RowDataPacket[]>(
+    'SELECT AccessTokenEnc, ExpiresAt FROM SsoTokens WHERE UserId = ?',
+    [userId]
+  );
+  if (!rows.length) return null;
+  const expiresAt = new Date(rows[0].ExpiresAt);
+  try {
+    const token = decryptSecret(String(rows[0].AccessTokenEnc));
+    const cacheUntil = Math.min(expiresAt.getTime(), Date.now() + TOKEN_CACHE_TTL_MS);
+    ssoTokenCache.set(userId, { token, expiresAtMs: cacheUntil });
+    return token;
+  } catch {
     return null;
   }
 }
@@ -175,23 +310,14 @@ export const PM_NO_CREDENTIALS_MESSAGE =
 
 async function persistRefreshedSsoToken(userId: number, accessToken: string): Promise<void> {
   // Sliding refresh from PM authenticateToken (X-New-Token) issues a new 24h JWT.
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  await pool.execute(
-    `INSERT INTO SsoTokens (UserId, AccessTokenEnc, ExpiresAt)
-     VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE AccessTokenEnc = VALUES(AccessTokenEnc), ExpiresAt = VALUES(ExpiresAt)`,
-    [userId, encryptSecret(accessToken), expiresAt]
-  );
-  ssoTokenCache.set(userId, {
-    token: accessToken,
-    expiresAtMs: Math.min(expiresAt.getTime(), Date.now() + TOKEN_CACHE_TTL_MS),
-  });
+  await persistSsoTokenPair(userId, accessToken, 24 * 60 * 60, null);
 }
 
 async function pmFetch<T>(
   userId: number,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  didRefreshAttempt = false
 ): Promise<{ ok: boolean; status: number; data: T & { message?: string; success?: boolean } }> {
   const enabled = await getSettingBool(SETTING_KEYS.pmIntegrationEnabled, true);
   if (!enabled) {
@@ -247,6 +373,12 @@ async function pmFetch<T>(
       });
       if (res.status === 401) {
         if (resolved.source === 'sso') {
+          if (!didRefreshAttempt) {
+            const renewed = await refreshPmSsoAccessToken(userId);
+            if (renewed) {
+              return pmFetch<T>(userId, path, init, true);
+            }
+          }
           await clearSsoToken(userId);
         } else {
           personalKeyCache.delete(userId);

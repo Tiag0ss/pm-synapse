@@ -1,0 +1,49 @@
+---
+description: Express/Node backend folder structure and layering
+globs: server/**/*
+alwaysApply: false
+---
+
+# Node / Express — project structure
+
+Canonical server tree. Do not put route handlers, SQL, and validation in one mega-file.
+
+```
+server/
+  index.ts                 # bootstrap: create app, mount routers, listen
+  app.ts                   # optional: express() + middleware wiring
+  config/                  # env, database pool, constants
+  middleware/              # auth, error handler, validateRequest
+  routes/                  # HTTP only — thin controllers
+  services/                # business logic (no req/res)
+  repositories/            # or queries/ — DB access only
+  validation/              # Zod (or project) schemas
+  types/
+  utils/                   # logger, helpers (no domain logic)
+```
+
+## Layering
+
+```
+routes → services → repositories/queries → DB
+         ↘ validation / middleware
+```
+
+- **routes**: parse input, authz, call service, map status. No raw SQL.
+- **services**: business rules / transactions. No `req`/`res`.
+- **repositories**: parameterized SQL / ORM only. No HTTP.
+
+| Kind | Put it in |
+|------|-----------|
+| HTTP endpoint | `server/routes/<domain>.ts` |
+| Business rule | `server/services/` |
+| SQL / persistence | `server/repositories/` or `queries/` |
+| Request schema | `server/validation/` |
+| Auth / guards | `server/middleware/` |
+
+## Hard rules
+
+- No `server/helpers.ts` dumping grounds — name by domain.
+- Do not import DB drivers in routes; go through config + repository.
+- Match existing names (`queries/` vs `repositories/`) when already consistent.
+- One domain per route file; split around ~200–300 lines.

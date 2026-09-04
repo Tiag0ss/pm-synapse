@@ -1,0 +1,46 @@
+---
+description: Next.js App Router project structure and file placement
+globs: app/**/*,components/**/*,lib/**/*,hooks/**/*,types/**/*
+alwaysApply: false
+---
+
+# Next.js — project structure
+
+Canonical tree (greenfield or when placing **new** files). Do not invent a second layout.
+
+```
+app/                      # App Router only — routes, layouts, pages
+  (marketing)/            # optional route groups
+  api/                    # only if this repo uses Next Route Handlers
+  <feature>/
+    page.tsx              # thin: compose components + load data
+    layout.tsx            # optional
+    loading.tsx / error.tsx  # when useful
+    _components/          # feature-only UI (not shared)
+components/               # shared UI reused by 2+ features
+  ui/                     # primitives (Button, Modal) if the project uses them
+lib/                      # pure helpers, api clients, config — no React components
+  api/                    # fetch wrappers / typed clients
+hooks/                    # shared React hooks (optional; or lib/hooks)
+types/                    # shared TS types/interfaces (optional; or next to feature)
+public/                   # static assets only
+```
+
+## Placement rules
+
+| Kind | Put it in |
+|------|-----------|
+| Route / URL | `app/**/page.tsx` (or `route.ts` for handlers) |
+| Feature-only UI | `app/<feature>/_components/` |
+| Shared UI | `components/` |
+| Data fetching helpers | `lib/api/` |
+| Shared hooks | `hooks/` or `lib/hooks/` |
+| Env/config accessors | `lib/` |
+
+## Hard rules
+
+- `page.tsx` **orchestrates** — no large inline markup or fat state machines. Extract to `_components/` or `components/`.
+- No business SQL or Express routes inside `app/` unless the project already uses Route Handlers for that.
+- Do not create `pages/` (Pages Router) in an App Router project.
+- Soft ~150 lines per `.tsx` — split before growing (see `react-components.mdc`).
+- `'use client'` only on leaves that need the browser; keep Server Components by default.

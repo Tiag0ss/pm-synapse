@@ -61,12 +61,33 @@ Success `data`:
 ```json
 {
   "accessToken": "<jwt>",
+  "refreshToken": "<jwt>",
   "expiresIn": 28800,
+  "refreshExpiresIn": 2592000,
   "user": { "id": 1, "username": "…", "email": "…" }
 }
 ```
 
-Synapse stores `accessToken` encrypted per Synapse user (`SsoTokens.UserId`) and uses it as Bearer for subsequent PM calls when present and not expired. Expired or PM-401 SSO rows are deleted. Otherwise Synapse falls back to that user’s personal `pt_…` token from Profile (not an instance-wide key).
+Synapse stores `accessToken` and `refreshToken` encrypted per Synapse user (`SsoTokens`). Access JWT TTL is **8h**; refresh JWT TTL is **30 days** (`typ: sso_refresh`).
+
+### Silent renew
+
+`POST {PM_BASE_URL}/api/sso/token`
+
+```json
+{
+  "grant_type": "refresh_token",
+  "refresh_token": "<refresh jwt>",
+  "client_id": "pm-synapse",
+  "client_secret": "<SSO_CLIENT_SECRET>"
+}
+```
+
+Returns the same shape as the code exchange (new access + refresh pair). Synapse calls this automatically when the access token is near expiry or when a PM call returns `401`, before asking the user to reconnect SSO.
+
+Expired or invalid refresh tokens clear the stored SSO row. Otherwise Synapse falls back to that user’s personal `pt_…` token from Profile (not an instance-wide key).
+
+Active PM API traffic may also receive a sliding `X-New-Token` header (24h JWT); Synapse persists that when present.
 
 SSO login resolves the Synapse user by linked `PmUserId`, then by **email**, then creates a new user.
 

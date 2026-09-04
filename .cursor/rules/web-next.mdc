@@ -1,0 +1,21 @@
+---
+description: Next.js App Router conventions — RSC, caching, actions, metadata
+globs: app/**/*,components/**/*,lib/**/*
+alwaysApply: false
+---
+
+# Next.js / React conventions
+
+Follow `web-next-structure.mdc` for folders. This rule is behavior inside those folders.
+
+- Add `'use client'` **only** when the module needs hooks, events, or browser APIs.
+- Prefer **Server Components** for data loading; pass data down as props. Keep client leaves small.
+- Colocate feature UI under `app/<feature>/_components/`; shared UI under `components/`.
+- Use typed fetch/helpers in `lib/api/` (or the project’s existing client). Do not invent a new API layer unasked.
+- Route UX: add `loading.tsx` / `error.tsx` / `not-found.tsx` when the route benefits — match existing patterns.
+- **Server Actions** / mutations: validate input, authorize on the server, revalidate only what changed. Prefer existing action helpers if present.
+- Caching: follow the project’s `fetch` / `revalidate` / `unstable_cache` patterns. Do not blanket-disable cache unasked.
+- `middleware.ts` only for cross-cutting edge concerns already used in the repo (auth gate, redirects). Keep it thin.
+- Export `metadata` / `generateMetadata` for user-facing routes when the project already uses them.
+- Do not invent a design system. Reuse existing components and CSS/Tailwind patterns.
+- See `react-components.mdc` — small, reusable components; pages stay thin.

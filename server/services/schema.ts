@@ -211,6 +211,7 @@ const ALTERS = [
   'ALTER TABLE Users ADD COLUMN SessionVersion INT NOT NULL DEFAULT 0',
   'ALTER TABLE Users ADD COLUMN PmApiKeyEnc TEXT NULL',
   'ALTER TABLE Users ADD COLUMN PmAutoAssignOnCreate TINYINT(1) NOT NULL DEFAULT 0',
+  'ALTER TABLE SsoTokens ADD COLUMN RefreshTokenEnc TEXT NULL',
   "ALTER TABLE NoteRevisions ADD COLUMN Source VARCHAR(16) NOT NULL DEFAULT 'manual'",
   'ALTER TABLE VaultMedia ADD COLUMN NoteId INT NULL',
   'ALTER TABLE VaultMedia ADD KEY idx_media_note (NoteId)',

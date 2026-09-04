@@ -9,14 +9,13 @@ import {
   signSession,
   SynapseUser,
 } from '../middleware/auth';
-import { encryptSecret } from '../services/crypto';
 import { accessibleVault } from '../services/vaultAccess';
 import {
   fetchPmOrganizations,
   hasPersonalPmApiKey,
   hasValidSsoToken,
   getPersonalPmApiKeyPrefix,
-  invalidatePmTokenCache,
+  persistSsoTokenPair,
   PM_BASE_URL,
   resolvePmBearerWithSource,
   setPersonalPmApiKey,
@@ -135,15 +134,13 @@ async function touchLastLogin(userId: number): Promise<void> {
   await pool.execute('UPDATE Users SET LastLoginAt = CURRENT_TIMESTAMP WHERE Id = ?', [userId]);
 }
 
-async function storeSsoToken(userId: number, accessToken: string, expiresIn: number): Promise<void> {
-  const expiresAt = new Date(Date.now() + (expiresIn || 28800) * 1000);
-  await pool.execute(
-    `INSERT INTO SsoTokens (UserId, AccessTokenEnc, ExpiresAt)
-     VALUES (?, ?, ?)
-     ON DUPLICATE KEY UPDATE AccessTokenEnc = VALUES(AccessTokenEnc), ExpiresAt = VALUES(ExpiresAt)`,
-    [userId, encryptSecret(accessToken), expiresAt]
-  );
-  invalidatePmTokenCache(userId);
+async function storeSsoToken(
+  userId: number,
+  accessToken: string,
+  expiresIn: number,
+  refreshToken?: string | null
+): Promise<void> {
+  await persistSsoTokenPair(userId, accessToken, expiresIn, refreshToken);
 }
 
 /** Resolve or create Synapse user from PM SSO profile (PmUserId, then email). */
@@ -444,6 +441,7 @@ router.get('/sso/callback', async (req, res) => {
       message?: string;
       data?: {
         accessToken: string;
+        refreshToken?: string;
         expiresIn: number;
         user: { id: number; username: string; email: string };
       };
@@ -461,7 +459,8 @@ router.get('/sso/callback', async (req, res) => {
     await storeSsoToken(
       Number(resolved.user.Id),
       payload.data.accessToken,
-      payload.data.expiresIn || 28800
+      payload.data.expiresIn || 28800,
+      payload.data.refreshToken || null
     );
 
     const sessionUser = toSessionUser(resolved.user);

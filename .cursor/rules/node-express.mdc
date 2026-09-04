@@ -1,0 +1,29 @@
+---
+description: Express routes — validation, SQL params, HTTP status, logging
+globs: server/**/*
+alwaysApply: false
+---
+
+# Node / Express conventions
+
+Follow `node-express-structure.mdc` for folders and layering.
+
+- Validate at the edge (middleware / `validateRequest`). Prefer Zod or the project’s validator — **do not** add a library unasked.
+- Parameterized SQL only — never concatenate user input into queries.
+- HTTP status: 400 validation, 401/403 auth, 404 missing, 500 unexpected.
+- Do not leak stack traces to clients. Use the project logger — not `console` in production paths.
+- Authenticate and **authorize** mutations on the server.
+- Routes stay thin; logic in services; SQL in repositories/queries.
+
+```typescript
+// routes/items.ts — thin
+router.post('/', authenticate, validate(createItemSchema), async (req, res) => {
+  try {
+    const item = await itemsService.create(req.user!.id, req.body);
+    res.status(201).json(item);
+  } catch (error) {
+    logger.error('create item failed', { error: error instanceof Error ? error.message : error });
+    res.status(500).json({ message: 'Failed to create item' });
+  }
+});
+```

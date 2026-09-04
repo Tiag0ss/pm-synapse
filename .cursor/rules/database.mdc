@@ -1,0 +1,15 @@
+---
+description: Data access — ORM/SQL layering, migrations, no SQL in HTTP handlers
+globs: "**/*.{ts,tsx,js,cs,py},**/prisma/**/*,**/drizzle/**/*,**/migrations/**/*"
+alwaysApply: false
+---
+
+# Database / data access
+
+- Keep SQL/ORM usage in a **repository** / data layer — not in React components, route handlers, or controllers.
+- Prefer the project’s existing stack (Prisma, Drizzle, EF Core, SQLAlchemy, raw `pg`/`mysql2`). Do not add a second ORM unasked.
+- **Parameterized** queries only. Never concatenate untrusted input into SQL.
+- Schema changes go through the project’s **migration** tool. Do not hand-edit production DBs from app code.
+- Transactions: wrap multi-step writes in the pattern the project already uses.
+- Connection/config via env. Never commit connection strings with secrets.
+- Expose DTOs/entities carefully — do not return raw DB rows with secrets or internal columns to clients.
