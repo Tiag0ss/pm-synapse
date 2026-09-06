@@ -35,6 +35,50 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const NOTE_PEEK_ICON =
+  `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+  `<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`;
+
+/** Wikilink / mention: label opens note; trailing magnifier peeks rendered body. */
+function renderNoteRefHtml(params: {
+  kind: 'wikilink' | 'mention';
+  label: string;
+  noteId?: number | '' | null;
+  noteTitle: string;
+  vaultId?: number | null;
+  vaultSlug?: string | null;
+  missing?: boolean;
+  titleAttr?: string;
+}): string {
+  const classes = [
+    'synapse-note-ref',
+    params.kind === 'mention' ? 'synapse-mention' : 'synapse-wikilink',
+    params.missing ? 'is-missing' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const noteId = params.noteId != null && params.noteId !== '' ? String(params.noteId) : '';
+  const vaultId =
+    params.vaultId != null && Number(params.vaultId) > 0 ? String(params.vaultId) : '';
+  const vaultSlug = params.vaultSlug ? escapeAttr(params.vaultSlug) : '';
+  const titleAttr = params.titleAttr
+    ? ` title="${escapeAttr(params.titleAttr)}"`
+    : params.missing
+      ? ` title="Create note"`
+      : '';
+  const gotoLabel = params.missing ? 'Create note' : 'Open note';
+  const peekLabel = params.missing ? 'Create note' : 'Preview note';
+  return (
+    `<span class="${classes}" data-note-id="${escapeAttr(noteId)}" data-note-title="${escapeAttr(params.noteTitle)}"` +
+    (vaultId ? ` data-vault-id="${escapeAttr(vaultId)}"` : '') +
+    (vaultSlug ? ` data-vault-slug="${vaultSlug}"` : '') +
+    `${titleAttr}>` +
+    `<button type="button" class="synapse-note-goto" aria-label="${escapeAttr(gotoLabel)}" title="${escapeAttr(gotoLabel)}">${escapeHtml(params.label)}</button>` +
+    `<button type="button" class="synapse-note-peek" aria-label="${escapeAttr(peekLabel)}" title="${escapeAttr(peekLabel)}">${NOTE_PEEK_ICON}</button>` +
+    `</span>`
+  );
+}
+
 /**
  * CommonMark needs a space after ATX hashes. Content like `#Received Requirements` or
  * `##Technical Design` would otherwise become #tags / plain text — insert the space when
@@ -131,7 +175,13 @@ function linkifyUnlinkedMentions(
   for (const { id, term, title } of terms) {
     const re = new RegExp(`(?<![\\w/#.\\u0000])(${escapeRegExp(term)})(?![\\w/.\\u0000])`, 'gi');
     work = work.replace(re, (match) => {
-      const linked = `<a class="synapse-mention" href="#note-${id}" data-note-id="${id}" data-note-title="${escapeAttr(title)}" title="Unlinked mention of ${escapeAttr(title)}">${escapeHtml(match)}</a>`;
+      const linked = renderNoteRefHtml({
+        kind: 'mention',
+        label: match,
+        noteId: id,
+        noteTitle: title,
+        titleAttr: `Unlinked mention of ${title}`,
+      });
       return stash(linked);
     });
   }
@@ -177,18 +227,35 @@ export function preprocessSynapseMarkdown(
           );
         }
         if (r.status === 'missing') {
-          const href = `#wiki-${encodeURIComponent(`@${r.vaultSlug}/${r.noteTarget}`)}`;
-          return `<a class="synapse-wikilink is-missing" href="${href}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-id="" data-note-title="${escapeAttr(r.noteTarget)}">${escapeHtml(r.label)}</a>`;
+          return renderNoteRefHtml({
+            kind: 'wikilink',
+            label: r.label,
+            noteId: '',
+            noteTitle: r.noteTarget,
+            vaultId: r.vaultId,
+            vaultSlug: r.vaultSlug,
+            missing: true,
+          });
         }
-        const href = `#note-${r.noteId}`;
-        return `<a class="synapse-wikilink" href="${href}" data-note-id="${r.noteId}" data-vault-id="${r.vaultId}" data-vault-slug="${escapeAttr(r.vaultSlug)}" data-note-title="${escapeAttr(r.label)}">${escapeHtml(r.label)}</a>`;
+        return renderNoteRefHtml({
+          kind: 'wikilink',
+          label: r.label,
+          noteId: r.noteId,
+          noteTitle: r.label,
+          vaultId: r.vaultId,
+          vaultSlug: r.vaultSlug,
+        });
       }
 
       const label = aliasLabel || t;
       const id = resolveNoteId(t, notes);
-      const cls = id != null ? 'synapse-wikilink' : 'synapse-wikilink is-missing';
-      const href = id != null ? `#note-${id}` : `#wiki-${encodeURIComponent(t)}`;
-      return `<a class="${cls}" href="${href}" data-note-id="${id ?? ''}" data-note-title="${escapeAttr(t)}">${escapeHtml(label)}</a>`;
+      return renderNoteRefHtml({
+        kind: 'wikilink',
+        label,
+        noteId: id ?? '',
+        noteTitle: t,
+        missing: id == null,
+      });
     });
 
     next = linkifyUnlinkedMentions(next, notes, excludeNoteId);

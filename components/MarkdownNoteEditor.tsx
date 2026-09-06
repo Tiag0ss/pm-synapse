@@ -21,6 +21,7 @@ import {
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import NoteLinkSuggest from '@/components/NoteLinkSuggest';
+import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
 
 const ATTACH_ACCEPT =
   'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown,application/zip';
@@ -219,7 +220,10 @@ const LEGEND_SECTIONS: LegendSection[] = [
   {
     title: 'Synapse links & tags',
     items: [
-      { syntax: '[[Note title]]', meaning: 'Link to a note (solid underline)' },
+      {
+        syntax: '[[Note title]]',
+        meaning: 'Wikilink — text opens the note; magnifier previews it',
+      },
       { syntax: '[[meta/risks]]', meaning: 'Link by folder path' },
       { syntax: '[[risks]]', meaning: 'Link by unique leaf name' },
       {
@@ -227,7 +231,10 @@ const LEGEND_SECTIONS: LegendSection[] = [
         meaning: 'Link to a note in another vault (shows “no access” if you lack permission)',
       },
       { syntax: '[[Note|label]]', meaning: 'Wikilink with custom label' },
-      { syntax: 'plain Title', meaning: 'Unlinked mention (dashed)' },
+      {
+        syntax: 'plain Title',
+        meaning: 'Auto-mention (dashed) — text opens; magnifier previews',
+      },
       { syntax: '#tag', meaning: 'Inline tag for filtering / graph' },
       { syntax: '![alt](url)', meaning: 'Embedded image (paste / Img / Attach)' },
       { syntax: '[file.pdf](url)', meaning: 'Attachment link (Attach toolbar or [[attach)' },
@@ -390,6 +397,7 @@ export default function MarkdownNoteEditor({
   const [dragging, setDragging] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
+  const [peekTarget, setPeekTarget] = useState<NotePeekTarget | null>(null);
   const [fetchedPlannerLinks, setFetchedPlannerLinks] = useState<PlannerLinkItem[]>([]);
   const [attachments, setAttachments] = useState<AttachSuggestSource[]>([]);
   const [linkSuggest, setLinkSuggest] = useState<{
@@ -841,22 +849,39 @@ export default function MarkdownNoteEditor({
           return;
         }
       }
-      if (!onOpenNote && !onOpenCrossVaultNote && !onCreateNoteFromWikilink && !onCreateCrossVaultNote)
+      if (
+        !onOpenNote &&
+        !onOpenCrossVaultNote &&
+        !onCreateNoteFromWikilink &&
+        !onCreateCrossVaultNote &&
+        !vaultId
+      )
         return;
-      const target = (e.target as HTMLElement).closest(
-        'a.synapse-wikilink, a.synapse-mention'
-      ) as HTMLAnchorElement | null;
-      if (!target || !root.contains(target)) return;
-      e.preventDefault();
-      const id = Number(target.dataset.noteId || 0);
-      const crossVaultId = Number(target.dataset.vaultId || 0);
-      const currentVaultId = vaultId ? Number(vaultId) : 0;
-      const missingTitle = String(target.dataset.noteTitle || '').trim();
-      const isMissingWikilink =
-        target.classList.contains('synapse-wikilink') &&
-        (target.classList.contains('is-missing') || !id);
 
-      if (isMissingWikilink) {
+      const locked = (e.target as HTMLElement).closest('.synapse-wikilink.is-locked');
+      if (locked && root.contains(locked)) {
+        e.preventDefault();
+        return;
+      }
+
+      const goto = (e.target as HTMLElement).closest('.synapse-note-goto') as HTMLElement | null;
+      const peekBtn = (e.target as HTMLElement).closest('.synapse-note-peek') as HTMLElement | null;
+      const hit = goto || peekBtn;
+      if (!hit || !root.contains(hit)) return;
+
+      const ref = hit.closest('.synapse-note-ref') as HTMLElement | null;
+      if (!ref) return;
+      e.preventDefault();
+
+      const id = Number(ref.dataset.noteId || 0);
+      const crossVaultId = Number(ref.dataset.vaultId || 0);
+      const currentVaultId = vaultId ? Number(vaultId) : 0;
+      const missingTitle = String(ref.dataset.noteTitle || '').trim();
+      const isMissing =
+        ref.classList.contains('synapse-wikilink') &&
+        (ref.classList.contains('is-missing') || !id);
+
+      if (isMissing) {
         if (!missingTitle) return;
         const externalVault =
           crossVaultId && currentVaultId && crossVaultId !== currentVaultId;
@@ -870,6 +895,21 @@ export default function MarkdownNoteEditor({
         }
         if (crossVaultId && onCreateCrossVaultNote) {
           onCreateCrossVaultNote(crossVaultId, missingTitle);
+        }
+        return;
+      }
+
+      if (peekBtn && id) {
+        const peekVault =
+          crossVaultId && currentVaultId && crossVaultId !== currentVaultId
+            ? crossVaultId
+            : currentVaultId || crossVaultId;
+        if (peekVault > 0) {
+          setPeekTarget({
+            noteId: id,
+            vaultId: peekVault,
+            titleHint: missingTitle || undefined,
+          });
         }
         return;
       }
@@ -1197,6 +1237,29 @@ export default function MarkdownNoteEditor({
         onClose={() => setLightbox(null)}
       />
       <MermaidLightbox svgHtml={mermaidLightbox} onClose={() => setMermaidLightbox(null)} />
+      <NotePeekModal
+        open={Boolean(peekTarget)}
+        target={peekTarget}
+        notes={notes}
+        linkableVaults={linkableVaults}
+        onClose={() => setPeekTarget(null)}
+        onOpenNote={(id, openVaultId) => {
+          const currentVaultId = vaultId ? Number(vaultId) : 0;
+          if (
+            openVaultId &&
+            currentVaultId &&
+            openVaultId !== currentVaultId &&
+            onOpenCrossVaultNote
+          ) {
+            onOpenCrossVaultNote(openVaultId, id);
+          } else {
+            onOpenNote?.(id);
+          }
+        }}
+        onPeekNote={(next) => setPeekTarget(next)}
+        onCreateNoteFromWikilink={onCreateNoteFromWikilink}
+        onCreateCrossVaultNote={onCreateCrossVaultNote}
+      />
     </div>
   );
 }

@@ -13,6 +13,7 @@ import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
+import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
 import AppUserMenu from '@/components/AppUserMenu';
 import { useIsLgUp } from '@/lib/useMediaQuery';
 
@@ -48,6 +49,7 @@ export default function PublicWikiPage() {
   const [graphToken, setGraphToken] = useState(0);
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
+  const [peekTarget, setPeekTarget] = useState<NotePeekTarget | null>(null);
   const [plannerLinks, setPlannerLinks] = useState<PlannerLinkItem[]>([]);
   const articleRef = useRef<HTMLDivElement>(null);
 
@@ -205,29 +207,47 @@ export default function PublicWikiPage() {
           return;
         }
       }
-      const target = (e.target as HTMLElement).closest(
-        'a.synapse-wikilink, a.synapse-mention'
-      ) as HTMLAnchorElement | null;
-      if (!target) return;
+      const locked = (e.target as HTMLElement).closest('.synapse-wikilink.is-locked');
+      if (locked && root.contains(locked)) {
+        e.preventDefault();
+        return;
+      }
+
+      const goto = (e.target as HTMLElement).closest('.synapse-note-goto') as HTMLElement | null;
+      const peekBtn = (e.target as HTMLElement).closest('.synapse-note-peek') as HTMLElement | null;
+      const hit = goto || peekBtn;
+      if (!hit || !root.contains(hit)) return;
+
+      const ref = hit.closest('.synapse-note-ref') as HTMLElement | null;
+      if (!ref) return;
       e.preventDefault();
       e.stopPropagation();
-      const byId = Number(target.dataset.noteId || 0);
-      const crossVaultSlug = String(target.dataset.vaultSlug || '').trim();
-      if (byId && crossVaultSlug && crossVaultSlug !== slug) {
-        window.location.href = `/w/${encodeURIComponent(crossVaultSlug)}?n=${byId}`;
+
+      const byId = Number(ref.dataset.noteId || 0);
+      const crossVaultSlug = String(ref.dataset.vaultSlug || '').trim();
+      const titleHint = String(ref.dataset.noteTitle || '').trim();
+      const resolvedId = byId || resolveNoteId(titleHint, noteIndex) || 0;
+
+      if (peekBtn) {
+        if (!resolvedId) return;
+        setPeekTarget({
+          noteId: resolvedId,
+          vaultId: vaultId || 0,
+          titleHint: titleHint || undefined,
+          wikiSlug: crossVaultSlug || slug,
+        });
         return;
       }
-      if (byId) {
-        void openNote(byId);
+
+      if (resolvedId && crossVaultSlug && crossVaultSlug !== slug) {
+        window.location.href = `/w/${encodeURIComponent(crossVaultSlug)}?n=${resolvedId}`;
         return;
       }
-      const byTitle = target.dataset.noteTitle || '';
-      const resolved = resolveNoteId(byTitle, noteIndex);
-      if (resolved) void openNote(resolved);
+      if (resolvedId) void openNote(resolvedId);
     };
     root.addEventListener('click', onClick);
     return () => root.removeEventListener('click', onClick);
-  }, [html, noteIndex, openNote]);
+  }, [html, noteIndex, openNote, slug, vaultId]);
 
   useLayoutEffect(() => {
     const root = articleRef.current;
@@ -586,6 +606,21 @@ export default function PublicWikiPage() {
         onClose={() => setLightbox(null)}
       />
       <MermaidLightbox svgHtml={mermaidLightbox} onClose={() => setMermaidLightbox(null)} />
+      <NotePeekModal
+        open={Boolean(peekTarget)}
+        target={peekTarget}
+        notes={noteIndex}
+        onClose={() => setPeekTarget(null)}
+        onOpenNote={(id) => {
+          const targetSlug = peekTarget?.wikiSlug || slug;
+          if (targetSlug !== slug) {
+            window.location.href = `/w/${encodeURIComponent(targetSlug)}?n=${id}`;
+            return;
+          }
+          void openNote(id);
+        }}
+        onPeekNote={(next) => setPeekTarget(next)}
+      />
     </main>
   );
 }

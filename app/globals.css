@@ -884,20 +884,29 @@ a:hover { text-decoration: underline; }
 .synapse-wikilink {
   color: var(--accent-soft) !important;
   text-decoration: none !important;
-  border-bottom: 1px solid color-mix(in srgb, var(--accent-soft) 45%, transparent);
   font-family: var(--font-sans);
   font-weight: 500;
   cursor: pointer;
 }
-.synapse-wikilink:hover {
+.synapse-note-ref.synapse-wikilink {
+  display: inline;
+  border-bottom: none;
+}
+.synapse-note-ref.synapse-wikilink .synapse-note-goto {
+  color: inherit;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}
+.synapse-note-ref.synapse-wikilink:hover .synapse-note-goto {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-radius: 2px;
 }
 .synapse-wikilink.is-missing {
   color: var(--danger) !important;
+  cursor: pointer;
+}
+.synapse-note-ref.synapse-wikilink.is-missing .synapse-note-goto {
   border-bottom-style: dashed;
   border-bottom-color: color-mix(in srgb, var(--danger) 55%, transparent);
-  cursor: pointer;
 }
 .synapse-wikilink.is-locked {
   color: var(--muted) !important;
@@ -925,14 +934,79 @@ a:hover { text-decoration: underline; }
 .synapse-mention {
   color: #7dd3fc !important;
   text-decoration: none !important;
-  border-bottom: 1px dashed color-mix(in srgb, #7dd3fc 55%, transparent);
   font-family: var(--font-sans);
   font-weight: 500;
   cursor: pointer;
 }
-.synapse-mention:hover {
+.synapse-note-ref.synapse-mention {
+  display: inline;
+  border-bottom: none;
+}
+.synapse-note-ref.synapse-mention .synapse-note-goto {
+  color: inherit;
+  border-bottom: 1px dashed color-mix(in srgb, #7dd3fc 55%, transparent);
+}
+.synapse-note-ref.synapse-mention:hover .synapse-note-goto {
   background: color-mix(in srgb, #38bdf8 12%, transparent);
   border-radius: 2px;
+}
+
+.synapse-note-ref {
+  display: inline;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.synapse-note-goto,
+.synapse-note-peek {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.synapse-note-goto {
+  white-space: normal;
+}
+.synapse-note-peek {
+  margin-left: 0.25em;
+  padding: 0.1em 0.18em;
+  border-radius: 3px;
+  color: color-mix(in srgb, currentColor 70%, transparent);
+  vertical-align: -0.12em;
+}
+.synapse-note-peek:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-soft);
+}
+.synapse-note-ref.is-missing .synapse-note-peek:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+.synapse-note-peek svg {
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  overflow: visible;
+  vertical-align: -0.12em;
+}
+
+.synapse-md-preview mark.synapse-peek-hit {
+  color: inherit;
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 2px;
+  padding: 0 0.05em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+.synapse-md-preview mark.synapse-peek-hit.is-active {
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent-soft) 70%, transparent);
 }
 
 .synapse-tag {

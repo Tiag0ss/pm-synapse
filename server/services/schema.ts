@@ -340,7 +340,12 @@ export async function ensureSchema(): Promise<void> {
       await pool.execute(sql);
     } catch (error) {
       const code = (error as { code?: string })?.code;
-      if (code !== 'ER_DUP_FIELDNAME' && code !== 'ER_DUP_KEYNAME') {
+      if (
+        code !== 'ER_DUP_FIELDNAME' &&
+        code !== 'ER_DUP_KEYNAME' &&
+        code !== 'ER_FK_DUP_NAME' &&
+        code !== 'ER_DUP_KEY'
+      ) {
         logger.warn('Schema alter skipped or failed', { sql, error });
       }
     }
