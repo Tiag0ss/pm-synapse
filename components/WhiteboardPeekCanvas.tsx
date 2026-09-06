@@ -82,16 +82,17 @@ export default function WhiteboardPeekCanvas({
   onOpenNote,
 }: WhiteboardPeekCanvasProps) {
   const initialData = useMemo(() => parseBoard(boardJson), [noteId, boardJson]);
+  const sceneKey = `${noteId}:${boardJson?.length ?? 0}:${boardJson?.slice(0, 64) ?? ''}`;
 
   return (
     <div
       className={
         className ||
-        'synapse-whiteboard synapse-whiteboard-viewer min-h-[min(70dvh,36rem)] w-full flex-1 overflow-hidden rounded-xl border border-[var(--border)]'
+        'synapse-whiteboard synapse-whiteboard-viewer w-full overflow-hidden rounded-xl border border-[var(--border)]'
       }
     >
       <Excalidraw
-        key={noteId}
+        key={sceneKey}
         initialData={initialData}
         theme="dark"
         onLinkOpen={(element, event) => {

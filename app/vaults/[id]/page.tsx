@@ -20,7 +20,7 @@ import VaultPmSettingsModal from '@/components/VaultPmSettingsModal';
 import NoteTasksPanel from '@/components/NoteTasksPanel';
 import NoteAttachmentsPanel from '@/components/NoteAttachmentsPanel';
 import NoteExportModal from '@/components/NoteExportModal';
-import NoteTransferModal from '@/components/NoteTransferModal';
+import NoteShareModal from '@/components/NoteShareModal';
 import NotesFolderTree from '@/components/NotesFolderTree';
 import NoteIconPicker from '@/components/NoteIconPicker';
 import VaultSwitcher, { rememberLastVault } from '@/components/VaultSwitcher';
@@ -183,7 +183,7 @@ export default function VaultWorkspacePage() {
   const [diffRevision, setDiffRevision] = useState<RevisionSnapshot | null>(null);
   const [pmTasksOpen, setPmTasksOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const [transferOpen, setTransferOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [vaultOptionsTab, setVaultOptionsTab] = useState<
     'links' | 'share' | 'pm' | 'vault' | 'trash' | undefined
   >(undefined);
@@ -1520,6 +1520,17 @@ export default function VaultWorkspacePage() {
                       />
                     </svg>
                   </button>
+                  {canEdit && !isHubNote && (
+                    <button
+                      type="button"
+                      className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
+                      onClick={() => setShareOpen(true)}
+                      title="Share link or send to another vault"
+                      aria-label="Share"
+                    >
+                      Share
+                    </button>
+                  )}
                   {canEdit && isPersonalWork && selectedId && !isHubNote && !isWhiteboard && (
                     <button
                       type="button"
@@ -1530,25 +1541,6 @@ export default function VaultWorkspacePage() {
                       aria-label="Link to My work"
                     >
                       {hubLinkBusy ? '…' : 'Link'}
-                    </button>
-                  )}
-                  {canEdit && !isHubNote && (
-                    <button
-                      type="button"
-                      className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
-                      onClick={() => setTransferOpen(true)}
-                      title="Copy or move this note to another vault"
-                      aria-label="Send"
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                        <path
-                          d="M5 12h14m0 0-5-5m5 5-5 5"
-                          stroke="currentColor"
-                          strokeWidth="1.75"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
                     </button>
                   )}
                   {canEdit && !isHubNote && (
@@ -1637,6 +1629,16 @@ export default function VaultWorkspacePage() {
                 >
                   Export
                 </button>
+                {canEdit && !isHubNote && (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => setShareOpen(true)}
+                    title="Share link or send to another vault"
+                  >
+                    Share…
+                  </button>
+                )}
                 {canEdit && isPersonalWork && selectedId && !isHubNote && !isWhiteboard && (
                   <button
                     type="button"
@@ -1646,16 +1648,6 @@ export default function VaultWorkspacePage() {
                     title="Add a wikilink to this note on the My work overview"
                   >
                     {hubLinkBusy ? 'Linking…' : 'Link to My work'}
-                  </button>
-                )}
-                {canEdit && !isHubNote && (
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    onClick={() => setTransferOpen(true)}
-                    title="Copy or move this note to another vault"
-                  >
-                    Send…
                   </button>
                 )}
                 {canEdit && !isHubNote && (
@@ -2211,31 +2203,30 @@ export default function VaultWorkspacePage() {
         onClose={() => setExportOpen(false)}
       />
 
-      {selectedId != null && (
-        <NoteTransferModal
-          open={transferOpen}
-          vaultId={vaultId}
-          noteId={selectedId}
-          noteTitle={title}
-          onClose={() => setTransferOpen(false)}
-          onDone={(result) => {
-            setTransferOpen(false);
-            setStatus(
-              result.mode === 'move'
-                ? 'Note moved to destination vault'
-                : 'Note copied to destination vault'
-            );
-            if (result.mode === 'move') {
-              setSelectedId(null);
-              setBody('');
-              setTitle('');
-              void loadNotes();
-              void loadGraph();
-            }
-            router.push(`/vaults/${result.vaultId}?note=${result.noteId}`);
-          }}
-        />
-      )}
+      <NoteShareModal
+        open={shareOpen}
+        vaultId={vaultId}
+        noteId={selectedId}
+        noteTitle={title}
+        onClose={() => setShareOpen(false)}
+        onStatus={setStatus}
+        onTransferDone={(result) => {
+          setShareOpen(false);
+          setStatus(
+            result.mode === 'move'
+              ? 'Note moved to destination vault'
+              : 'Note copied to destination vault'
+          );
+          if (result.mode === 'move') {
+            setSelectedId(null);
+            setBody('');
+            setTitle('');
+            void loadNotes();
+            void loadGraph();
+          }
+          router.push(`/vaults/${result.vaultId}?note=${result.noteId}`);
+        }}
+      />
 
       <NotePeekModal
         open={Boolean(peekTarget)}

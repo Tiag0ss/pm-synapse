@@ -205,6 +205,23 @@ const STATEMENTS = [
     KEY idx_export_template_label (Label),
     CONSTRAINT fk_export_template_uploader FOREIGN KEY (UploadedByUserId) REFERENCES Users(Id) ON DELETE SET NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS NoteShareLinks (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    NoteId INT NOT NULL,
+    VaultId INT NOT NULL,
+    CreatedByPmUserId INT NOT NULL,
+    TokenHash VARCHAR(64) NOT NULL,
+    PasswordHash VARCHAR(255) NOT NULL,
+    ExpiresAt DATETIME NOT NULL,
+    RevokedAt DATETIME NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_note_share_token (TokenHash),
+    KEY idx_note_share_note (NoteId),
+    KEY idx_note_share_vault (VaultId),
+    KEY idx_note_share_expires (ExpiresAt),
+    CONSTRAINT fk_note_share_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_note_share_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
+  )`,
 ];
 
 const ALTERS = [

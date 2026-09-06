@@ -11,6 +11,7 @@ import logger from './utils/logger';
 import authRoutes from './routes/auth';
 import vaultsRoutes from './routes/vaults';
 import publicWikiRoutes from './routes/publicWiki';
+import noteSharesRoutes from './routes/noteShares';
 import settingsRoutes from './routes/settings';
 import usersRoutes from './routes/users';
 import templatesRoutes from './routes/templates';
@@ -99,6 +100,7 @@ async function main() {
   server.use('/api/auth', authRoutes);
   server.use('/api/vaults', vaultsRoutes);
   server.use('/api/public', publicWikiRoutes);
+  server.use('/api/shares', noteSharesRoutes);
   server.use('/api/settings', settingsRoutes);
   server.use('/api/users', usersRoutes);
   server.use('/api/templates', templatesRoutes);

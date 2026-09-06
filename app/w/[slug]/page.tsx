@@ -527,7 +527,7 @@ export default function PublicWikiPage() {
             <WhiteboardPeekCanvas
               noteId={activeId}
               boardJson={boardJson}
-              className="synapse-whiteboard synapse-whiteboard-viewer min-h-[min(70dvh,36rem)] w-full flex-1 overflow-hidden rounded-xl border border-[var(--border)]"
+              className="synapse-whiteboard synapse-whiteboard-viewer w-full overflow-hidden rounded-xl border border-[var(--border)]"
               onOpenNote={(id) => void openNote(id)}
             />
           ) : (

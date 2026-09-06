@@ -82,6 +82,13 @@ import {
 } from '../services/vaultAccess';
 import { listLinkableVaultNotesForApp } from '../services/linkableNotes';
 import { transferNoteToVault } from '../services/noteTransfer';
+import {
+  createNoteShare,
+  listNoteShares,
+  revokeNoteShare,
+  MIN_EXPIRES_SEC,
+  MAX_EXPIRES_SEC,
+} from '../services/noteShares';
 import logger from '../utils/logger';
 
 const ACTIVE_NOTE = 'DeletedAt IS NULL';
@@ -1338,6 +1345,84 @@ function dedupeGraphEdges(rows: RowDataPacket[]): RowDataPacket[] {
   }
   return [...map.values()];
 }
+
+router.get('/:vaultId/notes/:noteId/shares', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const noteId = Number(req.params.noteId);
+  if (!Number.isFinite(noteId) || noteId <= 0) {
+    return res.status(404).json({ success: false, message: 'Note not found' });
+  }
+  const list = await listNoteShares(Number(vault.Id), noteId);
+  if (!list) return res.status(404).json({ success: false, message: 'Note not found' });
+  res.json({ success: true, data: list });
+});
+
+router.post('/:vaultId/notes/:noteId/shares', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const noteId = Number(req.params.noteId);
+  if (!Number.isFinite(noteId) || noteId <= 0) {
+    return res.status(404).json({ success: false, message: 'Note not found' });
+  }
+
+  const parsed = z
+    .object({
+      expiresInSeconds: z.number().int().min(MIN_EXPIRES_SEC).max(MAX_EXPIRES_SEC),
+    })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: `expiresInSeconds must be between ${MIN_EXPIRES_SEC} and ${MAX_EXPIRES_SEC}`,
+    });
+  }
+
+  const created = await createNoteShare({
+    vaultId: Number(vault.Id),
+    noteId,
+    createdByPmUserId: req.user!.userId,
+    expiresInSeconds: parsed.data.expiresInSeconds,
+  });
+  if (!created.ok) {
+    if (created.reason === 'hub_note') {
+      return res.status(403).json({
+        success: false,
+        message: 'The My work overview note cannot be shared with a password link',
+      });
+    }
+    return res.status(404).json({ success: false, message: 'Note not found' });
+  }
+
+  res.status(201).json({
+    success: true,
+    data: {
+      id: created.id,
+      url: created.url,
+      password: created.password,
+      expiresAt: created.expiresAt,
+    },
+  });
+});
+
+router.delete('/:vaultId/notes/:noteId/shares/:shareId', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const noteId = Number(req.params.noteId);
+  const shareId = Number(req.params.shareId);
+  if (!Number.isFinite(noteId) || noteId <= 0 || !Number.isFinite(shareId) || shareId <= 0) {
+    return res.status(404).json({ success: false, message: 'Share not found' });
+  }
+  const result = await revokeNoteShare({
+    vaultId: Number(vault.Id),
+    noteId,
+    shareId,
+  });
+  if (result === 'not_found') {
+    return res.status(404).json({ success: false, message: 'Share not found' });
+  }
+  res.json({ success: true, message: 'Share revoked' });
+});
 
 router.get('/:vaultId/notes/:noteId/backlinks', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
