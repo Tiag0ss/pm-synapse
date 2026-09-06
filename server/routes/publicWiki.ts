@@ -1,6 +1,7 @@
 import { Router, Response, Request } from 'express';
 import rateLimit from 'express-rate-limit';
-import { markdownToSafeHtml } from '../services/markdown';
+import { markdownToSafeHtml, extractBoardEmbedTargets } from '../services/markdown';
+import { resolveNoteId } from '../services/notePaths';
 import { applySafeMediaHeaders, readVaultMedia } from '../services/vaultMedia';
 import { pool, RowDataPacket } from '../config/database';
 import { optionalAuthenticateSession, AuthRequest } from '../middleware/auth';
@@ -315,7 +316,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     noteKind === 'whiteboard' && note.BoardJson != null ? String(note.BoardJson) : null;
 
   const [allNotes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path, Visibility FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
+    'SELECT Id, Title, Path, Visibility, Kind, BoardJson FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
     [vault.Id]
   );
   const noteIndex = allNotes
@@ -327,6 +328,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       id: Number(n.Id),
       title: String(n.Title),
       path: String(n.Path || ''),
+      kind: String(n.Kind || 'note'),
     }));
 
   const linkableVaults = await listLinkableVaultNotesForWikiViewer({
@@ -334,18 +336,43 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     isAuthed: ctx.isAuthed,
   });
 
+  const bodyMd = String(note.BodyMarkdown || '');
   const html =
     noteKind === 'whiteboard'
       ? ''
-      : markdownToSafeHtml(
-          String(note.BodyMarkdown || ''),
-          noteIndex,
-          linkableVaults,
-          Number(note.Id)
-        ).replace(
+      : markdownToSafeHtml(bodyMd, noteIndex, linkableVaults, Number(note.Id)).replace(
           new RegExp(`/api/vaults/${Number(vault.Id)}/media/(\\d+)`, 'g'),
           `/api/public/${String(vault.slug)}/media/$1`
         );
+
+  const embeddedBoards: Record<string, string> = {};
+  if (noteKind !== 'whiteboard') {
+    const byId = new Map(allNotes.map((n) => [Number(n.Id), n]));
+    const visible = new Set(noteIndex.map((n) => n.id));
+    for (const target of extractBoardEmbedTargets(bodyMd)) {
+      if (target.startsWith('@')) continue;
+      const id = resolveNoteId(target, noteIndex);
+      if (id == null || !visible.has(id)) continue;
+      const row = byId.get(id);
+      if (!row || String(row.Kind || 'note') !== 'whiteboard') continue;
+      const raw = row.BoardJson;
+      let bj: string | null = null;
+      if (raw != null) {
+        if (typeof Buffer !== 'undefined' && Buffer.isBuffer(raw)) bj = raw.toString('utf8');
+        else if (typeof raw === 'object') {
+          try {
+            bj = JSON.stringify(raw);
+          } catch {
+            bj = null;
+          }
+        } else {
+          const s = String(raw);
+          bj = s.trim() ? s : null;
+        }
+      }
+      if (bj != null) embeddedBoards[String(id)] = bj;
+    }
+  }
 
   let checkboxTasks: Array<{
     markerId: string | null;
@@ -415,6 +442,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       path: note.Path,
       kind: noteKind,
       boardJson,
+      embeddedBoards,
       html,
       robots: access.robots,
       visibility,

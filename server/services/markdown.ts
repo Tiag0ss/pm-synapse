@@ -69,6 +69,24 @@ export function extractWikiLinks(markdown: string): string[] {
   return links;
 }
 
+/** Targets from Obsidian-style `![[…]]` embeds only (not plain `[[…]]`). */
+export function extractBoardEmbedTargets(markdown: string): string[] {
+  const links: string[] = [];
+  const seen = new Set<string>();
+  const body = parseFrontmatter(markdown).body;
+  const re = /!\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body))) {
+    const t = String(m[1] || '').trim();
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push(t);
+  }
+  return links;
+}
+
 export function extractTags(markdown: string): string[] {
   const tags = new Set<string>();
   const fm = parseFrontmatter(markdown);
@@ -309,7 +327,26 @@ function mapProtected(md: string, transform: (chunk: string) => string): string 
   return out.replace(/\u0000MD(\d+)\u0000/g, (_, i) => slots[Number(i)] ?? '');
 }
 
-/** Convert [[wikilinks]] and #tags before marked so public/PM HTML shows them. */
+function noteKindById(notes: MarkdownNoteRef[], id: number): string {
+  return String(notes.find((n) => n.id === id)?.kind || 'note');
+}
+
+function renderBoardEmbedHtml(params: {
+  noteId: number;
+  noteTitle: string;
+  vaultId?: number | null;
+}): string {
+  const vaultId =
+    params.vaultId != null && Number(params.vaultId) > 0 ? String(params.vaultId) : '';
+  return (
+    `\n\n<div class="synapse-board-embed" data-note-id="${escapeAttr(String(params.noteId))}"` +
+    ` data-note-title="${escapeAttr(params.noteTitle)}"` +
+    (vaultId ? ` data-vault-id="${escapeAttr(vaultId)}"` : '') +
+    ` aria-label="Whiteboard: ${escapeAttr(params.noteTitle)}">Loading board…</div>\n\n`
+  );
+}
+
+/** Convert [[wikilinks]] / ![[board embeds]] and #tags before marked so public/PM HTML shows them. */
 export function preprocessSynapseMarkdown(
   md: string,
   notes: MarkdownNoteRef[] = [],
@@ -328,6 +365,38 @@ export function preprocessSynapseMarkdown(
     next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
     });
+
+    // Board embeds — Obsidian-style `![[…]]` (before plain [[…]])
+    next = next.replace(/!\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
+      const t = String(target).trim();
+      const aliasLabel = alias != null ? String(alias).trim() : '';
+      const asWikilink = `[[${t}${aliasLabel ? `|${aliasLabel}` : ''}]]`;
+
+      if (t.startsWith('@')) {
+        const r = resolveCrossVaultWikilink(t, linkableVaults, aliasLabel || undefined);
+        if (r.status !== 'ok') return asWikilink;
+        const vault = linkableVaults.find((v) => v.vaultId === r.vaultId);
+        const kind = vault ? noteKindById(vault.notes, r.noteId) : 'note';
+        if (kind !== 'whiteboard') return asWikilink;
+        return stashHtml(
+          renderBoardEmbedHtml({
+            noteId: r.noteId,
+            noteTitle: r.label,
+            vaultId: r.vaultId,
+          })
+        );
+      }
+
+      const id = resolveNoteId(t, notes);
+      if (id == null || noteKindById(notes, id) !== 'whiteboard') return asWikilink;
+      return stashHtml(
+        renderBoardEmbedHtml({
+          noteId: id,
+          noteTitle: aliasLabel || t,
+        })
+      );
+    });
+
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
       const t = String(target).trim();
       const aliasLabel = alias != null ? String(alias).trim() : '';

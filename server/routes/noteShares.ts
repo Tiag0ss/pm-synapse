@@ -149,6 +149,7 @@ router.get('/:token/content', async (req, res: Response) => {
         noteId: content.noteId,
         html: content.html,
         boardJson: content.boardJson,
+        embeddedBoards: content.embeddedBoards,
         expiresAt: content.expiresAt,
       },
     });

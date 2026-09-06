@@ -4,6 +4,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { renderSynapseMarkdown, type LinkableVaultNotes, type NoteIndexEntry } from '@/lib/renderMarkdown';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
+import { fetchVaultBoardJson } from '@/lib/hydrateBoardEmbeds';
+import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
+import BoardEmbedPortals from '@/components/BoardEmbedPortals';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import {
   caretCoordinates,
@@ -224,6 +227,10 @@ const LEGEND_SECTIONS: LegendSection[] = [
         syntax: '[[Note title]]',
         meaning: 'Wikilink — text opens the note; magnifier previews it',
       },
+      {
+        syntax: '![[Whiteboard]]',
+        meaning: 'Embed a whiteboard mid-note (preview / wiki / share)',
+      },
       { syntax: '[[meta/risks]]', meaning: 'Link by folder path' },
       { syntax: '[[risks]]', meaning: 'Link by unique leaf name' },
       {
@@ -400,6 +407,10 @@ export default function MarkdownNoteEditor({
   const [peekTarget, setPeekTarget] = useState<NotePeekTarget | null>(null);
   const [fetchedPlannerLinks, setFetchedPlannerLinks] = useState<PlannerLinkItem[]>([]);
   const [attachments, setAttachments] = useState<AttachSuggestSource[]>([]);
+  const onOpenNoteRef = useRef(onOpenNote);
+  const onOpenCrossVaultNoteRef = useRef(onOpenCrossVaultNote);
+  onOpenNoteRef.current = onOpenNote;
+  onOpenCrossVaultNoteRef.current = onOpenCrossVaultNote;
   const [linkSuggest, setLinkSuggest] = useState<{
     ctx: LinkSuggestContext | { kind: 'attach'; replaceStart: number; replaceEnd: number };
     items: LinkSuggestItem[];
@@ -696,18 +707,46 @@ export default function MarkdownNoteEditor({
     };
   }, [vaultId, noteId, plannerLinks]);
 
+  const previewHtml = html || '<p class="synapse-empty">Nothing to preview yet.</p>';
+
+  const afterPreviewWrite = useCallback((root: HTMLElement) => {
+    void renderMermaidInRoot(root);
+  }, []);
+
+  const embedMounts = useBoardEmbedPreview(previewRef, {
+    html: previewHtml,
+    enabled: mode !== 'edit',
+    afterWrite: afterPreviewWrite,
+  });
+
   useLayoutEffect(() => {
     const root = previewRef.current;
     if (!root || mode === 'edit') return;
-    // Own the preview DOM so Mermaid SVG is not wiped by React's dangerouslySetInnerHTML
-    root.innerHTML = html || '<p class="synapse-empty">Nothing to preview yet.</p>';
     applyPlannerButtons(root, fetchedPlannerLinks);
     root.querySelectorAll<HTMLInputElement>('input.synapse-cb-partial[type="checkbox"]').forEach((el) => {
       el.indeterminate = true;
       el.checked = false;
     });
-    void renderMermaidInRoot(root);
-  }, [html, fetchedPlannerLinks, mode]);
+  }, [fetchedPlannerLinks, mode, previewHtml, embedMounts]);
+
+  const fetchEmbedBoard = useCallback(
+    async (embedNoteId: number, embedVaultId: number | null) => {
+      const defaultVaultId = vaultId ? Number(vaultId) : 0;
+      const vid = embedVaultId || defaultVaultId;
+      if (!vid) return null;
+      return fetchVaultBoardJson(vid, embedNoteId);
+    },
+    [vaultId]
+  );
+
+  const onEmbedOpenNote = useCallback((id: number, embedVaultId?: number) => {
+    const defaultVaultId = vaultId ? Number(vaultId) : 0;
+    if (embedVaultId && defaultVaultId && embedVaultId !== defaultVaultId) {
+      onOpenCrossVaultNoteRef.current?.(embedVaultId, id);
+      return;
+    }
+    onOpenNoteRef.current?.(id);
+  }, [vaultId]);
 
   const uploadFiles = useCallback(
     async (files: File[]) => {
@@ -1190,6 +1229,11 @@ export default function MarkdownNoteEditor({
               className="synapse-md-preview min-h-0 overflow-auto p-5 text-[15px] leading-7"
             />
           )}
+          <BoardEmbedPortals
+            mounts={embedMounts}
+            fetchBoard={fetchEmbedBoard}
+            onOpenNote={onEmbedOpenNote}
+          />
         </div>
 
         {showLegend && (

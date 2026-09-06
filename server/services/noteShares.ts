@@ -3,7 +3,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { jwtSecret } from './secrets';
-import { markdownToSafeHtml } from './markdown';
+import { markdownToSafeHtml, extractBoardEmbedTargets } from './markdown';
+import { resolveNoteId } from './notePaths';
 import { isPlannerOverviewNote } from './personalWorkVault';
 
 const BCRYPT_ROUNDS = 10;
@@ -292,6 +293,7 @@ export async function getShareContent(params: {
       noteId: number;
       html: string;
       boardJson: string | null;
+      embeddedBoards: Record<string, string>;
       expiresAt: string;
     }
 > {
@@ -306,10 +308,11 @@ export async function getShareContent(params: {
     return { ok: false, reason: 'locked' };
   }
 
+  const vaultId = Number(found.share.VaultId);
   const [notes] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Title, Path, BodyMarkdown, Kind, BoardJson
      FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL LIMIT 1`,
-    [found.share.NoteId, found.share.VaultId]
+    [found.share.NoteId, vaultId]
   );
   if (!notes.length) return { ok: false, reason: 'not_found' };
   const note = notes[0];
@@ -325,19 +328,44 @@ export async function getShareContent(params: {
       noteId,
       html: '',
       boardJson: boardJsonToString(note.BoardJson),
+      embeddedBoards: {},
       expiresAt: toIso(found.share.ExpiresAt),
     };
   }
 
-  const html = markdownToSafeHtml(String(note.BodyMarkdown || ''), [], [], noteId)
+  const [vaultNotes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, Title, Path, Kind, BoardJson FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL`,
+    [vaultId]
+  );
+  const noteIndex = vaultNotes.map((n) => ({
+    id: Number(n.Id),
+    title: String(n.Title),
+    path: String(n.Path || ''),
+    kind: String(n.Kind || 'note'),
+  }));
+
+  const body = String(note.BodyMarkdown || '');
+  const html = markdownToSafeHtml(body, noteIndex, [], noteId)
     .replace(
-      new RegExp(`/api/vaults/${Number(found.share.VaultId)}/media/(\\d+)`, 'g'),
+      new RegExp(`/api/vaults/${vaultId}/media/(\\d+)`, 'g'),
       `/api/shares/${encodeURIComponent(token)}/media/$1`
     )
     .replace(
       new RegExp(`/api/public/[^/"'\\s]+/media/(\\d+)`, 'g'),
       `/api/shares/${encodeURIComponent(token)}/media/$1`
     );
+
+  const embeddedBoards: Record<string, string> = {};
+  const byId = new Map(vaultNotes.map((n) => [Number(n.Id), n]));
+  for (const target of extractBoardEmbedTargets(body)) {
+    if (target.startsWith('@')) continue;
+    const id = resolveNoteId(target, noteIndex);
+    if (id == null) continue;
+    const row = byId.get(id);
+    if (!row || String(row.Kind || 'note') !== 'whiteboard') continue;
+    const bj = boardJsonToString(row.BoardJson);
+    if (bj != null) embeddedBoards[String(id)] = bj;
+  }
 
   return {
     ok: true,
@@ -346,6 +374,7 @@ export async function getShareContent(params: {
     noteId,
     html,
     boardJson: null,
+    embeddedBoards,
     expiresAt: toIso(found.share.ExpiresAt),
   };
 }

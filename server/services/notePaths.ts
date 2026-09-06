@@ -28,6 +28,8 @@ export type NoteResolveEntry = {
   id: number;
   title: string;
   path: string;
+  /** `note` | `whiteboard` — used for `![[…]]` board embeds. */
+  kind?: string;
 };
 
 /** Notes from one vault available for `[[@slug/…]]` resolution. */

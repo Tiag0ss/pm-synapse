@@ -1108,11 +1108,83 @@ a:hover { text-decoration: underline; }
   min-height: min(70dvh, 36rem);
   height: min(70dvh, 36rem);
 }
+/* Inline `![[whiteboard]]` embeds inside markdown preview */
+.synapse-board-embed {
+  margin: 1rem 0;
+}
+.synapse-board-embed-frame {
+  display: flex;
+  flex-direction: column;
+  min-height: min(50dvh, 28rem);
+  height: min(50dvh, 28rem);
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.synapse-board-embed-chrome {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-shrink: 0;
+  padding: 0.45rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+.synapse-board-embed-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.synapse-board-embed:not(:has(.synapse-board-embed-frame)) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: min(50dvh, 28rem);
+  height: min(50dvh, 28rem);
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.synapse-whiteboard.synapse-whiteboard-viewer.synapse-whiteboard-embed {
+  min-height: 0;
+  height: auto;
+  flex: 1 1 auto;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  position: relative;
+}
+/* Keep zoom / footer / main menu visible inside markdown embeds */
+.synapse-board-embed-frame .excalidraw .layer-ui__wrapper,
+.synapse-board-embed-frame .excalidraw .App-menu_bottom,
+.synapse-board-embed-frame .excalidraw .footer-center,
+.synapse-board-embed-frame .excalidraw .zoom-actions {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+.synapse-board-embed-frame .excalidraw .App-menu__right,
+.synapse-board-embed-frame .excalidraw .main-menu-trigger {
+  display: flex !important;
+  visibility: visible !important;
+}
 /* Share page: fill remaining viewport */
 .synapse-whiteboard.synapse-whiteboard-viewer.synapse-whiteboard-fill {
   min-height: 0;
   height: 100%;
   flex: 1 1 auto;
+  margin: 0;
+  border: none;
+  border-radius: 0;
 }
 .synapse-whiteboard .excalidraw {
   --color-primary: var(--accent);
@@ -1141,10 +1213,15 @@ a:hover { text-decoration: underline; }
   font-family: var(--font-sans);
 }
 
-/* Peek / public wiki: zoom + canvas background stay; hide shape toolbar */
+/* Peek / public wiki / embeds: zoom + canvas background stay; hide drawing chrome + Library */
 .synapse-whiteboard-viewer .excalidraw .App-toolbar,
 .synapse-whiteboard-viewer .excalidraw .App-toolbar-container,
 .synapse-whiteboard-viewer .excalidraw .shapes-section,
 .synapse-whiteboard-viewer .excalidraw .App-menu__left {
+  display: none !important;
+}
+.synapse-whiteboard-viewer .excalidraw .sidebar-trigger,
+.synapse-whiteboard-viewer .excalidraw .sidebar-trigger__label-element,
+.synapse-whiteboard-viewer .excalidraw .layer-ui__wrapper__top-right .sidebar-trigger__label-element {
   display: none !important;
 }

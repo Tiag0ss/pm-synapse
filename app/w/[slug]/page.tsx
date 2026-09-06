@@ -11,6 +11,9 @@ import { noteLeafName } from '@/lib/notePaths';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
+import { fetchWikiBoardJson } from '@/lib/hydrateBoardEmbeds';
+import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
+import BoardEmbedPortals from '@/components/BoardEmbedPortals';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
@@ -39,6 +42,7 @@ export default function PublicWikiPage() {
   const [title, setTitle] = useState('');
   const [itemKind, setItemKind] = useState<'note' | 'whiteboard'>('note');
   const [boardJson, setBoardJson] = useState<string | null>(null);
+  const [embeddedBoards, setEmbeddedBoards] = useState<Record<string, string | null>>({});
   const [activeId, setActiveId] = useState<number | null>(null);
   const [q, setQ] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
@@ -112,6 +116,11 @@ export default function PublicWikiPage() {
           ? String(data.data.boardJson)
           : null
       );
+      const boards =
+        data.data.embeddedBoards && typeof data.data.embeddedBoards === 'object'
+          ? (data.data.embeddedBoards as Record<string, string | null>)
+          : {};
+      setEmbeddedBoards(kind === 'whiteboard' ? {} : boards);
       setHtml(kind === 'whiteboard' ? '' : data.data.html || '');
       setBacklinks(data.data.backlinks || []);
       setReferences(data.data.references || []);
@@ -265,13 +274,28 @@ export default function PublicWikiPage() {
     return () => root.removeEventListener('click', onClick);
   }, [html, noteIndex, openNote, slug, vaultId]);
 
+  const afterWikiWrite = useCallback((root: HTMLElement) => {
+    void renderMermaidInRoot(root);
+  }, []);
+
+  const embedMounts = useBoardEmbedPreview(articleRef, {
+    html,
+    enabled: !isWhiteboard,
+    afterWrite: afterWikiWrite,
+  });
+
+  // Planner buttons must not remount board embeds (that left them stuck on "Loading board…").
   useLayoutEffect(() => {
     const root = articleRef.current;
     if (!root || isWhiteboard) return;
-    root.innerHTML = html || '';
     applyPlannerButtons(root, plannerLinks);
-    void renderMermaidInRoot(root);
-  }, [html, plannerLinks, isWhiteboard]);
+  }, [plannerLinks, html, isWhiteboard, embedMounts]);
+
+  const fetchEmbedBoard = useCallback(
+    async (embedNoteId: number, _embedVaultId: number | null) =>
+      fetchWikiBoardJson(slug, embedNoteId),
+    [slug]
+  );
 
   if (error && !notes.length) {
     return (
@@ -533,6 +557,14 @@ export default function PublicWikiPage() {
           ) : (
             <div ref={articleRef} className="synapse-md-preview" />
           )}
+          <BoardEmbedPortals
+            mounts={embedMounts}
+            boardMap={embeddedBoards}
+            fetchBoard={fetchEmbedBoard}
+            onOpenNote={(id) => {
+              void openNote(id);
+            }}
+          />
         </section>
 
         <aside

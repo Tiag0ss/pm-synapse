@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   renderSynapseMarkdown,
   type LinkableVaultNotes,
@@ -8,6 +8,9 @@ import {
 } from '@/lib/renderMarkdown';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
+import { fetchVaultBoardJson, fetchWikiBoardJson } from '@/lib/hydrateBoardEmbeds';
+import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
+import BoardEmbedPortals from '@/components/BoardEmbedPortals';
 import {
   applyPeekHits,
   clearPeekHits,
@@ -61,6 +64,8 @@ export default function NotePeekModal({
   const [query, setQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
   const [matchCount, setMatchCount] = useState(0);
+  const onOpenNoteRef = useRef(onOpenNote);
+  onOpenNoteRef.current = onOpenNote;
 
   const isWhiteboard = itemKind === 'whiteboard';
 
@@ -135,12 +140,30 @@ export default function NotePeekModal({
     return renderSynapseMarkdown(bodyMarkdown, notes, linkableVaults, target?.noteId ?? null);
   }, [isWhiteboard, bodyHtml, bodyMarkdown, notes, linkableVaults, target?.noteId]);
 
-  useLayoutEffect(() => {
-    const root = bodyRef.current;
-    if (!root || !open || isWhiteboard) return;
-    root.innerHTML = html || '';
+  const afterPeekWrite = useCallback((root: HTMLElement) => {
     void renderMermaidInRoot(root);
-  }, [html, open, isWhiteboard]);
+  }, []);
+
+  const embedMounts = useBoardEmbedPreview(bodyRef, {
+    html,
+    enabled: open && !isWhiteboard,
+    afterWrite: afterPeekWrite,
+  });
+
+  const fetchEmbedBoard = useCallback(
+    async (embedNoteId: number, embedVaultId: number | null) => {
+      const wikiSlug = target?.wikiSlug;
+      if (wikiSlug) return fetchWikiBoardJson(wikiSlug, embedNoteId);
+      const vid = embedVaultId || target?.vaultId || 0;
+      if (!vid) return null;
+      return fetchVaultBoardJson(vid, embedNoteId);
+    },
+    [target?.wikiSlug, target?.vaultId]
+  );
+
+  const onEmbedOpenNote = useCallback((id: number, embedVaultId?: number) => {
+    onOpenNoteRef.current(id, embedVaultId || target?.vaultId);
+  }, [target?.vaultId]);
 
   useLayoutEffect(() => {
     const root = bodyRef.current;
@@ -359,6 +382,11 @@ export default function NotePeekModal({
               className="synapse-md-preview prose-synapse text-sm leading-relaxed text-[var(--text)]"
             />
           )}
+          <BoardEmbedPortals
+            mounts={embedMounts}
+            fetchBoard={fetchEmbedBoard}
+            onOpenNote={onEmbedOpenNote}
+          />
         </div>
       </div>
     </div>

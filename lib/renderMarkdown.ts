@@ -193,7 +193,26 @@ function linkifyUnlinkedMentions(
   return work.replace(/\u0000MN(\d+)\u0000/g, (_, i) => slots[Number(i)] ?? '');
 }
 
-/** Turn [[wikilinks]] and #tags into HTML-friendly Markdown. */
+function noteKindById(notes: NoteIndexEntry[], id: number): string {
+  return String(notes.find((n) => n.id === id)?.kind || 'note');
+}
+
+function renderBoardEmbedHtml(params: {
+  noteId: number;
+  noteTitle: string;
+  vaultId?: number | null;
+}): string {
+  const vaultId =
+    params.vaultId != null && Number(params.vaultId) > 0 ? String(params.vaultId) : '';
+  return (
+    `\n\n<div class="synapse-board-embed" data-note-id="${escapeAttr(String(params.noteId))}"` +
+    ` data-note-title="${escapeAttr(params.noteTitle)}"` +
+    (vaultId ? ` data-vault-id="${escapeAttr(vaultId)}"` : '') +
+    ` aria-label="Whiteboard: ${escapeAttr(params.noteTitle)}">Loading board…</div>\n\n`
+  );
+}
+
+/** Turn [[wikilinks]] / ![[board embeds]] and #tags into HTML-friendly Markdown. */
 export function preprocessSynapseMarkdown(
   md: string,
   notes: NoteIndexEntry[] = [],
@@ -214,6 +233,37 @@ export function preprocessSynapseMarkdown(
     // Tags — only in plain text (heading lines already normalized to `# Title`)
     next = next.replace(/(^|[^#\w/])#([a-zA-Z][\w/-]*)/g, (_m, lead: string, tag: string) => {
       return `${lead}<span class="synapse-tag">#${escapeHtml(tag)}</span>`;
+    });
+
+    // Board embeds — Obsidian-style `![[…]]` (before plain [[…]])
+    next = next.replace(/!\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {
+      const t = String(target).trim();
+      const aliasLabel = alias != null ? String(alias).trim() : '';
+      const asWikilink = `[[${t}${aliasLabel ? `|${aliasLabel}` : ''}]]`;
+
+      if (t.startsWith('@')) {
+        const r = resolveCrossVaultWikilink(t, linkableVaults, aliasLabel || undefined);
+        if (r.status !== 'ok') return asWikilink;
+        const vault = linkableVaults.find((v) => v.vaultId === r.vaultId);
+        const kind = vault ? noteKindById(vault.notes, r.noteId) : 'note';
+        if (kind !== 'whiteboard') return asWikilink;
+        return stashHtml(
+          renderBoardEmbedHtml({
+            noteId: r.noteId,
+            noteTitle: r.label,
+            vaultId: r.vaultId,
+          })
+        );
+      }
+
+      const id = resolveNoteId(t, notes);
+      if (id == null || noteKindById(notes, id) !== 'whiteboard') return asWikilink;
+      return stashHtml(
+        renderBoardEmbedHtml({
+          noteId: id,
+          noteTitle: aliasLabel || t,
+        })
+      );
     });
 
     next = next.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, target: string, alias?: string) => {

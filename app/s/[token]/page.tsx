@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import WhiteboardPeekCanvas from '@/components/WhiteboardPeekCanvas';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
+import BoardEmbedPortals from '@/components/BoardEmbedPortals';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
+import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
 import { noteLeafName } from '@/lib/notePaths';
 
 type ShareKind = 'note' | 'whiteboard';
@@ -27,6 +29,7 @@ export default function SharedNotePage() {
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [html, setHtml] = useState('');
   const [boardJson, setBoardJson] = useState<string | null>(null);
+  const [embeddedBoards, setEmbeddedBoards] = useState<Record<string, string | null>>({});
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
 
@@ -52,6 +55,11 @@ export default function SharedNotePage() {
     setExpiresAt(d.expiresAt ? String(d.expiresAt) : null);
     setHtml(String(d.html || ''));
     setBoardJson(d.boardJson != null ? String(d.boardJson) : null);
+    const boards =
+      d.embeddedBoards && typeof d.embeddedBoards === 'object'
+        ? (d.embeddedBoards as Record<string, string | null>)
+        : {};
+    setEmbeddedBoards(boards);
     setPhase('content');
     setError('');
   }, [token]);
@@ -83,12 +91,15 @@ export default function SharedNotePage() {
     })();
   }, [token, loadContent]);
 
-  useLayoutEffect(() => {
-    const root = articleRef.current;
-    if (!root || phase !== 'content' || kind === 'whiteboard') return;
-    root.innerHTML = html || '';
+  const afterShareWrite = useCallback((root: HTMLElement) => {
     void renderMermaidInRoot(root);
-  }, [html, phase, kind]);
+  }, []);
+
+  const embedMounts = useBoardEmbedPreview(articleRef, {
+    html,
+    enabled: phase === 'content' && kind !== 'whiteboard',
+    afterWrite: afterShareWrite,
+  });
 
   useEffect(() => {
     const root = articleRef.current;
@@ -233,6 +244,7 @@ export default function SharedNotePage() {
           ) : (
             <div className="min-h-0 flex-1 overflow-auto px-4 py-6 sm:px-8 lg:px-12">
               <div ref={articleRef} className="synapse-md-preview w-full" />
+              <BoardEmbedPortals mounts={embedMounts} boardMap={embeddedBoards} />
             </div>
           )}
         </div>
