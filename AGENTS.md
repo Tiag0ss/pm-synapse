@@ -55,4 +55,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - Status reconciliation: **Synapse pulls** from PM; checkbox toggle **pushes** status to PM.
 - Parameterized SQL via `pool`; `logger` not `console` on server.
 - Notes paths support folders (`meta/risks` → `meta/risks.md`).
+- Whiteboards are `Kind=whiteboard`; embed with `![[…]]` only (not plain `[[…]]`).
 - Minimal diffs; English only; commit when user asks.

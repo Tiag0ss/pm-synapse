@@ -9,20 +9,21 @@ WORKDIR /app
 # Copy package files
 COPY package.json pnpm-lock.yaml .npmrc ./
 
-# Install production dependencies
-RUN pnpm install --frozen-lockfile --prod
+# Production deps only — skip postinstall (needs scripts/ + is run in builder)
+RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml .npmrc ./
-RUN pnpm install --frozen-lockfile
+# Skip postinstall until sources (scripts/) are present
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 COPY . .
 
-# Build Next.js and TypeScript server separately to ensure both succeed
-RUN npx next build && npx tsc --project server/tsconfig.json
+# Fonts for Excalidraw (normally postinstall); then build Next + server
+RUN node scripts/copy-excalidraw-assets.mjs && npx next build && npx tsc --project server/tsconfig.json
 
 # Production image, copy all the files and run
 FROM base AS runner

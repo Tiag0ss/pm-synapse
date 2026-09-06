@@ -32,16 +32,18 @@ rules:
 | Database | MySQL (`server/config/database.ts`), schema in `server/services/schema.ts` |
 | Auth | Cookie session + SSO against Project Management |
 | Validation | Zod on route bodies |
-| Markdown | `marked` + Synapse preprocess (wikilinks, tags, checkboxes) |
+| Markdown | `marked` + Synapse preprocess (wikilinks, `![[board]]` embeds, tags, checkboxes) |
+| Whiteboards | Excalidraw (`WhiteboardEditor` / `WhiteboardPeekCanvas`) |
+
 
 ## Repository map
 
 ```
-app/                 # Next.js pages (vault workspace, public wiki)
-components/          # Editor, mindmap, modals, folder tree, lightbox
-lib/                 # Client helpers (checkboxes, notePaths, renderMarkdown)
-server/routes/       # auth, vaults, publicWiki
-server/services/     # schema, pmClient, notesGraph, vaultMedia, pmCheckboxSync
+app/                 # Next.js pages (vault workspace, public wiki, /s share viewer)
+components/          # Editor, whiteboards, mindmap, modals, folder tree, lightbox
+lib/                 # Client helpers (checkboxes, notePaths, renderMarkdown, board embeds)
+server/routes/       # auth, vaults, publicWiki, noteShares
+server/services/     # schema, pmClient, notesGraph, vaultMedia, noteShares, pmCheckboxSync
 docs/                # PM_API_CONTRACT.md and feature docs
 .github/prompts/     # Task skills — open matching skill before coding
 ```
@@ -67,10 +69,18 @@ docs/                # PM_API_CONTRACT.md and feature docs
 ### Notes & paths
 - Title `meta/risks` → Path `meta/risks.md`; sidebar groups by folder.
 - Wikilinks resolve: full title/path, or unique leaf name (`[[risks]]`).
+- Note kinds: `note` | `whiteboard`. `![[Board]]` embeds only resolve to `kind === 'whiteboard'`; plain `[[Board]]` stays a link.
+- Keep markdown preprocess in sync: `lib/renderMarkdown.ts` ↔ `server/services/markdown.ts`.
+- Board embeds hydrate via portals (`components/BoardEmbedPortals.tsx` + `lib/useBoardEmbedPreview.ts`) — do not nest `createRoot` inside preview `innerHTML` lifecycle.
 
 ### Media
 - Paste/drop images → `VaultMedia` + `![alt](/api/vaults/:id/media/:mediaId)`.
+- Non-image attachments: `[Name](/api/vaults/:id/media/:mediaId)` + Attachments panel / `[[attach` autocomplete.
 - Click preview image → `ImageLightbox`.
+
+### Password shares
+- Owner CRUD on vault note shares; guest APIs under `/api/shares/:token` (`server/routes/noteShares.ts`).
+- Viewer: `app/s/[token]/page.tsx`. Share content for notes may include `embeddedBoards` for `![[…]]` targets.
 
 ## PM integration (when PM lives in another repo)
 

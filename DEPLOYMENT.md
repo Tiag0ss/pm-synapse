@@ -37,6 +37,8 @@ sg docker -c "./docker-build.sh 0.1.0"
 
 Set `DOCKER_USERNAME` or the script will prompt. Image: `$DOCKER_USERNAME/pm-synapse`.
 
+The multi-stage `Dockerfile` installs with `--ignore-scripts` (postinstall needs `scripts/` before copy), then runs `node scripts/copy-excalidraw-assets.mjs` in the builder so Excalidraw fonts land under `public/excalidraw`.
+
 ### 3. Run with Compose
 
 ```bash

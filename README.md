@@ -7,14 +7,17 @@ This project is a work in progress — bugs may still be found; please report th
 ## Features
 
 - 📔 **Markdown vaults** — Folder paths (`meta/risks`), note tree (folders first), vault switcher
-- ✍️ **Editor** — Split/edit/preview, toolbar, paste/drop images + lightbox; **autosave** + unsaved warnings; Ctrl/Cmd+S
+- ✏️ **Editor** — Split/edit/preview, toolbar, paste/drop images + file attachments + lightbox; **autosave** + unsaved warnings; Ctrl/Cmd+S
+- 🖼️ **Whiteboards** — Excalidraw boards as first-class vault items; maximize to full page; peek / public wiki / share viewers (pan, zoom, background; drawing chrome hidden)
 - 🔎 **Search** — Filter by title/path/body; **Jump to note** palette (Ctrl/Cmd+O)
-- 🔗 **Wikilinks & graph** — `[[links]]` (path + unique leaf), tags, backlinks, focused + full mindmap
+- 🔗 **Wikilinks & graph** — `[[links]]` (path + unique leaf), tags, backlinks, focused + full mindmap; board→note links show as `(board)` in References
+- 📎 **Inline board embeds** — `![[Whiteboard title]]` embeds a read-only board mid-note (preview, peek, wiki, password share); plain `[[Whiteboard]]` stays a link
 - 🕘 **Revisions** — History with side-by-side restore
 - 📦 **ZIP import / export** — Nested folders ↔ note paths; images included
 - 📋 **Templates** — Blank, meeting, risk, decision when creating notes
 - 🗑️ **Trash** — Soft-delete notes with restore; leave shared vaults / delete owned vaults
 - ✅ **Checkbox → PM tasks** — Manual create (single or bulk with progress); Synapse pulls PM closed/cancelled status
+- 📤 **Share note** — Password-protected temporary links (`/s/:token`); **Send** copy/move to another vault (same Share modal)
 - 👁️ **Visibility** — Vault wiki audience (private / authenticated / unlisted / public) + per-note overrides on `/w/:slug`
 - 🌐 **Wiki directory** — `/w` lists wikis you may open (not unlisted); private wikis only if shared with you
 - 👥 **Vault sharing** — **Read** = wiki only; **Edit** = vault editor + wiki; invite by search or PM user id
@@ -31,7 +34,8 @@ This project is a work in progress — bugs may still be found; please report th
 | Backend | Node.js, Express 5, TypeScript (custom server) |
 | Database | MySQL 8+ |
 | Auth | Local password + optional PM SSO; JWT session cookie |
-| Markdown | `marked` + Synapse extras (wikilinks, tags, checkboxes, Mermaid, KaTeX, highlight, callouts, footnotes, TOC) |
+| Markdown | `marked` + Synapse extras (wikilinks, `![[board]]` embeds, tags, checkboxes, Mermaid, KaTeX, highlight, callouts, footnotes, TOC) |
+| Whiteboards | `@excalidraw/excalidraw` (fonts copied to `public/excalidraw` on install / Docker build) |
 
 ## Local Development
 
@@ -151,6 +155,20 @@ Notes and vault ACLs live only in Synapse. Task/project create goes through PM�
 | **public** | Everyone | Yes |
 
 Share **Read** = wiki only (no vault editor). Share **Edit** / owner = vault app + wiki. Per-note visibility filters content inside an accessible wiki; **private** notes are visible on the wiki only to Edit/Owner (not Share Read).
+
+### Note syntax (quick)
+
+| Syntax | Result |
+|--------|--------|
+| `[[Note title]]` / `[[folder/note]]` | Wikilink (open / peek) |
+| `[[@vault-slug/note]]` | Cross-vault wikilink |
+| `![[Whiteboard title]]` | Embed whiteboard mid-note (whiteboard kind only) |
+| `#tag` | Inline tag |
+| `- [ ]` / `- [x]` | Checklist (optional PM push) |
+| `![alt](/api/vaults/:id/media/:id)` | Vault image |
+| `[file.pdf](/api/vaults/:id/media/:id)` | Attachment link |
+
+Password share links: **Share… → Link** creates `/s/:token` (password + expiry). Shared **notes** that embed boards include board JSON in the unlock payload so guests do not need vault API access.
 
 ## Agent docs
 
