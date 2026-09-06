@@ -14,6 +14,7 @@ import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
+import WhiteboardPeekCanvas from '@/components/WhiteboardPeekCanvas';
 import AppUserMenu from '@/components/AppUserMenu';
 import { useIsLgUp } from '@/lib/useMediaQuery';
 
@@ -27,13 +28,17 @@ interface WikiLinkRow {
 export default function PublicWikiPage() {
   const params = useParams();
   const slug = String(params.slug);
-  const [notes, setNotes] = useState<Array<{ Id: number; Title: string; Path: string; Icon?: string | null }>>([]);
+  const [notes, setNotes] = useState<
+    Array<{ Id: number; Title: string; Path: string; Icon?: string | null; Kind?: string | null }>
+  >([]);
   const [vaultName, setVaultName] = useState('');
   const [vaultId, setVaultId] = useState<number | null>(null);
   const [canOpenVault, setCanOpenVault] = useState(false);
   const [error, setError] = useState('');
   const [html, setHtml] = useState('');
   const [title, setTitle] = useState('');
+  const [itemKind, setItemKind] = useState<'note' | 'whiteboard'>('note');
+  const [boardJson, setBoardJson] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [q, setQ] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
@@ -57,7 +62,10 @@ export default function PublicWikiPage() {
     id: n.Id,
     title: n.Title,
     path: n.Path,
+    kind: n.Kind || 'note',
   }));
+
+  const isWhiteboard = itemKind === 'whiteboard';
 
   const filteredNotes = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -96,7 +104,15 @@ export default function PublicWikiPage() {
       setNotesOpen(false);
       setContextOpen(false);
       setTitle(data.data.title);
-      setHtml(data.data.html);
+      const kind =
+        String(data.data.kind || 'note') === 'whiteboard' ? 'whiteboard' : 'note';
+      setItemKind(kind);
+      setBoardJson(
+        kind === 'whiteboard' && data.data.boardJson != null
+          ? String(data.data.boardJson)
+          : null
+      );
+      setHtml(kind === 'whiteboard' ? '' : data.data.html || '');
       setBacklinks(data.data.backlinks || []);
       setReferences(data.data.references || []);
       setPlannerLinks(
@@ -251,11 +267,11 @@ export default function PublicWikiPage() {
 
   useLayoutEffect(() => {
     const root = articleRef.current;
-    if (!root) return;
+    if (!root || isWhiteboard) return;
     root.innerHTML = html || '';
     applyPlannerButtons(root, plannerLinks);
     void renderMermaidInRoot(root);
-  }, [html, plannerLinks]);
+  }, [html, plannerLinks, isWhiteboard]);
 
   if (error && !notes.length) {
     return (
@@ -473,7 +489,11 @@ export default function PublicWikiPage() {
           />
         </aside>
 
-        <section className="min-h-0 overflow-auto px-4 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6">
+        <section
+          className={`min-h-0 overflow-auto px-4 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6 ${
+            isWhiteboard ? 'flex flex-col' : ''
+          }`}
+        >
           {error && (
             <p className="mb-3 text-sm text-[var(--danger)]">
               {error}{' '}
@@ -485,7 +505,7 @@ export default function PublicWikiPage() {
             </p>
           )}
           {title ? (
-            <h2 className="mb-5 text-2xl font-semibold tracking-tight lg:text-3xl">
+            <h2 className="mb-5 shrink-0 text-2xl font-semibold tracking-tight lg:text-3xl">
               {noteLeafName(title)}
               {title.includes('/') && (
                 <span className="mt-1 block text-sm font-normal text-[var(--muted)]">{title}</span>
@@ -503,7 +523,16 @@ export default function PublicWikiPage() {
               </button>
             </div>
           )}
-          <div ref={articleRef} className="synapse-md-preview" />
+          {isWhiteboard && activeId ? (
+            <WhiteboardPeekCanvas
+              noteId={activeId}
+              boardJson={boardJson}
+              className="synapse-whiteboard synapse-whiteboard-viewer min-h-[min(70dvh,36rem)] w-full flex-1 overflow-hidden rounded-xl border border-[var(--border)]"
+              onOpenNote={(id) => void openNote(id)}
+            />
+          ) : (
+            <div ref={articleRef} className="synapse-md-preview" />
+          )}
         </section>
 
         <aside
@@ -551,7 +580,9 @@ export default function PublicWikiPage() {
               <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
                 References
               </h2>
-              <p className="mt-0.5 text-[11px] text-[var(--muted)]">Links from this note</p>
+              <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+                {isWhiteboard ? 'Notes linked from this board' : 'Links from this note'}
+              </p>
               <div className="mt-2 space-y-1">
                 {references.length === 0 && <p className="text-[var(--muted)]">None</p>}
                 {references.map((b) => (
@@ -562,7 +593,9 @@ export default function PublicWikiPage() {
                     onClick={() => void openNote(b.Id)}
                   >
                     → {b.Title}{' '}
-                    <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
+                    <span className="text-[11px] text-[var(--muted)]">
+                      ({b.Kind === 'boardlink' ? 'board' : b.Kind})
+                    </span>
                   </button>
                 ))}
               </div>
@@ -583,7 +616,9 @@ export default function PublicWikiPage() {
                     onClick={() => void openNote(b.Id)}
                   >
                     ← {b.Title}{' '}
-                    <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
+                    <span className="text-[11px] text-[var(--muted)]">
+                      ({b.Kind === 'boardlink' ? 'board' : b.Kind})
+                    </span>
                   </button>
                 ))}
               </div>

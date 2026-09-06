@@ -86,6 +86,42 @@ import logger from '../utils/logger';
 
 const ACTIVE_NOTE = 'DeletedAt IS NULL';
 
+const noteKindEnum = z.enum(['note', 'whiteboard']);
+
+/** Match Synapse `--bg` — never ship a white Excalidraw canvas. */
+export const SYNAPSE_BOARD_BG = '#0a0e13';
+
+const EMPTY_BOARD_JSON = JSON.stringify({
+  type: 'excalidraw',
+  version: 2,
+  source: 'pm-synapse',
+  elements: [],
+  appState: { viewBackgroundColor: SYNAPSE_BOARD_BG, theme: 'dark' },
+  files: {},
+});
+
+function parseBoardJson(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return null;
+    try {
+      JSON.parse(trimmed);
+      return trimmed;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === 'object') {
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 function pmFail(res: Response, status: number, message: string) {
   return res.status(status).json({
     success: false,
@@ -676,7 +712,7 @@ router.get('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   if (q) {
     const like = `%${q}%`;
     [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt, Icon
+      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt, Icon, Kind
        FROM Notes
        WHERE VaultId = ? AND ${deletedClause}
          AND (Title LIKE ? OR Path LIKE ? OR BodyMarkdown LIKE ?)
@@ -686,7 +722,7 @@ router.get('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
     );
   } else {
     [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt, Icon
+      `SELECT Id, VaultId, Path, Title, Visibility, UpdatedAt, PmTaskId, PmProjectId, DeletedAt, Icon, Kind
        FROM Notes WHERE VaultId = ? AND ${deletedClause} ORDER BY Path ASC`,
       [vault.Id]
     );
@@ -763,6 +799,8 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
     path: z.string().min(1).max(1024).optional(),
     title: z.string().min(1).max(512),
     bodyMarkdown: z.string().default(''),
+    kind: noteKindEnum.optional(),
+    boardJson: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().nullable(),
     visibility: visibilityEnum.optional().nullable(),
     aliases: z.array(z.string()).optional(),
     icon: z.union([z.string().max(64), z.null()]).optional(),
@@ -773,13 +811,22 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   if (!parsed.success) {
     return res.status(400).json({ success: false, message: 'Invalid note payload' });
   }
+  const kind = parsed.data.kind || 'note';
   let path = parsed.data.path || titleToPath(parsed.data.title);
   const safePath = sanitizeNotePath(path);
   if (!safePath) {
     return res.status(400).json({ success: false, message: 'Invalid note path' });
   }
   path = safePath;
-  const fmJson = frontmatterJsonString(parseFrontmatter(parsed.data.bodyMarkdown).data);
+  const bodyMarkdown =
+    kind === 'whiteboard'
+      ? parsed.data.bodyMarkdown || `# ${parsed.data.title}\n\n`
+      : parsed.data.bodyMarkdown;
+  const boardJson =
+    kind === 'whiteboard'
+      ? parseBoardJson(parsed.data.boardJson) || EMPTY_BOARD_JSON
+      : null;
+  const fmJson = frontmatterJsonString(parseFrontmatter(bodyMarkdown).data);
   const icon =
     parsed.data.icon === undefined ? null : normalizeNoteIcon(parsed.data.icon);
 
@@ -807,13 +854,15 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
 
   try {
     const [result] = await pool.execute<ResultSetHeader>(
-      `INSERT INTO Notes (VaultId, Path, Title, BodyMarkdown, Visibility, AliasesJson, FrontmatterJson, Icon)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO Notes (VaultId, Path, Title, BodyMarkdown, Kind, BoardJson, Visibility, AliasesJson, FrontmatterJson, Icon)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         vault.Id,
         path,
         parsed.data.title,
-        parsed.data.bodyMarkdown,
+        bodyMarkdown,
+        kind,
+        boardJson,
         parsed.data.visibility || null,
         JSON.stringify(parsed.data.aliases || []),
         fmJson,
@@ -824,11 +873,13 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
     await snapshotRevision(noteId, req.user!.userId, {
       title: parsed.data.title,
       path,
-      bodyMarkdown: parsed.data.bodyMarkdown,
+      bodyMarkdown,
       frontmatterJson: fmJson,
       visibility: parsed.data.visibility || null,
     });
-    await rebuildNoteGraph(noteId, Number(vault.Id));
+    if (kind === 'note' || kind === 'whiteboard') {
+      await rebuildNoteGraph(noteId, Number(vault.Id));
+    }
 
     if (parsed.data.linkFromNoteId && parsed.data.linkFromNoteId !== noteId) {
       const [src] = await pool.execute<RowDataPacket[]>(
@@ -842,7 +893,7 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
 
     res.json({
       success: true,
-      data: { id: noteId, path, title: parsed.data.title, icon },
+      data: { id: noteId, path, title: parsed.data.title, icon, kind },
     });
   } catch (error) {
     logger.error('Create note failed', { error, vaultId: vault.Id, path });
@@ -936,6 +987,7 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     path: z.string().min(1).max(1024).optional(),
     title: z.string().min(1).max(512).optional(),
     bodyMarkdown: z.string().optional(),
+    boardJson: z.union([z.string(), z.record(z.string(), z.unknown())]).optional().nullable(),
     visibility: visibilityEnum.optional().nullable(),
     aliases: z.array(z.string()).optional(),
     icon: z.union([z.string().max(64), z.null()]).optional(),
@@ -946,6 +998,7 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     return res.status(400).json({ success: false, message: 'Invalid note payload' });
   }
 
+  const existingKind = String(existing.Kind || 'note') === 'whiteboard' ? 'whiteboard' : 'note';
   const titleRaw = parsed.data.title ?? String(existing.Title);
   const hubNote = isPlannerOverviewNote(String(existing.Path), String(existing.BodyMarkdown));
   const title = hubNote ? HUB_NOTE_TITLE : titleRaw;
@@ -960,6 +1013,14 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
   }
   path = safePath;
   const body = parsed.data.bodyMarkdown ?? String(existing.BodyMarkdown);
+  const boardJson =
+    existingKind === 'whiteboard'
+      ? parsed.data.boardJson !== undefined
+        ? parseBoardJson(parsed.data.boardJson) || EMPTY_BOARD_JSON
+        : existing.BoardJson != null
+          ? String(existing.BoardJson)
+          : EMPTY_BOARD_JSON
+      : null;
   const visibility =
     parsed.data.visibility !== undefined ? parsed.data.visibility : existing.Visibility;
   const aliasesJson = JSON.stringify(
@@ -974,9 +1035,9 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
         : null;
 
   await pool.execute(
-    `UPDATE Notes SET Path = ?, Title = ?, BodyMarkdown = ?, Visibility = ?, AliasesJson = ?, FrontmatterJson = ?, Icon = ?
+    `UPDATE Notes SET Path = ?, Title = ?, BodyMarkdown = ?, BoardJson = ?, Visibility = ?, AliasesJson = ?, FrontmatterJson = ?, Icon = ?
      WHERE Id = ?`,
-    [path, title, body, visibility, aliasesJson, fmJson, icon, existing.Id]
+    [path, title, body, boardJson, visibility, aliasesJson, fmJson, icon, existing.Id]
   );
 
   await snapshotRevision(Number(existing.Id), req.user!.userId, {
@@ -997,8 +1058,12 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
       path
     );
   }
-  await rebuildNoteGraph(Number(existing.Id), Number(vault.Id));
-  await syncCheckboxRows(Number(existing.Id), body);
+  if (existingKind === 'note') {
+    await rebuildNoteGraph(Number(existing.Id), Number(vault.Id));
+    await syncCheckboxRows(Number(existing.Id), body);
+  } else if (existingKind === 'whiteboard') {
+    await rebuildNoteGraph(Number(existing.Id), Number(vault.Id));
+  }
   res.json({ success: true });
 });
 
@@ -1417,7 +1482,7 @@ router.get('/:vaultId/flashcards', async (req: AuthRequest, res: Response) => {
   const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
   if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
   const [notes] = await pool.execute<RowDataPacket[]>(
-    `SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE VaultId = ? AND ${ACTIVE_NOTE} ORDER BY Path ASC`,
+    `SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE VaultId = ? AND ${ACTIVE_NOTE} AND Kind <> 'whiteboard' ORDER BY Path ASC`,
     [vault.Id]
   );
   const cards = notes.flatMap((n) =>

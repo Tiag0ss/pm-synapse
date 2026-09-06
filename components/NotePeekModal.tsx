@@ -13,6 +13,7 @@ import {
   clearPeekHits,
   setActivePeekHit,
 } from '@/lib/peekFindInPreview';
+import WhiteboardPeekCanvas from '@/components/WhiteboardPeekCanvas';
 
 export type NotePeekTarget = {
   noteId: number;
@@ -55,9 +56,13 @@ export default function NotePeekModal({
   const [bodyMarkdown, setBodyMarkdown] = useState('');
   /** Public wiki API returns sanitized HTML (media URLs rewritten); prefer over re-render. */
   const [bodyHtml, setBodyHtml] = useState<string | null>(null);
+  const [itemKind, setItemKind] = useState<'note' | 'whiteboard'>('note');
+  const [boardJson, setBoardJson] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
   const [matchCount, setMatchCount] = useState(0);
+
+  const isWhiteboard = itemKind === 'whiteboard';
 
   useEffect(() => {
     if (!open || !target) return;
@@ -66,6 +71,8 @@ export default function NotePeekModal({
     setError(null);
     setBodyMarkdown('');
     setBodyHtml(null);
+    setBoardJson(null);
+    setItemKind('note');
     setTitle(target.titleHint || '');
     setQuery('');
     setMatchIndex(0);
@@ -88,7 +95,14 @@ export default function NotePeekModal({
         }
         const n = data.data || data;
         setTitle(String(n.Title || n.title || target.titleHint || 'Note'));
-        if (target.wikiSlug && typeof n.html === 'string') {
+        const kind =
+          String(n.Kind || n.kind || 'note') === 'whiteboard' ? 'whiteboard' : 'note';
+        setItemKind(kind);
+        if (kind === 'whiteboard') {
+          setBoardJson(n.BoardJson != null ? String(n.BoardJson) : null);
+          setBodyHtml(null);
+          setBodyMarkdown('');
+        } else if (target.wikiSlug && typeof n.html === 'string') {
           setBodyHtml(n.html);
           setBodyMarkdown('');
         } else {
@@ -110,26 +124,27 @@ export default function NotePeekModal({
   }, [open, target]);
 
   useEffect(() => {
-    if (!open || loading || error) return;
+    if (!open || loading || error || isWhiteboard) return;
     const t = window.setTimeout(() => searchRef.current?.focus(), 50);
     return () => window.clearTimeout(t);
-  }, [open, loading, error, target?.noteId]);
+  }, [open, loading, error, isWhiteboard, target?.noteId]);
 
   const html = useMemo(() => {
+    if (isWhiteboard) return '';
     if (bodyHtml != null) return bodyHtml;
     return renderSynapseMarkdown(bodyMarkdown, notes, linkableVaults, target?.noteId ?? null);
-  }, [bodyHtml, bodyMarkdown, notes, linkableVaults, target?.noteId]);
+  }, [isWhiteboard, bodyHtml, bodyMarkdown, notes, linkableVaults, target?.noteId]);
 
   useLayoutEffect(() => {
     const root = bodyRef.current;
-    if (!root || !open) return;
+    if (!root || !open || isWhiteboard) return;
     root.innerHTML = html || '';
     void renderMermaidInRoot(root);
-  }, [html, open]);
+  }, [html, open, isWhiteboard]);
 
   useLayoutEffect(() => {
     const root = bodyRef.current;
-    if (!root || !open || loading || error) return;
+    if (!root || !open || loading || error || isWhiteboard) return;
 
     const q = query.trim();
     if (!q) {
@@ -146,10 +161,10 @@ export default function NotePeekModal({
     const nextIndex = hits.length ? 0 : 0;
     setMatchIndex(nextIndex);
     if (hits.length) setActivePeekHit(hits, nextIndex);
-  }, [query, html, open, loading, error]);
+  }, [query, html, open, loading, error, isWhiteboard]);
 
   useEffect(() => {
-    if (!open || !target) return;
+    if (!open || !target || isWhiteboard) return;
     const root = bodyRef.current;
     if (!root) return;
 
@@ -208,6 +223,7 @@ export default function NotePeekModal({
     open,
     target,
     html,
+    isWhiteboard,
     onClose,
     onOpenNote,
     onPeekNote,
@@ -225,67 +241,80 @@ export default function NotePeekModal({
 
   if (!open || !target) return null;
 
-  const canSearch = !loading && !error;
+  const canSearch = !loading && !error && !isWhiteboard;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={title || 'Note preview'}
-        className="flex max-h-[min(90dvh,48rem)] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/40"
+        aria-label={title || (isWhiteboard ? 'Whiteboard preview' : 'Note preview')}
+        className={`flex w-full flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl shadow-black/40 ${
+          isWhiteboard
+            ? 'h-[min(90dvh,52rem)] max-w-5xl'
+            : 'max-h-[min(90dvh,48rem)] max-w-3xl'
+        }`}
       >
-        <div className="flex items-center gap-2 border-b border-[var(--border)] px-3 py-2 sm:gap-3 sm:px-4">
-          <h2 className="min-w-0 max-w-[30%] shrink truncate text-sm font-semibold tracking-tight text-[var(--text)] sm:text-base">
-            {title || 'Note'}
+        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] px-3 py-2 sm:gap-3 sm:px-4">
+          <h2 className="min-w-0 max-w-[40%] shrink truncate text-sm font-semibold tracking-tight text-[var(--text)] sm:text-base">
+            {title || (isWhiteboard ? 'Whiteboard' : 'Note')}
+            {isWhiteboard ? (
+              <span className="ml-2 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                Board
+              </span>
+            ) : null}
           </h2>
-          <div className="flex min-w-0 flex-1 items-center gap-1">
-            <input
-              ref={searchRef}
-              type="search"
-              className="input min-w-0 flex-1 py-1 text-xs sm:text-sm"
-              placeholder="Find…"
-              value={query}
-              disabled={!canSearch}
-              aria-label="Find in note"
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  goToMatch(e.shiftKey ? -1 : 1);
-                }
-                if (e.key === 'Escape' && query) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setQuery('');
-                }
-              }}
-            />
-            <span
-              className="w-10 shrink-0 text-center tabular-nums text-[10px] text-[var(--muted)] sm:w-12 sm:text-xs"
-              aria-live="polite"
-            >
-              {query.trim() ? (matchCount ? `${matchIndex + 1}/${matchCount}` : '0/0') : ''}
-            </span>
-            <button
-              type="button"
-              className="btn-ghost px-1.5 py-0.5 text-xs"
-              disabled={!matchCount}
-              aria-label="Previous match"
-              onClick={() => goToMatch(-1)}
-            >
-              ‹
-            </button>
-            <button
-              type="button"
-              className="btn-ghost px-1.5 py-0.5 text-xs"
-              disabled={!matchCount}
-              aria-label="Next match"
-              onClick={() => goToMatch(1)}
-            >
-              ›
-            </button>
-          </div>
+          {!isWhiteboard ? (
+            <div className="flex min-w-0 flex-1 items-center gap-1">
+              <input
+                ref={searchRef}
+                type="search"
+                className="input min-w-0 flex-1 py-1 text-xs sm:text-sm"
+                placeholder="Find…"
+                value={query}
+                disabled={!canSearch}
+                aria-label="Find in note"
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    goToMatch(e.shiftKey ? -1 : 1);
+                  }
+                  if (e.key === 'Escape' && query) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setQuery('');
+                  }
+                }}
+              />
+              <span
+                className="w-10 shrink-0 text-center tabular-nums text-[10px] text-[var(--muted)] sm:w-12 sm:text-xs"
+                aria-live="polite"
+              >
+                {query.trim() ? (matchCount ? `${matchIndex + 1}/${matchCount}` : '0/0') : ''}
+              </span>
+              <button
+                type="button"
+                className="btn-ghost px-1.5 py-0.5 text-xs"
+                disabled={!matchCount}
+                aria-label="Previous match"
+                onClick={() => goToMatch(-1)}
+              >
+                ‹
+              </button>
+              <button
+                type="button"
+                className="btn-ghost px-1.5 py-0.5 text-xs"
+                disabled={!matchCount}
+                aria-label="Next match"
+                onClick={() => goToMatch(1)}
+              >
+                ›
+              </button>
+            </div>
+          ) : (
+            <div className="min-w-0 flex-1" />
+          )}
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               type="button"
@@ -296,7 +325,7 @@ export default function NotePeekModal({
                 onClose();
               }}
             >
-              Open note
+              {isWhiteboard ? 'Open board' : 'Open note'}
             </button>
             <button type="button" className="btn-ghost text-xs sm:text-sm" onClick={onClose}>
               Close
@@ -304,10 +333,27 @@ export default function NotePeekModal({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <div
+          className={
+            isWhiteboard
+              ? 'flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:p-4'
+              : 'min-h-0 flex-1 overflow-y-auto px-4 py-3'
+          }
+        >
           {loading && <p className="text-sm text-[var(--muted)]">Loading…</p>}
           {!loading && error && <p className="text-sm text-[var(--danger)]">{error}</p>}
-          {!loading && !error && (
+          {!loading && !error && isWhiteboard && (
+            <WhiteboardPeekCanvas
+              noteId={target.noteId}
+              boardJson={boardJson}
+              className="synapse-whiteboard synapse-whiteboard-viewer min-h-0 w-full flex-1 overflow-hidden rounded-xl border border-[var(--border)]"
+              onOpenNote={(id) => {
+                onOpenNote(id, target.vaultId);
+                onClose();
+              }}
+            />
+          )}
+          {!loading && !error && !isWhiteboard && (
             <div
               ref={bodyRef}
               className="synapse-md-preview prose-synapse text-sm leading-relaxed text-[var(--text)]"

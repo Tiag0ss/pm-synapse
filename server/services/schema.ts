@@ -67,6 +67,8 @@ const STATEMENTS = [
     Path VARCHAR(1024) NOT NULL,
     Title VARCHAR(512) NOT NULL,
     BodyMarkdown MEDIUMTEXT NOT NULL,
+    Kind VARCHAR(32) NOT NULL DEFAULT 'note',
+    BoardJson MEDIUMTEXT NULL,
     FrontmatterJson TEXT NULL,
     Visibility VARCHAR(32) NULL,
     AliasesJson TEXT NULL,
@@ -81,6 +83,7 @@ const STATEMENTS = [
     KEY idx_note_vault (VaultId),
     KEY idx_note_title (VaultId, Title(191)),
     KEY idx_note_deleted (VaultId, DeletedAt),
+    KEY idx_note_kind (VaultId, Kind),
     CONSTRAINT fk_notes_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS NoteRevisions (
@@ -219,6 +222,9 @@ const ALTERS = [
   'ALTER TABLE Vaults ADD COLUMN IsPersonalWork TINYINT NOT NULL DEFAULT 0',
   'ALTER TABLE Vaults ADD COLUMN PersonalWorkOwnerId INT GENERATED ALWAYS AS (IF(IsPersonalWork = 1, OwnerPmUserId, NULL)) STORED',
   'ALTER TABLE Vaults ADD UNIQUE KEY uq_personal_work_owner (PersonalWorkOwnerId)',
+  "ALTER TABLE Notes ADD COLUMN Kind VARCHAR(32) NOT NULL DEFAULT 'note'",
+  'ALTER TABLE Notes ADD COLUMN BoardJson MEDIUMTEXT NULL',
+  'ALTER TABLE Notes ADD KEY idx_note_kind (VaultId, Kind)',
 ];
 
 /** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */

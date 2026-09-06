@@ -5,7 +5,10 @@ import Link from 'next/link';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import MarkdownNoteEditor from '@/components/MarkdownNoteEditor';
 import type { LinkableVaultNotes } from '@/lib/notePaths';
-import CreateNoteModal, { type SelectedTemplate } from '@/components/CreateNoteModal';
+import CreateNoteModal, { type CreateItemKind, type SelectedTemplate } from '@/components/CreateNoteModal';
+import WhiteboardEditor, {
+  type WhiteboardEditorHandle,
+} from '@/components/WhiteboardEditor';
 import QuickSwitcher from '@/components/QuickSwitcher';
 import NoteGraphMindmap, { type GraphNode } from '@/components/NoteGraphMindmap';
 import RevisionDiffModal, {
@@ -40,6 +43,7 @@ interface NoteListItem {
   Visibility?: string | null;
   PmTaskId?: number | null;
   Icon?: string | null;
+  Kind?: string | null;
 }
 
 interface Revision {
@@ -118,6 +122,8 @@ export default function VaultWorkspacePage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [boardJson, setBoardJson] = useState<string | null>(null);
+  const [itemKind, setItemKind] = useState<CreateItemKind>('note');
   const [noteIcon, setNoteIcon] = useState<NoteIconId | null>(null);
   const [visibility, setVisibility] = useState<string>('');
   const [revisions, setRevisions] = useState<Revision[]>([]);
@@ -147,17 +153,25 @@ export default function VaultWorkspacePage() {
     HubNoteId?: number | null;
   }>({});
   const [createOpen, setCreateOpen] = useState(false);
+  const [createFromTextOpen, setCreateFromTextOpen] = useState(false);
+  const [createFromTextTitle, setCreateFromTextTitle] = useState('');
+  const [createFromTextElementId, setCreateFromTextElementId] = useState<string | null>(null);
+  const whiteboardRef = useRef<WhiteboardEditorHandle | null>(null);
   const [vaultOptionsOpen, setVaultOptionsOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [centerMode, setCenterMode] = useState<CenterMode>('editor');
+  const [boardMaximized, setBoardMaximized] = useState(false);
   const [peekTarget, setPeekTarget] = useState<NotePeekTarget | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const isLgUp = useIsLgUp();
   const mindmapFull = centerMode === 'mindmap';
+  const isWhiteboard = itemKind === 'whiteboard';
+  const boardFull = isWhiteboard && boardMaximized && centerMode === 'editor';
+  const chromeFull = mindmapFull || boardFull;
 
   const [vaultFoldCards, setVaultFoldCards] = useState<FoldCard[]>([]);
   const [flashcardsLoading, setFlashcardsLoading] = useState(false);
@@ -192,6 +206,7 @@ export default function VaultWorkspacePage() {
   const [savedSnapshot, setSavedSnapshot] = useState({
     title: '',
     body: '',
+    boardJson: null as string | null,
     visibility: '',
     icon: null as NoteIconId | null,
   });
@@ -201,7 +216,13 @@ export default function VaultWorkspacePage() {
   const skipNextAutosaveRef = useRef(false);
 
   const noteIndex = useMemo(
-    () => notes.map((n) => ({ id: n.Id, title: n.Title, path: n.Path })),
+    () =>
+      notes.map((n) => ({
+        id: n.Id,
+        title: n.Title,
+        path: n.Path,
+        kind: n.Kind || 'note',
+      })),
     [notes]
   );
 
@@ -219,6 +240,7 @@ export default function VaultWorkspacePage() {
       : notes.find((n) => n.Path === 'planner/overview.md')?.Id ?? null;
   const isHubNote = selectedId != null && hubNoteId != null && selectedId === hubNoteId;
   const notePublicUrl =
+    !isWhiteboard &&
     vaultMeta.slug &&
     selectedId &&
     Number(vaultMeta.AllowPublicPages) === 1 &&
@@ -232,7 +254,9 @@ export default function VaultWorkspacePage() {
     selectedId != null &&
     canEdit &&
     (title !== savedSnapshot.title ||
-      body !== savedSnapshot.body ||
+      (isWhiteboard
+        ? boardJson !== savedSnapshot.boardJson
+        : body !== savedSnapshot.body) ||
       visibility !== savedSnapshot.visibility ||
       noteIcon !== savedSnapshot.icon);
 
@@ -308,18 +332,37 @@ export default function VaultWorkspacePage() {
     setSelectedId(n.Id);
     setPlannerLinks([]);
     setTitle(n.Title);
-    setBody(n.BodyMarkdown || '');
+    const kind: CreateItemKind = String(n.Kind || 'note') === 'whiteboard' ? 'whiteboard' : 'note';
+    setItemKind(kind);
+    const nextBody = n.BodyMarkdown || '';
+    const nextBoard =
+      kind === 'whiteboard'
+        ? n.BoardJson != null
+          ? String(n.BoardJson)
+          : JSON.stringify({
+              type: 'excalidraw',
+              version: 2,
+              source: 'pm-synapse',
+              elements: [],
+              appState: { viewBackgroundColor: '#0a0e13', theme: 'dark' },
+              files: {},
+            })
+        : null;
+    setBody(nextBody);
+    setBoardJson(nextBoard);
     setVisibility(n.Visibility || '');
     const icon = normalizeNoteIcon(n.Icon);
     setNoteIcon(icon);
     setSavedSnapshot({
       title: String(n.Title || ''),
-      body: String(n.BodyMarkdown || ''),
+      body: String(nextBody),
+      boardJson: nextBoard,
       visibility: String(n.Visibility || ''),
       icon,
     });
     setSaveState('idle');
     setCenterMode('editor');
+    setBoardMaximized(false);
     setNotesOpen(false);
     setContextOpen(false);
     setMoreOpen(false);
@@ -354,22 +397,33 @@ export default function VaultWorkspacePage() {
     reason?: 'manual' | 'auto';
     title?: string;
     body?: string;
+    boardJson?: string | null;
     visibility?: string;
   }) => {
     if (!selectedId || !canEdit) return false;
     const reason = opts?.reason || 'manual';
     const nextTitle = opts?.title ?? title;
     const nextBody = opts?.body ?? body;
+    const nextBoard = opts?.boardJson !== undefined ? opts.boardJson : boardJson;
     const nextVisibility = opts?.visibility ?? visibility;
     setSaveState('saving');
     setStatus(reason === 'auto' ? 'Autosaving…' : 'Saving…');
-    const payload = {
-      title: nextTitle,
-      bodyMarkdown: nextBody,
-      visibility: nextVisibility || null,
-      icon: noteIcon,
-      revisionSource: reason,
-    };
+    const payload =
+      itemKind === 'whiteboard'
+        ? {
+            title: nextTitle,
+            boardJson: nextBoard,
+            visibility: nextVisibility || null,
+            icon: noteIcon,
+            revisionSource: reason,
+          }
+        : {
+            title: nextTitle,
+            bodyMarkdown: nextBody,
+            visibility: nextVisibility || null,
+            icon: noteIcon,
+            revisionSource: reason,
+          };
     const res = await fetch(`/api/vaults/${vaultId}/notes/${selectedId}`, {
       method: 'PUT',
       credentials: 'include',
@@ -385,48 +439,62 @@ export default function VaultWorkspacePage() {
     setSavedSnapshot({
       title: nextTitle,
       body: nextBody,
+      boardJson: nextBoard,
       visibility: nextVisibility,
       icon: noteIcon,
     });
     setSaveState('saved');
     setStatus(reason === 'auto' ? 'Autosaved' : 'Saved');
     await loadNotes();
-    // Refresh revisions quietly without resetting editor cursor
-    const revRes = await fetch(`/api/vaults/${vaultId}/notes/${selectedId}/revisions`, {
-      credentials: 'include',
-    });
+    // Refresh revisions / references quietly without resetting editor cursor
+    const [revRes, blRes] = await Promise.all([
+      fetch(`/api/vaults/${vaultId}/notes/${selectedId}/revisions`, { credentials: 'include' }),
+      fetch(`/api/vaults/${vaultId}/notes/${selectedId}/backlinks`, { credentials: 'include' }),
+    ]);
     if (revRes.ok) setRevisions((await revRes.json()).data || []);
+    if (blRes.ok) {
+      const blData = (await blRes.json()).data;
+      if (Array.isArray(blData)) {
+        setBacklinks(blData);
+        setReferences([]);
+      } else {
+        setBacklinks(blData?.backlinks || []);
+        setReferences(blData?.references || []);
+      }
+    }
     if (reason === 'manual') await loadGraph();
     return true;
   };
 
-  /** Apply body written by PM ops (markers) without marking the note dirty. */
   const applyServerBody = useCallback((next: string) => {
     skipNextAutosaveRef.current = true;
     setBody(next);
     setSavedSnapshot((s) => ({ ...s, body: next }));
   }, []);
 
+  const onBoardChange = useCallback((next: string) => {
+    setBoardJson(next);
+  }, []);
+
   /** Client rewrite (e.g. Recalculate estimates) — update editor and persist immediately. */
   const commitLocalBody = useCallback(
     async (next: string) => {
-      if (!selectedId || !canEdit) return false;
+      if (!selectedId || !canEdit || itemKind === 'whiteboard') return false;
       setBody(next);
       return saveNote({ reason: 'manual', body: next });
     },
-    // saveNote closes over latest title/visibility/icon; selectedId/canEdit gate the call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedId, canEdit, title, visibility, noteIcon, vaultId]
+    [selectedId, canEdit, title, visibility, noteIcon, vaultId, itemKind]
   );
 
   const ensureNoteSaved = useCallback(async () => {
     if (!selectedId || !canEdit) return true;
     if (!dirty) return true;
     return saveNote({ reason: 'manual' });
-  }, [selectedId, canEdit, dirty, title, body, visibility, noteIcon, vaultId]);
+  }, [selectedId, canEdit, dirty, title, body, boardJson, visibility, noteIcon, vaultId, itemKind]);
 
   const applyPartialRestore = async (patch: PartialRestorePatch) => {
-    if (!selectedId || !canEdit || diffApplying || diffRestoring) return;
+    if (!selectedId || !canEdit || diffApplying || diffRestoring || isWhiteboard) return;
     const nextTitle = patch.title ?? title;
     const nextBody = patch.bodyMarkdown ?? body;
     const nextVisibility = patch.visibility !== undefined ? patch.visibility : visibility;
@@ -462,13 +530,19 @@ export default function VaultWorkspacePage() {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, body, visibility, noteIcon, selectedId, canEdit, dirty]);
+  }, [title, body, boardJson, visibility, noteIcon, selectedId, canEdit, dirty, itemKind]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && quickOpen) {
-        setQuickOpen(false);
-        return;
+      if (e.key === 'Escape') {
+        if (quickOpen) {
+          setQuickOpen(false);
+          return;
+        }
+        if (boardMaximized) {
+          setBoardMaximized(false);
+          return;
+        }
       }
       const mod = e.ctrlKey || e.metaKey;
       if (!mod) return;
@@ -484,7 +558,7 @@ export default function VaultWorkspacePage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canEdit, selectedId, title, body, visibility, noteIcon, quickOpen]);
+  }, [canEdit, selectedId, title, body, visibility, noteIcon, quickOpen, boardMaximized]);
 
   // Debounce title/path/body search filter
   useEffect(() => {
@@ -500,21 +574,27 @@ export default function VaultWorkspacePage() {
       linkFromNoteId?: number | null;
       skipOpen?: boolean;
       template?: SelectedTemplate;
+      kind?: CreateItemKind;
       /** Create in another vault (e.g. missing `[[@slug/note]]`). */
       targetVaultId?: number;
     }
-  ) => {
+  ): Promise<number | null> => {
     setCreateOpen(false);
+    setCreateFromTextOpen(false);
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed) return null;
 
+    const kind = opts?.kind || 'note';
     const linkFromNoteId = opts?.linkFromNoteId ?? null;
     const skipOpen = Boolean(opts?.skipOpen);
     const destVaultId = opts?.targetVaultId ? Number(opts.targetVaultId) : Number(vaultId);
     const isCrossVault = destVaultId !== Number(vaultId);
-    const bodyMarkdown = opts?.template
-      ? applyNoteTemplateBody(opts.template.bodyMarkdown, noteLeafName(trimmed))
-      : applyNoteTemplateBody(`# {{title}}\n\n`, noteLeafName(trimmed));
+    const bodyMarkdown =
+      kind === 'whiteboard'
+        ? `# ${noteLeafName(trimmed)}\n\n`
+        : opts?.template
+          ? applyNoteTemplateBody(opts.template.bodyMarkdown, noteLeafName(trimmed))
+          : applyNoteTemplateBody(`# {{title}}\n\n`, noteLeafName(trimmed));
 
     const rebuildSourceGraph = async () => {
       if (!linkFromNoteId) return;
@@ -524,7 +604,7 @@ export default function VaultWorkspacePage() {
       }).catch(() => null);
     };
 
-    if (!isCrossVault) {
+    if (kind === 'note' && !isCrossVault) {
       const existingId = noteIndex.find(
         (n) =>
           n.title.replace(/\\/g, '/').toLowerCase() === trimmed.replace(/\\/g, '/').toLowerCase() ||
@@ -535,9 +615,9 @@ export default function VaultWorkspacePage() {
         await rebuildSourceGraph();
         await loadGraph();
         if (!skipOpen) await openNote(existingId);
-        return;
+        return existingId;
       }
-    } else {
+    } else if (kind === 'note' && isCrossVault) {
       const destNotes =
         linkableVaults.find((v) => v.vaultId === destVaultId)?.notes || [];
       const existingRemote = resolveNoteId(trimmed, destNotes);
@@ -545,7 +625,7 @@ export default function VaultWorkspacePage() {
         await rebuildSourceGraph();
         void loadLinkableVaults();
         if (!skipOpen) router.push(`/vaults/${destVaultId}?note=${existingRemote}`);
-        return;
+        return existingRemote;
       }
     }
 
@@ -556,22 +636,23 @@ export default function VaultWorkspacePage() {
       body: JSON.stringify({
         title: trimmed,
         bodyMarkdown,
-        // linkFromNoteId only works inside the destination vault
+        kind,
         ...(!isCrossVault && linkFromNoteId ? { linkFromNoteId } : {}),
       }),
     });
     const data = await res.json();
     if (res.status === 409 && data.data?.id) {
+      const existingId = Number(data.data.id);
       if (isCrossVault) {
         await rebuildSourceGraph();
         void loadLinkableVaults();
-        if (!skipOpen) router.push(`/vaults/${destVaultId}?note=${Number(data.data.id)}`);
-        return;
+        if (!skipOpen) router.push(`/vaults/${destVaultId}?note=${existingId}`);
+        return existingId;
       }
       await loadNotes();
       await loadGraph();
-      if (!skipOpen) await openNote(Number(data.data.id));
-      return;
+      if (!skipOpen) await openNote(existingId);
+      return existingId;
     }
     if (!res.ok) {
       setStatus(data.message || 'Create failed');
@@ -581,6 +662,7 @@ export default function VaultWorkspacePage() {
     const newId = Number(data.data.id);
     const newPath = String(data.data.path || `${trimmed}.md`);
     const newTitle = String(data.data.title || trimmed);
+    const newKind = String(data.data.kind || kind);
 
     if (isCrossVault) {
       setStatus(`Created “${trimmed}” in the other vault`);
@@ -588,7 +670,7 @@ export default function VaultWorkspacePage() {
       void loadLinkableVaults();
       await loadGraph();
       if (!skipOpen) router.push(`/vaults/${destVaultId}?note=${newId}`);
-      return;
+      return newId;
     }
 
     setNotes((prev) => {
@@ -602,6 +684,7 @@ export default function VaultWorkspacePage() {
           Visibility: null,
           PmTaskId: null,
           Icon: null,
+          Kind: newKind,
         },
       ];
     });
@@ -610,6 +693,7 @@ export default function VaultWorkspacePage() {
     await loadNotes();
     await loadGraph();
     if (!skipOpen) await openNote(newId, { force: true });
+    return newId;
   };
 
   const refreshHubTasks = async () => {
@@ -681,17 +765,20 @@ export default function VaultWorkspacePage() {
         return;
       }
       setDeleteOpen(false);
+      const wasWhiteboard = isWhiteboard;
       setSelectedId(null);
       setTitle('');
       setBody('');
+      setBoardJson(null);
+      setItemKind('note');
       setNoteIcon(null);
       setVisibility('');
-      setSavedSnapshot({ title: '', body: '', visibility: '', icon: null });
+      setSavedSnapshot({ title: '', body: '', boardJson: null, visibility: '', icon: null });
       setSaveState('idle');
       setRevisions([]);
       setBacklinks([]);
       setReferences([]);
-      setStatus('Note moved to trash');
+      setStatus(wasWhiteboard ? 'Whiteboard moved to trash' : 'Note moved to trash');
       await loadNotes();
       await loadGraph();
     } finally {
@@ -755,7 +842,16 @@ export default function VaultWorkspacePage() {
       setCenterMode('editor');
       return;
     }
+    setBoardMaximized(false);
     void loadGraph().then(() => setCenterMode('mindmap'));
+  };
+
+  const toggleBoardMaximize = () => {
+    if (!isWhiteboard) return;
+    setCenterMode('editor');
+    setBoardMaximized((v) => !v);
+    setNotesOpen(false);
+    setContextOpen(false);
   };
 
   const toggleFlashcards = () => {
@@ -857,7 +953,7 @@ export default function VaultWorkspacePage() {
         {/* Mobile: identity row + action strip */}
         <div className="lg:hidden">
           <div className="flex h-12 items-center gap-1.5 px-2.5 pt-[env(safe-area-inset-top)]">
-            {!mindmapFull && (
+            {!chromeFull && (
               <button
                 type="button"
                 className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
@@ -897,7 +993,7 @@ export default function VaultWorkspacePage() {
                 </p>
               )}
             </div>
-            {!mindmapFull && (
+            {!chromeFull && (
               <button
                 type="button"
                 className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition ${
@@ -922,6 +1018,16 @@ export default function VaultWorkspacePage() {
                     strokeLinecap="round"
                   />
                 </svg>
+              </button>
+            )}
+            {boardFull && (
+              <button
+                type="button"
+                className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-[var(--surface-2)] px-3 text-xs font-medium text-[var(--accent-soft)]"
+                onClick={() => toggleBoardMaximize()}
+                title="Exit maximize"
+              >
+                Exit
               </button>
             )}
             <div className="relative">
@@ -1033,7 +1139,7 @@ export default function VaultWorkspacePage() {
                 className="inline-flex h-9 flex-1 items-center justify-center rounded-lg bg-[var(--accent)] text-xs font-semibold text-[var(--accent-fg)]"
                 onClick={() => setCreateOpen(true)}
               >
-                New note
+                New…
               </button>
             )}
             <button
@@ -1160,7 +1266,7 @@ export default function VaultWorkspacePage() {
             </button>
             {canEdit && (
               <button type="button" className="btn-primary py-1.5" onClick={() => setCreateOpen(true)}>
-                New note
+                New…
               </button>
             )}
             <button
@@ -1224,10 +1330,10 @@ export default function VaultWorkspacePage() {
 
       <div
         className={`relative grid min-h-0 flex-1 ${
-          isLgUp && !mindmapFull ? 'grid-cols-[260px_1fr_300px]' : 'grid-cols-1'
+          isLgUp && !chromeFull ? 'grid-cols-[260px_1fr_300px]' : 'grid-cols-1'
         }`}
       >
-        {!isLgUp && !mindmapFull && (notesOpen || contextOpen) && (
+        {!isLgUp && !chromeFull && (notesOpen || contextOpen) && (
           <button
             type="button"
             className="fixed inset-0 z-40 bg-black/55 lg:hidden"
@@ -1241,9 +1347,9 @@ export default function VaultWorkspacePage() {
 
         <aside
           className={`flex min-h-0 flex-col border-[var(--border)] bg-[var(--panel)] ${
-            isLgUp && !mindmapFull
+            isLgUp && !chromeFull
               ? 'border-r bg-[var(--panel)]/40'
-              : mindmapFull
+              : chromeFull
                 ? 'hidden'
                 : `fixed inset-y-0 left-0 z-50 w-[min(100%,18rem)] border-r shadow-2xl transition-transform duration-200 ease-out ${
                     notesOpen ? 'translate-x-0' : '-translate-x-full'
@@ -1282,7 +1388,11 @@ export default function VaultWorkspacePage() {
           />
         </aside>
 
-        <section className="flex min-h-0 flex-col gap-3 p-3 sm:p-4">
+        <section
+          className={`flex min-h-0 flex-col ${
+            boardFull ? 'gap-0 p-0' : 'gap-3 p-3 sm:p-4'
+          }`}
+        >
           {centerMode === 'mindmap' && graph ? (
             <FullMindmapPane
               graph={graph}
@@ -1335,6 +1445,7 @@ export default function VaultWorkspacePage() {
           ) : selectedId ? (
             <>
               {/* Mobile note chrome: title first, then compact actions */}
+              {!boardFull && (
               <div className="space-y-2 lg:hidden">
                 <div className="flex items-center gap-2">
                   <NoteIconPicker value={noteIcon} onChange={setNoteIcon} disabled={!canEdit} />
@@ -1380,12 +1491,24 @@ export default function VaultWorkspacePage() {
                       {saveState === 'saving' ? '…' : dirty ? 'Save*' : 'Save'}
                     </button>
                   )}
+                  {isWhiteboard && (
+                    <button
+                      type="button"
+                      className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
+                      onClick={() => toggleBoardMaximize()}
+                      title="Maximize whiteboard"
+                      aria-label="Maximize whiteboard"
+                    >
+                      Max
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
                     onClick={() => setExportOpen(true)}
                     title="Export this note as DOCX"
                     aria-label="Export"
+                    hidden={isWhiteboard}
                   >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
                       <path
@@ -1397,7 +1520,7 @@ export default function VaultWorkspacePage() {
                       />
                     </svg>
                   </button>
-                  {canEdit && isPersonalWork && selectedId && !isHubNote && (
+                  {canEdit && isPersonalWork && selectedId && !isHubNote && !isWhiteboard && (
                     <button
                       type="button"
                       className="btn-ghost shrink-0 px-2.5 py-1.5 text-sm"
@@ -1449,8 +1572,10 @@ export default function VaultWorkspacePage() {
                   )}
                 </div>
               </div>
+              )}
 
               {/* Desktop note chrome */}
+              {!boardFull && (
               <div className="hidden flex-wrap items-center gap-2 lg:flex">
                 <NoteIconPicker value={noteIcon} onChange={setNoteIcon} disabled={!canEdit} />
                 <input
@@ -1493,15 +1618,26 @@ export default function VaultWorkspacePage() {
                     {saveState === 'saving' ? 'Saving…' : dirty ? 'Save*' : 'Save'}
                   </button>
                 )}
+                {isWhiteboard && (
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => toggleBoardMaximize()}
+                    title="Maximize whiteboard"
+                  >
+                    Maximize
+                  </button>
+                )}
                 <button
                   type="button"
                   className="btn-ghost"
                   onClick={() => setExportOpen(true)}
                   title="Export this note as DOCX"
+                  hidden={isWhiteboard}
                 >
                   Export
                 </button>
-                {canEdit && isPersonalWork && selectedId && !isHubNote && (
+                {canEdit && isPersonalWork && selectedId && !isHubNote && !isWhiteboard && (
                   <button
                     type="button"
                     className="btn-ghost"
@@ -1533,47 +1669,88 @@ export default function VaultWorkspacePage() {
                   </button>
                 )}
               </div>
-              {isHubNote && (
+              )}
+              {isHubNote && !boardFull && (
                 <p className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)]/50 px-3 py-2 text-xs text-[var(--muted)]">
                   Pull-only from Planner. Use <span className="text-[var(--text)]">Refresh tasks</span>{' '}
                   in the tasks panel (right sidebar) to update work assigned to you. Linked notes below
                   the task block are kept.
                 </p>
               )}
-              <MarkdownNoteEditor
-                value={body}
-                onChange={setBody}
-                vaultId={vaultId}
-                noteId={selectedId}
-                notes={noteIndex}
-                linkableVaults={linkableVaults}
-                plannerLinks={plannerLinks}
-                onOpenNote={(id) => void openNote(id)}
-                onOpenCrossVaultNote={(targetVaultId, noteId) => {
-                  router.push(`/vaults/${targetVaultId}?note=${noteId}`);
-                }}
-                onCreateNoteFromWikilink={
-                  canEdit
-                    ? (wikilinkTitle) =>
-                        void createNote(wikilinkTitle, { linkFromNoteId: selectedId })
-                    : undefined
-                }
-                onCreateCrossVaultNote={
-                  canEdit
-                    ? (targetVaultId, wikilinkTitle) =>
-                        void createNote(wikilinkTitle, {
-                          targetVaultId,
-                          linkFromNoteId: selectedId,
-                        })
-                    : undefined
-                }
-                onStatus={setStatus}
-                readOnly={!canEdit}
-                compact={!isLgUp}
-                insertRequest={editorInsertRequest}
-                onMediaUploaded={() => setAttachmentsRefresh((n) => n + 1)}
-                attachmentsRefreshToken={attachmentsRefresh}
-              />
+              {isWhiteboard ? (
+                <div className="relative flex min-h-0 flex-1 flex-col">
+                {boardFull && (
+                  <div className="pointer-events-none absolute right-3 top-3 z-20 flex gap-2">
+                    <button
+                      type="button"
+                      className="pointer-events-auto btn-ghost bg-[var(--panel)]/90 text-xs shadow-lg backdrop-blur"
+                      onClick={() => toggleBoardMaximize()}
+                      title="Exit maximize (Esc)"
+                    >
+                      Exit maximize
+                    </button>
+                  </div>
+                )}
+                <WhiteboardEditor
+                  ref={whiteboardRef}
+                  noteId={selectedId}
+                  vaultId={vaultId}
+                  boardPath={notes.find((n) => n.Id === selectedId)?.Path || `${title}.md`}
+                  boardJson={boardJson}
+                  canEdit={canEdit}
+                  notes={noteIndex}
+                  onBoardChange={onBoardChange}
+                  onOpenNote={(id) => void openNote(id)}
+                  onPeekNote={(id, peekTitle) =>
+                    setPeekTarget({
+                      noteId: id,
+                      vaultId: Number(vaultId),
+                      titleHint: peekTitle,
+                    })
+                  }
+                  onCreateNoteFromText={(prefill, elementId) => {
+                    setCreateFromTextTitle(prefill);
+                    setCreateFromTextElementId(elementId);
+                    setCreateFromTextOpen(true);
+                  }}
+                />
+                </div>
+              ) : (
+                <MarkdownNoteEditor
+                  value={body}
+                  onChange={setBody}
+                  vaultId={vaultId}
+                  noteId={selectedId}
+                  notes={noteIndex}
+                  linkableVaults={linkableVaults}
+                  plannerLinks={plannerLinks}
+                  onOpenNote={(id) => void openNote(id)}
+                  onOpenCrossVaultNote={(targetVaultId, noteId) => {
+                    router.push(`/vaults/${targetVaultId}?note=${noteId}`);
+                  }}
+                  onCreateNoteFromWikilink={
+                    canEdit
+                      ? (wikilinkTitle) =>
+                          void createNote(wikilinkTitle, { linkFromNoteId: selectedId })
+                      : undefined
+                  }
+                  onCreateCrossVaultNote={
+                    canEdit
+                      ? (targetVaultId, wikilinkTitle) =>
+                          void createNote(wikilinkTitle, {
+                            targetVaultId,
+                            linkFromNoteId: selectedId,
+                          })
+                      : undefined
+                  }
+                  onStatus={setStatus}
+                  readOnly={!canEdit}
+                  compact={!isLgUp}
+                  insertRequest={editorInsertRequest}
+                  onMediaUploaded={() => setAttachmentsRefresh((n) => n + 1)}
+                  attachmentsRefreshToken={attachmentsRefresh}
+                />
+              )}
             </>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)]/30 px-6 text-center sm:px-8">
@@ -1595,7 +1772,7 @@ export default function VaultWorkspacePage() {
                 </button>
                 {canEdit && (
                   <button type="button" className="btn-primary" onClick={() => setCreateOpen(true)}>
-                    New note
+                    New…
                   </button>
                 )}
               </div>
@@ -1605,9 +1782,9 @@ export default function VaultWorkspacePage() {
 
         <aside
           className={`flex min-h-0 flex-col overflow-hidden border-[var(--border)] bg-[var(--panel)] ${
-            isLgUp && !mindmapFull
+            isLgUp && !chromeFull
               ? 'border-l bg-[var(--panel)]/40'
-              : mindmapFull
+              : chromeFull
                 ? 'hidden'
                 : `fixed inset-y-0 right-0 z-50 w-[min(100%,20rem)] border-l shadow-2xl transition-transform duration-200 ease-out ${
                     contextOpen ? 'translate-x-0' : 'translate-x-full'
@@ -1656,6 +1833,7 @@ export default function VaultWorkspacePage() {
           <div className="min-h-0 flex-1 overflow-auto p-4 text-sm">
             {selectedId && (
               <div className="mb-6">
+                {!isWhiteboard && (
                 <NoteTasksPanel
                   vaultId={vaultId}
                   noteId={selectedId}
@@ -1683,7 +1861,8 @@ export default function VaultWorkspacePage() {
                   refreshingPlanner={hubRefreshing}
                   onOpenPmSettings={isPersonalWork ? undefined : () => setPmTasksOpen(true)}
                 />
-                <div className="mt-4">
+                )}
+                <div className={isWhiteboard ? '' : 'mt-4'}>
                   <NoteAttachmentsPanel
                     vaultId={vaultId}
                     noteId={selectedId}
@@ -1691,9 +1870,13 @@ export default function VaultWorkspacePage() {
                     refreshToken={attachmentsRefresh}
                     onStatus={setStatus}
                     onUploaded={() => setAttachmentsRefresh((n) => n + 1)}
-                    onInsertMarkdown={(snippet) => {
-                      setEditorInsertRequest({ id: Date.now(), snippet });
-                    }}
+                    onInsertMarkdown={
+                      isWhiteboard
+                        ? undefined
+                        : (snippet) => {
+                            setEditorInsertRequest({ id: Date.now(), snippet });
+                          }
+                    }
                   />
                 </div>
               </div>
@@ -1702,7 +1885,9 @@ export default function VaultWorkspacePage() {
             <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)]">
               References
             </h2>
-            <p className="mt-0.5 text-[11px] text-[var(--muted)]">Links from this note</p>
+            <p className="mt-0.5 text-[11px] text-[var(--muted)]">
+              {isWhiteboard ? 'Notes linked from this board' : 'Links from this note'}
+            </p>
             <div className="mt-2 space-y-1">
               {references.length === 0 && <p className="text-[var(--muted)]">None yet</p>}
               {references.map((b) => (
@@ -1731,7 +1916,9 @@ export default function VaultWorkspacePage() {
                   {b.VaultName && Number(b.VaultId) !== Number(vaultId) ? (
                     <span className="text-[11px] text-[var(--muted)]"> · {b.VaultName}</span>
                   ) : null}{' '}
-                  <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
+                  <span className="text-[11px] text-[var(--muted)]">
+                    ({b.Kind === 'boardlink' ? 'board' : b.Kind})
+                  </span>
                 </button>
               ))}
             </div>
@@ -1759,7 +1946,7 @@ export default function VaultWorkspacePage() {
                     void openNote(b.Id);
                   }}
                 >
-                  ← {b.Title}
+                  → {b.Title}
                   {b.Restricted ? (
                     <span className="ml-1 rounded border border-[var(--border)] px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[var(--muted)]">
                       No access
@@ -1768,7 +1955,9 @@ export default function VaultWorkspacePage() {
                   {b.VaultName && Number(b.VaultId) !== Number(vaultId) ? (
                     <span className="text-[11px] text-[var(--muted)]"> · {b.VaultName}</span>
                   ) : null}{' '}
-                  <span className="text-[11px] text-[var(--muted)]">({b.Kind})</span>
+                  <span className="text-[11px] text-[var(--muted)]">
+                    ({b.Kind === 'boardlink' ? 'board' : b.Kind})
+                  </span>
                 </button>
               ))}
             </div>
@@ -1842,7 +2031,38 @@ export default function VaultWorkspacePage() {
       <CreateNoteModal
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
-        onConfirm={(v, template) => void createNote(v, { template })}
+        onConfirm={(v, opts) => void createNote(v, { template: opts.template, kind: opts.kind })}
+      />
+
+      <CreateNoteModal
+        open={createFromTextOpen}
+        initialTitle={createFromTextTitle}
+        initialKind="note"
+        lockKind
+        onCancel={() => {
+          setCreateFromTextOpen(false);
+          setCreateFromTextElementId(null);
+        }}
+        onConfirm={(v, opts) => {
+          void (async () => {
+            const elementId = createFromTextElementId;
+            try {
+              const newId = await createNote(v, {
+                template: opts.template,
+                kind: 'note',
+                skipOpen: true,
+              });
+              if (newId && elementId) {
+                whiteboardRef.current?.linkElementToNote(elementId, newId, v.trim());
+                setStatus(`Created and linked “${v.trim()}”`);
+              }
+            } catch {
+              // status already set in createNote
+            } finally {
+              setCreateFromTextElementId(null);
+            }
+          })();
+        }}
       />
 
       <QuickSwitcher
@@ -1871,7 +2091,7 @@ export default function VaultWorkspacePage() {
       <ConfirmModal
         open={deleteOpen}
         title="Move to trash"
-        message={`Move “${title || 'this note'}” to trash? You can restore it from Vault options → Trash.`}
+        message={`Move “${title || (isWhiteboard ? 'this whiteboard' : 'this note')}” to trash? You can restore it from Vault options → Trash.`}
         confirmLabel={deleting ? 'Deleting…' : 'Move to trash'}
         cancelLabel="Cancel"
         danger

@@ -10,7 +10,13 @@ import {
 } from '@/lib/notePaths';
 import NoteIcon from '@/components/NoteIcon';
 
-type NoteRow = { Id: number; Title: string; Path: string; Icon?: string | null };
+type NoteRow = {
+  Id: number;
+  Title: string;
+  Path: string;
+  Icon?: string | null;
+  Kind?: string | null;
+};
 
 interface NotesFolderTreeProps {
   notes: NoteRow[];
@@ -93,7 +99,22 @@ function NoteRowButton({
       style={{ paddingLeft: `${0.5 + depth * 0.75}rem`, paddingRight: '0.375rem' }}
     >
       <span className="mt-0.5 text-[var(--accent-soft)]" aria-hidden>
-        <NoteIcon icon={note.icon} size={14} />
+        {note.kind === 'whiteboard' ? (
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden>
+            <rect x="3" y="4" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.75" />
+            <path d="M8 20h8" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+            <path d="M12 18v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+            <path
+              d="M7 14l3-4 2.5 2.5L16 8"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        ) : (
+          <NoteIcon icon={note.icon} size={14} />
+        )}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{note.name}</span>

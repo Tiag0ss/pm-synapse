@@ -37,6 +37,7 @@ export type NoteTreeNote = {
   path: string;
   name: string;
   icon?: string | null;
+  kind?: string | null;
 };
 
 export type NoteTreeFolder = {
@@ -50,7 +51,7 @@ export type NoteTreeNode = NoteTreeFolder | NoteTreeNote;
 
 /** Build a nested folder tree from notes. Folders first, then root notes; alpha within each group. */
 export function buildNoteTree(
-  notes: Array<{ Id: number; Title: string; Path: string; Icon?: string | null }>
+  notes: Array<{ Id: number; Title: string; Path: string; Icon?: string | null; Kind?: string | null }>
 ): NoteTreeNode[] {
   const sorted = [...notes].sort((a, b) =>
     pathStem(a.Path).localeCompare(pathStem(b.Path), undefined, { sensitivity: 'base' })
@@ -95,6 +96,7 @@ export function buildNoteTree(
       path: n.Path,
       name: noteLeafName(n.Title, n.Path) || leaf,
       icon: n.Icon ?? null,
+      kind: n.Kind ?? 'note',
     });
   }
 

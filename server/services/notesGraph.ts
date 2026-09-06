@@ -2,6 +2,7 @@ import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { extractTags, extractWikiLinks, findMentions } from './markdown';
 import { rewriteFrontmatterRelatedTargets, rewriteFrontmatterTodoNoteTargets } from './frontmatter';
 import { parseCrossVaultWikilinkTarget, pathStem, resolveNoteId } from './notePaths';
+import { extractBoardNoteLinkIds } from './extractBoardNoteLinks';
 
 const MAX_REVISIONS = 50;
 
@@ -85,7 +86,7 @@ export async function snapshotRevision(
 
 export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise<void> {
   const [notes] = await pool.execute<RowDataPacket[]>(
-    'SELECT Id, Title, Path, BodyMarkdown, AliasesJson FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
+    'SELECT Id, Title, Path, BodyMarkdown, AliasesJson, Kind, BoardJson FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
     [vaultId]
   );
   const self = notes.find((n) => Number(n.Id) === noteId);
@@ -103,10 +104,13 @@ export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise
     path: String(n.Path || ''),
   }));
 
+  const kind = String(self.Kind || 'note') === 'whiteboard' ? 'whiteboard' : 'note';
   const body = String(self.BodyMarkdown || '');
-  const wikiTargets = extractWikiLinks(body);
-  const mentionIds = findMentions(body, dictionary, noteId);
-  const tags = extractTags(body);
+  const wikiTargets = kind === 'note' ? extractWikiLinks(body) : [];
+  const mentionIds = kind === 'note' ? findMentions(body, dictionary, noteId) : [];
+  const tags = kind === 'note' ? extractTags(body) : [];
+  const boardLinkIds =
+    kind === 'whiteboard' ? extractBoardNoteLinkIds(String(self.BoardJson || '')) : [];
 
   await pool.execute('DELETE FROM NoteLinks WHERE FromNoteId = ?', [noteId]);
   await pool.execute('DELETE FROM NoteTags WHERE NoteId = ?', [noteId]);
@@ -153,6 +157,14 @@ export async function rebuildNoteGraph(noteId: number, vaultId: number): Promise
     await pool.execute(
       'INSERT IGNORE INTO NoteLinks (FromNoteId, ToNoteId, Kind) VALUES (?, ?, ?)',
       [noteId, toId, 'mention']
+    );
+  }
+
+  for (const toId of boardLinkIds) {
+    if (toId === noteId) continue;
+    await pool.execute(
+      'INSERT IGNORE INTO NoteLinks (FromNoteId, ToNoteId, Kind) VALUES (?, ?, ?)',
+      [noteId, toId, 'boardlink']
     );
   }
 

@@ -1097,3 +1097,43 @@ a:hover { text-decoration: underline; }
   border-radius: 2px;
   padding: 0 1px;
 }
+
+/* Excalidraw host — Synapse chrome; canvas background is Excalidraw appState */
+.synapse-whiteboard {
+  min-height: 0;
+  background: var(--bg);
+}
+.synapse-whiteboard .excalidraw {
+  --color-primary: var(--accent);
+  --color-primary-darker: color-mix(in srgb, var(--accent) 80%, #000);
+  --color-primary-darkest: color-mix(in srgb, var(--accent) 65%, #000);
+  --color-surface-lowest: var(--bg);
+  --color-surface-low: var(--panel);
+  --color-surface-mid: var(--surface-2);
+  --color-surface-high: var(--border);
+  --color-on-surface: var(--text);
+  --island-bg-color: var(--panel);
+  --button-gray-1: var(--surface-2);
+  --button-gray-2: var(--border);
+  --input-bg-color: var(--surface);
+  --input-border-color: var(--border);
+  --popup-bg-color: var(--panel);
+  --default-bg-color: var(--bg);
+  height: 100% !important;
+  color: var(--text);
+}
+.synapse-whiteboard .excalidraw .App-menu,
+.synapse-whiteboard .excalidraw .layer-ui__wrapper,
+.synapse-whiteboard .excalidraw .FixedSideContainer,
+.synapse-whiteboard .excalidraw .App-bottom-bar,
+.synapse-whiteboard .excalidraw .App-toolbar-content {
+  font-family: var(--font-sans);
+}
+
+/* Peek / public wiki: zoom + canvas background stay; hide shape toolbar */
+.synapse-whiteboard-viewer .excalidraw .App-toolbar,
+.synapse-whiteboard-viewer .excalidraw .App-toolbar-container,
+.synapse-whiteboard-viewer .excalidraw .shapes-section,
+.synapse-whiteboard-viewer .excalidraw .App-menu__left {
+  display: none !important;
+}

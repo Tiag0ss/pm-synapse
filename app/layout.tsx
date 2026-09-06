@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Script from 'next/script';
 import { DM_Sans, IBM_Plex_Mono, Source_Serif_4 } from 'next/font/google';
 import './globals.css';
 import 'katex/dist/katex.min.css';
@@ -88,6 +89,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`dark ${dmSans.variable} ${ibmPlexMono.variable} ${sourceSerif4.variable}`}
     >
       <body className="min-h-screen antialiased">
+        {/* Self-host Excalidraw fonts (public/excalidraw) — avoid esm.sh CDN fetches. */}
+        <Script id="excalidraw-asset-path" strategy="beforeInteractive">
+          {`window.EXCALIDRAW_ASSET_PATH="/excalidraw/";`}
+        </Script>
         <PwaRegister />
         {children}
       </body>

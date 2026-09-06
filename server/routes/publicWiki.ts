@@ -235,7 +235,7 @@ router.get('/:slug', async (req: AuthRequest, res: Response) => {
   }
 
   const [allNotes] = await pool.execute<RowDataPacket[]>(
-    `SELECT Id, Path, Title, Visibility, UpdatedAt, Icon
+    `SELECT Id, Path, Title, Visibility, UpdatedAt, Icon, Kind
      FROM Notes
      WHERE VaultId = ? AND DeletedAt IS NULL
      ORDER BY Path ASC`,
@@ -310,6 +310,10 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     return res.status(404).json({ success: false, message: 'Note not found' });
   }
 
+  const noteKind = String(note.Kind || 'note') === 'whiteboard' ? 'whiteboard' : 'note';
+  const boardJson =
+    noteKind === 'whiteboard' && note.BoardJson != null ? String(note.BoardJson) : null;
+
   const [allNotes] = await pool.execute<RowDataPacket[]>(
     'SELECT Id, Title, Path, Visibility FROM Notes WHERE VaultId = ? AND DeletedAt IS NULL',
     [vault.Id]
@@ -330,15 +334,18 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     isAuthed: ctx.isAuthed,
   });
 
-  const html = markdownToSafeHtml(
-    String(note.BodyMarkdown || ''),
-    noteIndex,
-    linkableVaults,
-    Number(note.Id)
-  ).replace(
-    new RegExp(`/api/vaults/${Number(vault.Id)}/media/(\\d+)`, 'g'),
-    `/api/public/${String(vault.slug)}/media/$1`
-  );
+  const html =
+    noteKind === 'whiteboard'
+      ? ''
+      : markdownToSafeHtml(
+          String(note.BodyMarkdown || ''),
+          noteIndex,
+          linkableVaults,
+          Number(note.Id)
+        ).replace(
+          new RegExp(`/api/vaults/${Number(vault.Id)}/media/(\\d+)`, 'g'),
+          `/api/public/${String(vault.slug)}/media/$1`
+        );
 
   let checkboxTasks: Array<{
     markerId: string | null;
@@ -406,6 +413,8 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       id: Number(note.Id),
       title: note.Title,
       path: note.Path,
+      kind: noteKind,
+      boardJson,
       html,
       robots: access.robots,
       visibility,

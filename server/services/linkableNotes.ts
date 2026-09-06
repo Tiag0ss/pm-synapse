@@ -24,7 +24,7 @@ export async function listLinkableVaultNotesForApp(
   for (const v of vaults) {
     const vaultId = Number(v.Id);
     const [notes] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, Title, Path FROM Notes WHERE VaultId = ? AND ${ACTIVE_NOTE} ORDER BY Path ASC`,
+      `SELECT Id, Title, Path FROM Notes WHERE VaultId = ? AND ${ACTIVE_NOTE} AND Kind <> 'whiteboard' ORDER BY Path ASC`,
       [vaultId]
     );
     out.push({
@@ -71,11 +71,12 @@ export async function listLinkableVaultNotesForWikiViewer(opts: {
     if (!wikiGate.ok) continue;
 
     const [notes] = await pool.execute<RowDataPacket[]>(
-      `SELECT Id, Title, Path, Visibility FROM Notes WHERE VaultId = ? AND ${ACTIVE_NOTE}`,
+      `SELECT Id, Title, Path, Visibility, Kind FROM Notes WHERE VaultId = ? AND ${ACTIVE_NOTE}`,
       [vaultId]
     );
     const openNotes = notes
       .filter((n) => {
+        if (String(n.Kind || 'note') === 'whiteboard') return false;
         const vis = effectiveVisibility(n.Visibility, v.DefaultVisibility);
         return canOpenNoteOnWiki(vis, opts.isAuthed, canEditVault).ok;
       })
