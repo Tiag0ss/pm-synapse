@@ -2,3 +2,8 @@
 # Managed by Project Management Kanban extension — do not edit this block by hand.
 # No active PM tasks since the last commit.
 # >>> PM-ACTIVE-TASK:END
+
+# Commit messages (Generate commit message / agents):
+# - Only add "References: Task #N" when the PM-ACTIVE-TASK block above lists active Task #Ids.
+# - If that block says there are no active PM tasks, do NOT invent or copy Task references
+#   from git history (e.g. do not add "References: Task #1357").

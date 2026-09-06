@@ -60,6 +60,8 @@ interface NoteTasksPanelProps {
   linkableVaults?: LinkableVaultNotes[];
   onOpenNote?: (noteId: number) => void;
   onOpenCrossVaultNote?: (vaultId: number, noteId: number) => void;
+  /** Peek a note from an inline mention/wikilink in the task label. */
+  onPeekNote?: (target: { noteId: number; vaultId: number; titleHint?: string }) => void;
   /** Open Vault Planner / PM integration settings (link/create/unlink lives there). */
   onOpenPmSettings?: () => void;
   /** Hub overview: checkboxes are pull-only (no toggle / push). */
@@ -89,6 +91,7 @@ export default function NoteTasksPanel({
   linkableVaults = [],
   onOpenNote,
   onOpenCrossVaultNote,
+  onPeekNote,
   onOpenPmSettings,
   onPlannerLinksChange,
   pullOnly = false,
@@ -720,7 +723,7 @@ export default function NoteTasksPanel({
                 </span>
               ) : null}
               <span
-                className={`synapse-task-label min-w-0 flex-1 text-sm leading-snug ${
+                className={`synapse-task-label min-w-0 flex-1 cursor-default text-sm leading-snug ${
                   item.cancelled
                     ? 'text-[var(--muted)] line-through'
                     : item.checked
@@ -728,15 +731,58 @@ export default function NoteTasksPanel({
                       : 'text-[var(--text)]'
                 }`}
                 onClick={(e) => {
-                  const a = (e.target as HTMLElement).closest(
+                  const locked = (e.target as HTMLElement).closest(
+                    '.synapse-wikilink.is-locked'
+                  );
+                  if (locked) {
+                    e.preventDefault();
+                    return;
+                  }
+
+                  const goto = (e.target as HTMLElement).closest(
+                    '.synapse-note-goto'
+                  ) as HTMLElement | null;
+                  const peekBtn = (e.target as HTMLElement).closest(
+                    '.synapse-note-peek'
+                  ) as HTMLElement | null;
+                  const ref = (goto || peekBtn)?.closest(
+                    '.synapse-note-ref'
+                  ) as HTMLElement | null;
+                  const legacy = (e.target as HTMLElement).closest(
                     'a.synapse-wikilink'
                   ) as HTMLAnchorElement | null;
-                  if (!a) return;
+                  const el = ref || legacy;
+                  if (!el) return;
+
                   e.preventDefault();
                   e.stopPropagation();
-                  const id = Number(a.dataset.noteId || 0);
-                  const crossVaultId = Number(a.dataset.vaultId || 0);
-                  if (id && crossVaultId && crossVaultId !== Number(vaultId) && onOpenCrossVaultNote) {
+
+                  const id = Number(el.dataset.noteId || 0);
+                  const crossVaultId = Number(el.dataset.vaultId || 0);
+                  const titleHint = String(el.dataset.noteTitle || '').trim();
+                  const currentVaultId = Number(vaultId);
+
+                  if (peekBtn && id && onPeekNote) {
+                    const peekVault =
+                      crossVaultId && crossVaultId !== currentVaultId
+                        ? crossVaultId
+                        : currentVaultId || crossVaultId;
+                    if (peekVault > 0) {
+                      onPeekNote({
+                        noteId: id,
+                        vaultId: peekVault,
+                        titleHint: titleHint || undefined,
+                      });
+                    }
+                    return;
+                  }
+
+                  if (
+                    id &&
+                    crossVaultId &&
+                    crossVaultId !== currentVaultId &&
+                    onOpenCrossVaultNote
+                  ) {
                     onOpenCrossVaultNote(crossVaultId, id);
                     return;
                   }

@@ -8,7 +8,11 @@ import {
 } from '@/lib/notePaths';
 import { parseFrontmatter, renderFrontmatterHtml } from '@/lib/frontmatter';
 import { enhanceCodeCopyHtml } from '@/lib/codeCopy';
-import { postprocessMarkdownHtml, preprocessMarkdownExtras } from '@/lib/markdownEnhance';
+import {
+  postprocessMarkdownHtml,
+  preprocessFolds,
+  preprocessMarkdownExtras,
+} from '@/lib/markdownEnhance';
 
 export type NoteIndexEntry = NoteResolveEntry;
 
@@ -274,7 +278,8 @@ export function renderSynapseMarkdown(
     const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes, linkableVaults) : '';
     const withExtras = preprocessMarkdownExtras(fm.body);
     const prepared = preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId);
-    const html = marked.parse(prepared, { async: false, gfm: true, breaks: true }) as string;
+    const withFolds = preprocessFolds(prepared);
+    const html = marked.parse(withFolds, { async: false, gfm: true, breaks: true }) as string;
     return sanitizeSynapseHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)));
   } catch {
     return '<p class="synapse-md-error">Preview error</p>';

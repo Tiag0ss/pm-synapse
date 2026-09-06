@@ -12,7 +12,7 @@ import {
   parseFrontmatterTodos,
   renderFrontmatterHtml,
 } from './frontmatter';
-import { postprocessMarkdownHtml, preprocessMarkdownExtras } from './markdownEnhance';
+import { postprocessMarkdownHtml, preprocessFolds, preprocessMarkdownExtras } from './markdownEnhance';
 import { sanitizeSynapseHtml } from './sanitizeSynapseHtml';
 
 const STOP = new Set([
@@ -388,7 +388,9 @@ export function markdownToSafeHtml(
   const fm = parseFrontmatter(md);
   const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes, linkableVaults) : '';
   const withExtras = preprocessMarkdownExtras(fm.body);
-  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId), {
+  const prepared = preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId);
+  const withFolds = preprocessFolds(prepared);
+  const html = marked.parse(withFolds, {
     async: false,
     gfm: true,
     breaks: true,
@@ -408,7 +410,9 @@ export function markdownToPmDescriptionHtml(
   const body = String(fm.body || '').trim();
   if (!body) return '';
   const withExtras = preprocessMarkdownExtras(body);
-  const html = marked.parse(preprocessSynapseMarkdown(withExtras, notes, [], excludeNoteId), {
+  const prepared = preprocessSynapseMarkdown(withExtras, notes, [], excludeNoteId);
+  const withFolds = preprocessFolds(prepared);
+  const html = marked.parse(withFolds, {
     async: false,
     gfm: true,
     breaks: true,

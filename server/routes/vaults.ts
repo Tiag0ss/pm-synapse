@@ -4,6 +4,7 @@ import { pool, RowDataPacket, ResultSetHeader } from '../config/database';
 import { authenticateSession, AuthRequest } from '../middleware/auth';
 import { slugify, extractWikiLinks } from '../services/markdown';
 import { resolveNoteId, sanitizeNotePath } from '../services/notePaths';
+import { extractFoldCards } from '../services/extractFoldCards';
 import {
   createPmProject,
   fetchPmOrganizations,
@@ -1409,6 +1410,24 @@ router.get('/:vaultId/graph', async (req: AuthRequest, res: Response) => {
   ];
 
   res.json({ success: true, data: { nodes, edges: dedupeGraphEdges(edges) } });
+});
+
+/** Fold blocks across the vault as flashcards (title = front, body = back). */
+router.get('/:vaultId/flashcards', async (req: AuthRequest, res: Response) => {
+  const vault = await readableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, Title, Path, BodyMarkdown FROM Notes WHERE VaultId = ? AND ${ACTIVE_NOTE} ORDER BY Path ASC`,
+    [vault.Id]
+  );
+  const cards = notes.flatMap((n) =>
+    extractFoldCards(String(n.BodyMarkdown || ''), {
+      noteId: Number(n.Id),
+      title: String(n.Title || ''),
+      path: String(n.Path || ''),
+    })
+  );
+  res.json({ success: true, data: { cards } });
 });
 
 /** Unresolved [[wikilinks]] across the vault. */

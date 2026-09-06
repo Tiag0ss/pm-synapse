@@ -854,13 +854,14 @@ a:hover { text-decoration: underline; }
 }
 .synapse-mermaid-lightbox-body {
   padding: 1rem;
+  max-width: none;
 }
 .synapse-mermaid-lightbox-body svg {
   max-width: none !important;
   width: auto !important;
   height: auto !important;
   display: block;
-  margin: 0 auto;
+  pointer-events: none;
 }
 .synapse-md-preview .synapse-mermaid-error {
   border-color: color-mix(in srgb, var(--danger) 50%, var(--border));

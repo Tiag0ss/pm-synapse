@@ -195,53 +195,76 @@ export function preprocessCallouts(md: string): string {
 const FOLD_OPEN = /^:::fold([+-])?\s*(.*)$/;
 const FOLD_CLOSE = /^:::\s*$/;
 
+function isMdFenceLine(line: string): boolean {
+  return /^```/.test(line);
+}
+
 /**
- * Neutral collapsible sections (Wikipedia-style, not callouts):
- * :::fold Title          starts expanded
- * :::fold- Title         starts collapsed
- * :::fold+ Title         starts expanded
- * body
- * :::
+ * Neutral collapsible sections (Wikipedia-style, not callouts).
+ * Keep in sync with lib/markdownEnhance.ts — do not use mapProtectedMd (breaks mermaid/code in folds).
  */
 export function preprocessFolds(md: string): string {
-  return mapProtectedMd(md || '', preprocessFoldsUnprotected);
+  return preprocessFoldsUnprotected(md || '');
+}
+
+function findFoldClose(lines: string[], from: number): number {
+  let depth = 1;
+  let inFence = false;
+  for (let j = from; j < lines.length; j += 1) {
+    if (isMdFenceLine(lines[j])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (FOLD_OPEN.test(lines[j])) depth += 1;
+    else if (FOLD_CLOSE.test(lines[j])) {
+      depth -= 1;
+      if (depth === 0) return j;
+    }
+  }
+  return -1;
 }
 
 function preprocessFoldsUnprotected(chunk: string): string {
   const lines = chunk.replace(/\r\n/g, '\n').split('\n');
   const out: string[] = [];
   let i = 0;
+  let inFence = false;
   while (i < lines.length) {
+    if (isMdFenceLine(lines[i])) {
+      inFence = !inFence;
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    if (inFence) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
     const m = lines[i].match(FOLD_OPEN);
     if (!m) {
       out.push(lines[i]);
       i += 1;
       continue;
     }
-    let close = -1;
-    let depth = 1;
-    for (let j = i + 1; j < lines.length; j += 1) {
-      if (FOLD_OPEN.test(lines[j])) depth += 1;
-      else if (FOLD_CLOSE.test(lines[j])) {
-        depth -= 1;
-        if (depth === 0) {
-          close = j;
-          break;
-        }
-      }
-    }
+
+    const close = findFoldClose(lines, i + 1);
     if (close < 0) {
       out.push(lines[i]);
       i += 1;
       continue;
     }
+
     const foldFlag = m[1] as '+' | '-' | undefined;
     const title = m[2].trim() || 'Section';
     const bodyMd = preprocessFoldsUnprotected(lines.slice(i + 1, close).join('\n')).trim();
     let bodyHtml = '';
     if (bodyMd) {
       try {
-        bodyHtml = marked.parse(bodyMd, { async: false, gfm: true, breaks: true }) as string;
+        const raw = marked.parse(bodyMd, { async: false, gfm: true, breaks: true }) as string;
+        bodyHtml = postprocessMarkdownHtml(raw);
       } catch {
         bodyHtml = `<p>${escapeHtml(bodyMd)}</p>`;
       }
@@ -496,7 +519,7 @@ export function preprocessMarkdownExtras(md: string): string {
   out = preprocessCallouts(out);
   out = preprocessFootnotes(out);
   out = preprocessMath(out);
-  out = preprocessFolds(out);
+  // Folds run after wikilink preprocess (see markdownToSafeHtml).
   return out;
 }
 

@@ -28,6 +28,9 @@ import ConfirmModal from '@/components/ConfirmModal';
 import AppUserMenu from '@/components/AppUserMenu';
 import AppToast from '@/components/AppToast';
 import PmSsoBanner from '@/components/PmSsoBanner';
+import FlashcardsStudy from '@/components/FlashcardsStudy';
+import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
+import type { FoldCard } from '@/lib/extractFoldCards';
 import { useIsLgUp } from '@/lib/useMediaQuery';
 
 interface NoteListItem {
@@ -57,13 +60,12 @@ interface Backlink {
   Restricted?: boolean;
 }
 
-type CenterMode = 'editor' | 'mindmap';
+type CenterMode = 'editor' | 'mindmap' | 'flashcards';
 
 function FullMindmapPane({
   graph,
   graphToken,
   selectedId,
-  onBack,
   onOpenNote,
 }: {
   graph: {
@@ -72,7 +74,6 @@ function FullMindmapPane({
   };
   graphToken: number;
   selectedId: number | null;
-  onBack: () => void;
   onOpenNote: (id: number, node: GraphNode) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -89,18 +90,7 @@ function FullMindmapPane({
   }, []);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-base font-semibold tracking-tight">Full vault mindmap</h2>
-          <p className="text-xs text-[var(--muted)]">
-            Folders view (default when &gt;25 links) or All notes · switch in the toolbar
-          </p>
-        </div>
-        <button type="button" className="btn-ghost" onClick={onBack}>
-          Back to editor
-        </button>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div ref={boxRef} className="min-h-0 flex-1">
         <NoteGraphMindmap
           nodes={graph.nodes}
@@ -162,11 +152,15 @@ export default function VaultWorkspacePage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [centerMode, setCenterMode] = useState<CenterMode>('editor');
+  const [peekTarget, setPeekTarget] = useState<NotePeekTarget | null>(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const isLgUp = useIsLgUp();
   const mindmapFull = centerMode === 'mindmap';
+
+  const [vaultFoldCards, setVaultFoldCards] = useState<FoldCard[]>([]);
+  const [flashcardsLoading, setFlashcardsLoading] = useState(false);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -764,6 +758,34 @@ export default function VaultWorkspacePage() {
     void loadGraph().then(() => setCenterMode('mindmap'));
   };
 
+  const toggleFlashcards = () => {
+    if (centerMode === 'flashcards') {
+      setCenterMode('editor');
+      return;
+    }
+    setCenterMode('flashcards');
+    setFlashcardsLoading(true);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/vaults/${vaultId}/flashcards`, {
+          credentials: 'include',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setVaultFoldCards([]);
+          setStatus(data.message || 'Failed to load flashcards');
+          return;
+        }
+        setVaultFoldCards(Array.isArray(data.data?.cards) ? data.data.cards : []);
+      } catch {
+        setVaultFoldCards([]);
+        setStatus('Failed to load flashcards');
+      } finally {
+        setFlashcardsLoading(false);
+      }
+    })();
+  };
+
   const openPmTasks = () => {
     if (!vaultMeta.PmProjectId) {
       setStatus('Link a PM project in Vault options first');
@@ -1030,6 +1052,22 @@ export default function VaultWorkspacePage() {
             >
               {centerMode === 'mindmap' ? 'Editor' : 'Mindmap'}
             </button>
+            <button
+              type="button"
+              className={`inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium transition ${
+                centerMode === 'flashcards'
+                  ? 'bg-[var(--surface-2)] text-[var(--accent-soft)]'
+                  : 'text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]'
+              }`}
+              onClick={() => {
+                setNotesOpen(false);
+                setContextOpen(false);
+                setMoreOpen(false);
+                toggleFlashcards();
+              }}
+            >
+              {centerMode === 'flashcards' ? 'Editor' : 'Cards'}
+            </button>
           </div>
         </div>
 
@@ -1132,6 +1170,14 @@ export default function VaultWorkspacePage() {
               title="Show full vault mindmap in the editor area"
             >
               {centerMode === 'mindmap' ? 'Back to editor' : 'Full mindmap'}
+            </button>
+            <button
+              type="button"
+              className={`py-1.5 ${centerMode === 'flashcards' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => toggleFlashcards()}
+              title="Study :::fold blocks across this vault as flashcards"
+            >
+              {centerMode === 'flashcards' ? 'Back to editor' : 'Flashcards'}
             </button>
             {canEdit && (
               <button
@@ -1242,7 +1288,6 @@ export default function VaultWorkspacePage() {
               graph={graph}
               graphToken={graphToken}
               selectedId={selectedId}
-              onBack={() => setCenterMode('editor')}
               onOpenNote={(id, node) => {
                 if (node.Restricted) return;
                 const targetVault = node.VaultId != null ? Number(node.VaultId) : Number(vaultId);
@@ -1252,6 +1297,40 @@ export default function VaultWorkspacePage() {
                 }
                 void openNote(id);
               }}
+            />
+          ) : centerMode === 'flashcards' ? (
+            <FlashcardsStudy
+              cards={vaultFoldCards}
+              notes={noteIndex}
+              linkableVaults={linkableVaults}
+              vaultId={Number(vaultId)}
+              loading={flashcardsLoading}
+              onClose={() => setCenterMode('editor')}
+              onOpenNote={(id, openVaultId) => {
+                const current = Number(vaultId);
+                if (openVaultId && openVaultId !== current) {
+                  router.push(`/vaults/${openVaultId}?note=${id}`);
+                  return;
+                }
+                void openNote(id);
+              }}
+              onPeekNote={(next) => setPeekTarget(next)}
+              onCreateNoteFromWikilink={
+                canEdit
+                  ? (wikilinkTitle) =>
+                      void createNote(wikilinkTitle, { linkFromNoteId: selectedId })
+                  : undefined
+              }
+              onCreateCrossVaultNote={
+                canEdit
+                  ? (targetVaultId, wikilinkTitle) =>
+                      void createNote(wikilinkTitle, {
+                        targetVaultId,
+                        linkFromNoteId: selectedId,
+                      })
+                  : undefined
+              }
+              emptyHint="No fold cards in this vault. Use :::fold- Question … ::: with the answer in the body."
             />
           ) : selectedId ? (
             <>
@@ -1596,6 +1675,7 @@ export default function VaultWorkspacePage() {
                   onOpenCrossVaultNote={(targetVaultId, noteId) => {
                     router.push(`/vaults/${targetVaultId}?note=${noteId}`);
                   }}
+                  onPeekNote={(next) => setPeekTarget(next)}
                   pullOnly={isHubNote}
                   onRefreshPlanner={
                     isHubNote && canEdit ? () => refreshHubTasks() : undefined
@@ -1936,6 +2016,37 @@ export default function VaultWorkspacePage() {
           }}
         />
       )}
+
+      <NotePeekModal
+        open={Boolean(peekTarget)}
+        target={peekTarget}
+        notes={noteIndex}
+        linkableVaults={linkableVaults}
+        onClose={() => setPeekTarget(null)}
+        onOpenNote={(id, openVaultId) => {
+          const current = Number(vaultId);
+          if (openVaultId && openVaultId !== current) {
+            router.push(`/vaults/${openVaultId}?note=${id}`);
+          } else {
+            void openNote(id);
+          }
+        }}
+        onPeekNote={(next) => setPeekTarget(next)}
+        onCreateNoteFromWikilink={
+          canEdit
+            ? (wikilinkTitle) => void createNote(wikilinkTitle, { linkFromNoteId: selectedId })
+            : undefined
+        }
+        onCreateCrossVaultNote={
+          canEdit
+            ? (targetVaultId, wikilinkTitle) =>
+                void createNote(wikilinkTitle, {
+                  targetVaultId,
+                  linkFromNoteId: selectedId,
+                })
+            : undefined
+        }
+      />
     </div>
   );
 }
