@@ -123,7 +123,7 @@ export default function VaultPmSettingsModal({
     setOrgId(pmOrganizationId ? String(pmOrganizationId) : '');
     setLinkedProjectId(pmProjectId ?? null);
     void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open, vaultId, pmOrganizationId, pmProjectId]);
 
   const missingCount = items.filter((i) => !i.pmTaskId).length;

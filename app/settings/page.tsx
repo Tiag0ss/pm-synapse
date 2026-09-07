@@ -230,7 +230,7 @@ export default function SettingsPage() {
       void loadOllamaModels(ollamaBaseUrl, ollamaModel);
     }
     // Load once when opening the AI tab (refresh button for URL changes).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [tab, forbidden, loading]);
 
   const transferOwner = async () => {

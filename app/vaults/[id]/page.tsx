@@ -487,7 +487,7 @@ export default function VaultWorkspacePage() {
       setBody(next);
       return saveNote({ reason: 'manual', body: next });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
     [selectedId, canEdit, title, visibility, noteIcon, vaultId, itemKind]
   );
 
@@ -539,7 +539,7 @@ export default function VaultWorkspacePage() {
     return () => {
       if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [title, body, boardJson, visibility, noteIcon, selectedId, canEdit, dirty, itemKind]);
 
   useEffect(() => {
@@ -567,7 +567,7 @@ export default function VaultWorkspacePage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [canEdit, selectedId, title, body, visibility, noteIcon, quickOpen, boardMaximized]);
 
   // Debounce title/path/body search filter

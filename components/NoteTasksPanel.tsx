@@ -227,7 +227,7 @@ export default function NoteTasksPanel({
       }))
     );
     onPlannerLinksChange?.([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- body only used as API failure fallback
+     
   }, [vaultId, noteId, applyBodyFromServer, onStatus, onPlannerLinksChange]);
 
   useEffect(() => {

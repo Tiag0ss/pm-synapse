@@ -18,6 +18,7 @@ out
 *.log
 .DS_Store
 .pnpm-store
+coverage
 # local runtime data (uploaded media, etc.)
 /data
 /logs

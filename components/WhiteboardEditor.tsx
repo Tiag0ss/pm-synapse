@@ -170,7 +170,7 @@ const WhiteboardEditor = forwardRef<WhiteboardEditorHandle, WhiteboardEditorProp
       lastSelectionKeyRef.current = '';
       return parseInitialData(boardJson);
       // Remount via Excalidraw key={noteId}; ignore live boardJson edits from autosave.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
+       
     }, [noteId]);
 
     const folderPrefix = noteFolderPath(boardPath);

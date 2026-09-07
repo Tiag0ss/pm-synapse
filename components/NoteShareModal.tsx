@@ -256,9 +256,10 @@ export default function NoteShareModal({
           </button>
         </div>
 
-        <div className="flex shrink-0 gap-1 border-b border-[var(--border)] px-3 pt-2">
+        <div role="tablist" aria-label="Share mode" className="flex shrink-0 gap-1 border-b border-[var(--border)] px-3 pt-2">
           <button
             type="button"
+            role="tab"
             className={`rounded-t-lg px-3 py-2 text-sm font-medium transition ${
               tab === 'share'
                 ? 'bg-[var(--surface-2)] text-[var(--text)]'
@@ -271,6 +272,7 @@ export default function NoteShareModal({
           </button>
           <button
             type="button"
+            role="tab"
             className={`rounded-t-lg px-3 py-2 text-sm font-medium transition ${
               tab === 'send'
                 ? 'bg-[var(--surface-2)] text-[var(--text)]'

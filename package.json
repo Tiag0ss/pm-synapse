@@ -8,7 +8,12 @@
     "dev": "tsx watch server/index.ts",
     "build": "node scripts/copy-excalidraw-assets.mjs && next build && tsc -p server/tsconfig.json",
     "start": "NODE_ENV=production node dist/server/index.js",
-    "typecheck": "tsc -p server/tsconfig.json --noEmit"
+    "lint": "eslint",
+    "typecheck": "tsc -p server/tsconfig.json --noEmit",
+    "test": "jest",
+    "test:unit": "jest --testPathPattern=unit",
+    "test:smoke": "jest --testPathPattern=smoke",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
@@ -48,6 +53,7 @@
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/jest": "^29.5.14",
     "@types/jsdom": "^28.0.3",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/katex": "^0.16.8",
@@ -56,6 +62,13 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/sanitize-html": "^2.16.1",
+    "@types/supertest": "^6.0.3",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.3.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "jest": "^29.7.0",
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.4.12",
     "tsx": "^4.23.1",
     "typescript": "6.0.3"
   }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import AppUserMenu from '@/components/AppUserMenu';
 import ConfirmModal from '@/components/ConfirmModal';
 import { applyNoteTemplateBody } from '@/lib/noteTemplates';
@@ -25,6 +26,7 @@ type Template = {
 type Me = { userId: number; username: string; email: string; isAdmin: boolean };
 
 export default function TemplatesPage() {
+  const router = useRouter();
   const [me, setMe] = useState<Me | null>(null);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -46,7 +48,7 @@ export default function TemplatesPage() {
     try {
       const meRes = await fetch('/api/auth/me', { credentials: 'include' });
       if (!meRes.ok) {
-        window.location.href = '/';
+        router.replace('/');
         return;
       }
       const meJson = await meRes.json();

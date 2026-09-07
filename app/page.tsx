@@ -139,7 +139,7 @@ export default function HomePage() {
         setError(data.message || 'Login failed');
         return;
       }
-      window.location.href = '/';
+      await load();
     } catch {
       setError('Login failed');
     } finally {
@@ -166,7 +166,7 @@ export default function HomePage() {
         setError(data.message || 'Registration failed');
         return;
       }
-      window.location.href = '/';
+      await load();
     } catch {
       setError('Registration failed');
     } finally {

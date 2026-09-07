@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { resolveNoteId, type NoteIndexEntry } from '@/lib/renderMarkdown';
 import NotesFolderTree from '@/components/NotesFolderTree';
@@ -30,6 +30,7 @@ interface WikiLinkRow {
 
 export default function PublicWikiPage() {
   const params = useParams();
+  const router = useRouter();
   const slug = String(params.slug);
   const [notes, setNotes] = useState<
     Array<{ Id: number; Title: string; Path: string; Icon?: string | null; Kind?: string | null }>
@@ -265,7 +266,7 @@ export default function PublicWikiPage() {
       }
 
       if (resolvedId && crossVaultSlug && crossVaultSlug !== slug) {
-        window.location.href = `/w/${encodeURIComponent(crossVaultSlug)}?n=${resolvedId}`;
+        router.push(`/w/${encodeURIComponent(crossVaultSlug)}?n=${resolvedId}`);
         return;
       }
       if (resolvedId) void openNote(resolvedId);
@@ -681,7 +682,7 @@ export default function PublicWikiPage() {
         onOpenNote={(id) => {
           const targetSlug = peekTarget?.wikiSlug || slug;
           if (targetSlug !== slug) {
-            window.location.href = `/w/${encodeURIComponent(targetSlug)}?n=${id}`;
+            router.push(`/w/${encodeURIComponent(targetSlug)}?n=${id}`);
             return;
           }
           void openNote(id);

@@ -16,6 +16,7 @@ import settingsRoutes from './routes/settings';
 import usersRoutes from './routes/users';
 import templatesRoutes from './routes/templates';
 import exportTemplatesRoutes from './routes/exportTemplates';
+import { registerHealthRoute } from './health';
 
 dotenv.config();
 assertRuntimeSecrets();
@@ -93,9 +94,7 @@ async function main() {
   server.use(express.json({ limit: '30mb' }));
   server.use(cookieParser());
 
-  server.get('/health', (_req, res) => {
-    res.json({ status: 'healthy', service: 'pm-synapse', timestamp: new Date().toISOString() });
-  });
+  registerHealthRoute(server);
 
   server.use('/api/auth', authRoutes);
   server.use('/api/vaults', vaultsRoutes);

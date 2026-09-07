@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import UserAvatar from '@/components/UserAvatar';
 
 export type UserMenuUser = {
@@ -18,6 +19,7 @@ interface UserMenuProps {
 }
 
 export default function UserMenu({ user, dense = false }: UserMenuProps) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -39,7 +41,8 @@ export default function UserMenu({ user, dense = false }: UserMenuProps) {
 
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
-    window.location.href = '/';
+    router.replace('/');
+    router.refresh();
   };
 
   return (

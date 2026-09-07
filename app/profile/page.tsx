@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import UserAvatar from '@/components/UserAvatar';
 import AppUserMenu from '@/components/AppUserMenu';
 
@@ -22,6 +23,7 @@ type Profile = {
 };
 
 export default function ProfilePage() {
+  const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -43,7 +45,7 @@ export default function ProfilePage() {
     try {
       const res = await fetch('/api/auth/me', { credentials: 'include' });
       if (!res.ok) {
-        window.location.href = '/';
+        router.replace('/');
         return;
       }
       const json = await res.json();

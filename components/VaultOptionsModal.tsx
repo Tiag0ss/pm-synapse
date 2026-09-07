@@ -142,13 +142,13 @@ export default function VaultOptionsModal({
   useEffect(() => {
     if (!open || tab !== 'links') return;
     void loadBroken();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open, tab, vaultId]);
 
   useEffect(() => {
     if (!open || tab !== 'trash') return;
     void loadTrash();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [open, tab, vaultId]);
 
   const grouped = useMemo(() => {
