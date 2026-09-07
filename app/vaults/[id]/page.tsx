@@ -33,6 +33,7 @@ import AppToast from '@/components/AppToast';
 import PmSsoBanner from '@/components/PmSsoBanner';
 import FlashcardsStudy from '@/components/FlashcardsStudy';
 import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
+import { invalidateBoardEmbedCache } from '@/components/BoardEmbedPortals';
 import type { FoldCard } from '@/lib/extractFoldCards';
 import { useIsLgUp } from '@/lib/useMediaQuery';
 
@@ -463,6 +464,9 @@ export default function VaultWorkspacePage() {
       }
     }
     if (reason === 'manual') await loadGraph();
+    if (itemKind === 'whiteboard' && selectedId) {
+      invalidateBoardEmbedCache(selectedId, Number(vaultId));
+    }
     return true;
   };
 
@@ -517,7 +521,13 @@ export default function VaultWorkspacePage() {
 
   // Debounced autosave
   useEffect(() => {
-    if (!canEdit || !selectedId || !dirty) return;
+    if (!canEdit || !selectedId) return;
+    if (!dirty) {
+      // openNote / snapshot reset sets skipNext while dirty=false; clear it so the
+      // next real edit is not swallowed (otherwise autosave never schedules again).
+      skipNextAutosaveRef.current = false;
+      return;
+    }
     if (skipNextAutosaveRef.current) {
       skipNextAutosaveRef.current = false;
       return;
@@ -1733,6 +1743,47 @@ export default function VaultWorkspacePage() {
                             targetVaultId,
                             linkFromNoteId: selectedId,
                           })
+                      : undefined
+                  }
+                  onCreateWhiteboardEmbed={
+                    canEdit
+                      ? (embedTitle, embedVaultId) => {
+                          void (async () => {
+                            const saved = await ensureNoteSaved();
+                            if (!saved) return;
+                            const newId = await createNote(embedTitle, {
+                              kind: 'whiteboard',
+                              linkFromNoteId: selectedId,
+                              skipOpen: true,
+                              ...(embedVaultId && embedVaultId !== Number(vaultId)
+                                ? { targetVaultId: embedVaultId }
+                                : {}),
+                            });
+                            if (!newId) return;
+                            if (embedVaultId && embedVaultId !== Number(vaultId)) {
+                              router.push(`/vaults/${embedVaultId}?note=${newId}`);
+                              return;
+                            }
+                            await openNote(newId);
+                          })();
+                        }
+                      : undefined
+                  }
+                  onEditBoardEmbed={
+                    canEdit
+                      ? (embedNoteId, embedVaultId) => {
+                          void (async () => {
+                            if (embedVaultId && embedVaultId !== Number(vaultId)) {
+                              const saved = await ensureNoteSaved();
+                              if (!saved) return;
+                              router.push(`/vaults/${embedVaultId}?note=${embedNoteId}`);
+                              return;
+                            }
+                            const saved = await ensureNoteSaved();
+                            if (!saved) return;
+                            await openNote(embedNoteId);
+                          })();
+                        }
                       : undefined
                   }
                   onStatus={setStatus}

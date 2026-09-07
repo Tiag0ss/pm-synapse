@@ -332,17 +332,30 @@ function noteKindById(notes: MarkdownNoteRef[], id: number): string {
 }
 
 function renderBoardEmbedHtml(params: {
-  noteId: number;
+  noteId: number | '';
+  /** Path/title used to resolve or create the whiteboard (`[[target|alias]]` → target). */
   noteTitle: string;
+  /** Chrome label; defaults to noteTitle (`alias` when present). */
+  displayTitle?: string;
   vaultId?: number | null;
+  missing?: boolean;
 }): string {
   const vaultId =
     params.vaultId != null && Number(params.vaultId) > 0 ? String(params.vaultId) : '';
+  const missingCls = params.missing ? ' is-missing' : '';
+  const noteId = params.noteId !== '' && params.noteId != null ? String(params.noteId) : '';
+  const display = String(params.displayTitle || params.noteTitle).trim() || params.noteTitle;
+  const label = params.missing
+    ? `Missing whiteboard: ${display}`
+    : `Whiteboard: ${display}`;
+  const body = params.missing ? 'Whiteboard not found' : 'Loading board…';
   return (
-    `\n\n<div class="synapse-board-embed" data-note-id="${escapeAttr(String(params.noteId))}"` +
+    `\n\n<div class="synapse-board-embed${missingCls}" data-note-id="${escapeAttr(noteId)}"` +
     ` data-note-title="${escapeAttr(params.noteTitle)}"` +
+    ` data-display-title="${escapeAttr(display)}"` +
     (vaultId ? ` data-vault-id="${escapeAttr(vaultId)}"` : '') +
-    ` aria-label="Whiteboard: ${escapeAttr(params.noteTitle)}">Loading board…</div>\n\n`
+    (params.missing ? ' data-missing="1"' : '') +
+    ` aria-label="${escapeAttr(label)}">${escapeHtml(body)}</div>\n\n`
   );
 }
 
@@ -374,7 +387,18 @@ export function preprocessSynapseMarkdown(
 
       if (t.startsWith('@')) {
         const r = resolveCrossVaultWikilink(t, linkableVaults, aliasLabel || undefined);
-        if (r.status !== 'ok') return asWikilink;
+        if (r.status === 'locked') return asWikilink;
+        if (r.status === 'missing') {
+          return stashHtml(
+            renderBoardEmbedHtml({
+              noteId: '',
+              noteTitle: r.noteTarget,
+              displayTitle: aliasLabel || r.noteTarget,
+              vaultId: r.vaultId,
+              missing: true,
+            })
+          );
+        }
         const vault = linkableVaults.find((v) => v.vaultId === r.vaultId);
         const kind = vault ? noteKindById(vault.notes, r.noteId) : 'note';
         if (kind !== 'whiteboard') return asWikilink;
@@ -382,17 +406,29 @@ export function preprocessSynapseMarkdown(
           renderBoardEmbedHtml({
             noteId: r.noteId,
             noteTitle: r.label,
+            displayTitle: aliasLabel || r.label,
             vaultId: r.vaultId,
           })
         );
       }
 
       const id = resolveNoteId(t, notes);
-      if (id == null || noteKindById(notes, id) !== 'whiteboard') return asWikilink;
+      if (id == null) {
+        return stashHtml(
+          renderBoardEmbedHtml({
+            noteId: '',
+            noteTitle: t,
+            displayTitle: aliasLabel || t,
+            missing: true,
+          })
+        );
+      }
+      if (noteKindById(notes, id) !== 'whiteboard') return asWikilink;
       return stashHtml(
         renderBoardEmbedHtml({
           noteId: id,
-          noteTitle: aliasLabel || t,
+          noteTitle: t,
+          displayTitle: aliasLabel || t,
         })
       );
     });

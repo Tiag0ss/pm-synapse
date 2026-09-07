@@ -70,6 +70,10 @@ interface MarkdownNoteEditorProps {
   onCreateNoteFromWikilink?: (title: string) => void;
   /** Called when a missing cross-vault `[[@slug/…]]` is clicked. */
   onCreateCrossVaultNote?: (vaultId: number, title: string) => void;
+  /** Create a whiteboard from a missing `![[…]]` embed (preview). */
+  onCreateWhiteboardEmbed?: (title: string, vaultId?: number | null) => void;
+  /** Open an embedded whiteboard maximized for editing. */
+  onEditBoardEmbed?: (noteId: number, vaultId?: number | null) => void;
   onStatus?: (msg: string) => void;
   placeholder?: string;
   /** When true, force preview and hide editing chrome. */
@@ -384,6 +388,8 @@ export default function MarkdownNoteEditor({
   onOpenCrossVaultNote,
   onCreateNoteFromWikilink,
   onCreateCrossVaultNote,
+  onCreateWhiteboardEmbed,
+  onEditBoardEmbed,
   onStatus,
   placeholder,
   readOnly = false,
@@ -411,6 +417,10 @@ export default function MarkdownNoteEditor({
   const onOpenCrossVaultNoteRef = useRef(onOpenCrossVaultNote);
   onOpenNoteRef.current = onOpenNote;
   onOpenCrossVaultNoteRef.current = onOpenCrossVaultNote;
+  const onCreateWhiteboardEmbedRef = useRef(onCreateWhiteboardEmbed);
+  const onEditBoardEmbedRef = useRef(onEditBoardEmbed);
+  onCreateWhiteboardEmbedRef.current = onCreateWhiteboardEmbed;
+  onEditBoardEmbedRef.current = onEditBoardEmbed;
   const [linkSuggest, setLinkSuggest] = useState<{
     ctx: LinkSuggestContext | { kind: 'attach'; replaceStart: number; replaceEnd: number };
     items: LinkSuggestItem[];
@@ -747,6 +757,17 @@ export default function MarkdownNoteEditor({
     }
     onOpenNoteRef.current?.(id);
   }, [vaultId]);
+
+  const onEmbedCreateWhiteboard = useCallback(
+    (title: string, embedVaultId?: number | null) => {
+      onCreateWhiteboardEmbedRef.current?.(title, embedVaultId);
+    },
+    []
+  );
+
+  const onEmbedEditBoard = useCallback((id: number, embedVaultId?: number | null) => {
+    onEditBoardEmbedRef.current?.(id, embedVaultId);
+  }, []);
 
   const uploadFiles = useCallback(
     async (files: File[]) => {
@@ -1232,7 +1253,12 @@ export default function MarkdownNoteEditor({
           <BoardEmbedPortals
             mounts={embedMounts}
             fetchBoard={fetchEmbedBoard}
+            canEdit={!readOnly}
             onOpenNote={onEmbedOpenNote}
+            onCreateWhiteboardEmbed={
+              !readOnly && onCreateWhiteboardEmbed ? onEmbedCreateWhiteboard : undefined
+            }
+            onEditBoardEmbed={!readOnly && onEditBoardEmbed ? onEmbedEditBoard : undefined}
           />
         </div>
 

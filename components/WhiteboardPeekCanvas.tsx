@@ -1,8 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import type { ExcalidrawInitialDataState } from '@excalidraw/excalidraw/types';
+import type {
+  ExcalidrawImperativeAPI,
+  ExcalidrawInitialDataState,
+} from '@excalidraw/excalidraw/types';
 import { parseSynapseNoteLink, SYNAPSE_BOARD_BG } from '@/lib/whiteboardLinks';
 
 import '@excalidraw/excalidraw/index.css';
@@ -68,10 +71,12 @@ type WhiteboardPeekCanvasProps = {
   /** Override default peek height styles. */
   className?: string;
   onOpenNote?: (noteId: number) => void;
+  /** Fit scene to the host viewport (embeds are smaller than the full editor). */
+  fitToContent?: boolean;
 };
 
 /**
- * Board viewer for peek + public wiki.
+ * Board viewer for peek + public wiki + note embeds.
  * Zoom / pan / canvas background are allowed (session-only); drawing chrome is hidden.
  * Note: Excalidraw disables the background picker when viewModeEnabled is true.
  */
@@ -80,12 +85,56 @@ export default function WhiteboardPeekCanvas({
   boardJson,
   className,
   onOpenNote,
+  fitToContent = false,
 }: WhiteboardPeekCanvasProps) {
   const initialData = useMemo(() => parseBoard(boardJson), [noteId, boardJson]);
-  const sceneKey = `${noteId}:${boardJson?.length ?? 0}:${boardJson?.slice(0, 64) ?? ''}`;
+  const sceneKey = `${noteId}:${boardJson?.length ?? 0}:${boardJson?.slice(0, 48) ?? ''}:${boardJson?.slice(-48) ?? ''}`;
+  const fitDoneRef = useRef('');
+  const hostRef = useRef<HTMLDivElement>(null);
+
+  const handleApi = useCallback(
+    (api: ExcalidrawImperativeAPI) => {
+      if (!fitToContent) return;
+      const fitKey = sceneKey;
+      if (fitDoneRef.current === fitKey) return;
+
+      const runFit = () => {
+        const host = hostRef.current;
+        if (!host || host.clientWidth < 8 || host.clientHeight < 8) return false;
+        const elements = api.getSceneElements().filter((el) => !el.isDeleted);
+        if (!elements.length) {
+          fitDoneRef.current = fitKey;
+          return true;
+        }
+        try {
+          api.scrollToContent(elements, {
+            fitToContent: true,
+            animate: false,
+          });
+          fitDoneRef.current = fitKey;
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      // Host often has 0 size on the first paint inside flex embeds.
+      requestAnimationFrame(() => {
+        if (runFit()) return;
+        requestAnimationFrame(() => {
+          if (runFit()) return;
+          window.setTimeout(() => {
+            runFit();
+          }, 80);
+        });
+      });
+    },
+    [fitToContent, sceneKey]
+  );
 
   return (
     <div
+      ref={hostRef}
       className={
         className ||
         'synapse-whiteboard synapse-whiteboard-viewer w-full overflow-hidden rounded-xl border border-[var(--border)]'
@@ -93,6 +142,7 @@ export default function WhiteboardPeekCanvas({
     >
       <Excalidraw
         key={sceneKey}
+        excalidrawAPI={handleApi}
         initialData={initialData}
         theme="dark"
         onLinkOpen={(element, event) => {

@@ -959,7 +959,9 @@ a:hover { text-decoration: underline; }
 }
 .synapse-note-goto,
 .synapse-note-peek {
-  display: inline;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin: 0;
   padding: 0;
   border: none;
@@ -970,31 +972,47 @@ a:hover { text-decoration: underline; }
   line-height: inherit;
   cursor: pointer;
   vertical-align: baseline;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 .synapse-note-goto {
   white-space: normal;
+  min-height: 1.5em;
+  padding: 0.15em 0.1em;
 }
 .synapse-note-peek {
-  margin-left: 0.25em;
-  padding: 0.1em 0.18em;
+  position: relative;
+  margin-left: 0.15em;
+  /* Visual size stays compact; hit area ~44px for mobile */
+  width: 1.35em;
+  height: 1.35em;
+  padding: 0;
   border-radius: 3px;
   color: color-mix(in srgb, currentColor 70%, transparent);
-  vertical-align: -0.12em;
+  vertical-align: -0.2em;
 }
-.synapse-note-peek:hover {
+.synapse-note-peek::before {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+.synapse-note-peek:hover,
+.synapse-note-peek:focus-visible {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent-soft);
+  outline: none;
 }
-.synapse-note-ref.is-missing .synapse-note-peek:hover {
+.synapse-note-ref.is-missing .synapse-note-peek:hover,
+.synapse-note-ref.is-missing .synapse-note-peek:focus-visible {
   background: color-mix(in srgb, var(--danger) 16%, transparent);
   color: var(--danger);
 }
 .synapse-note-peek svg {
-  display: inline-block;
+  display: block;
   width: 0.95em;
   height: 0.95em;
   overflow: visible;
-  vertical-align: -0.12em;
+  pointer-events: none;
 }
 
 .synapse-md-preview mark.synapse-peek-hit {
@@ -1140,6 +1158,15 @@ a:hover { text-decoration: underline; }
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text);
+}
+.synapse-board-embed-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.4rem;
+}
+.synapse-board-embed.is-missing .synapse-board-embed-frame {
+  border-style: dashed;
 }
 .synapse-board-embed:not(:has(.synapse-board-embed-frame)) {
   display: flex;
