@@ -37,6 +37,10 @@
   ],
   "exclude": [
     "node_modules",
-    "server"
+    "server",
+    "__tests__",
+    "coverage",
+    "dist",
+    "jest.config.js"
   ]
 }
