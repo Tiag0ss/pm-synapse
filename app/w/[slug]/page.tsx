@@ -19,6 +19,8 @@ import MermaidLightbox from '@/components/MermaidLightbox';
 import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
 import WhiteboardPeekCanvas from '@/components/WhiteboardPeekCanvas';
 import AppUserMenu from '@/components/AppUserMenu';
+import FlashcardsStudy from '@/components/FlashcardsStudy';
+import type { FoldCard } from '@/lib/extractFoldCards';
 import { useIsLgUp } from '@/lib/useMediaQuery';
 
 interface WikiLinkRow {
@@ -27,6 +29,8 @@ interface WikiLinkRow {
   Path: string;
   Kind: string;
 }
+
+type WikiCenterMode = 'note' | 'flashcards';
 
 export default function PublicWikiPage() {
   const params = useParams();
@@ -61,6 +65,9 @@ export default function PublicWikiPage() {
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
   const [peekTarget, setPeekTarget] = useState<NotePeekTarget | null>(null);
   const [plannerLinks, setPlannerLinks] = useState<PlannerLinkItem[]>([]);
+  const [centerMode, setCenterMode] = useState<WikiCenterMode>('note');
+  const [wikiFoldCards, setWikiFoldCards] = useState<FoldCard[]>([]);
+  const [flashcardsLoading, setFlashcardsLoading] = useState(false);
   const articleRef = useRef<HTMLDivElement>(null);
 
   const noteIndex: NoteIndexEntry[] = notes.map((n) => ({
@@ -92,8 +99,40 @@ export default function PublicWikiPage() {
     }
   }, [slug]);
 
+  const toggleFlashcards = useCallback(() => {
+    if (centerMode === 'flashcards') {
+      setCenterMode('note');
+      return;
+    }
+    setCenterMode('flashcards');
+    setFlashcardsLoading(true);
+    setNotesOpen(false);
+    setContextOpen(false);
+    void (async () => {
+      try {
+        const res = await fetch(`/api/public/${encodeURIComponent(slug)}/flashcards`, {
+          credentials: 'include',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setWikiFoldCards([]);
+          setError(data.message || 'Failed to load flashcards');
+          return;
+        }
+        setError('');
+        setWikiFoldCards(Array.isArray(data.data?.cards) ? data.data.cards : []);
+      } catch {
+        setWikiFoldCards([]);
+        setError('Failed to load flashcards');
+      } finally {
+        setFlashcardsLoading(false);
+      }
+    })();
+  }, [centerMode, slug]);
+
   const openNote = useCallback(
     async (id: number) => {
+      setCenterMode('note');
       const res = await fetch(`/api/public/${slug}/notes/${id}`, { credentials: 'include' });
       const data = await res.json();
       if (!res.ok) {
@@ -281,7 +320,7 @@ export default function PublicWikiPage() {
 
   const embedMounts = useBoardEmbedPreview(articleRef, {
     html,
-    enabled: !isWhiteboard,
+    enabled: !isWhiteboard && centerMode === 'note',
     afterWrite: afterWikiWrite,
   });
 
@@ -398,6 +437,18 @@ export default function PublicWikiPage() {
             >
               Mindmap
             </Link>
+            <button
+              type="button"
+              className={`inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium no-underline transition hover:bg-[var(--surface-2)] hover:text-[var(--text)] ${
+                centerMode === 'flashcards'
+                  ? 'bg-[var(--surface-2)] text-[var(--text)]'
+                  : 'text-[var(--muted)]'
+              }`}
+              onClick={() => toggleFlashcards()}
+              title="Study :::fold blocks from visible wiki pages"
+            >
+              {centerMode === 'flashcards' ? 'Notes' : 'Cards'}
+            </button>
             <Link
               href="/w"
               className="inline-flex h-9 flex-1 items-center justify-center rounded-lg text-xs font-medium text-[var(--muted)] no-underline transition hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
@@ -453,6 +504,14 @@ export default function PublicWikiPage() {
             >
               Mindmap
             </Link>
+            <button
+              type="button"
+              className={centerMode === 'flashcards' ? 'btn-primary py-1.5' : 'btn-ghost py-1.5'}
+              onClick={() => toggleFlashcards()}
+              title="Study :::fold blocks from visible wiki pages"
+            >
+              {centerMode === 'flashcards' ? 'Back to notes' : 'Cards'}
+            </button>
             <span>{notes.length} notes</span>
             <div className="border-l border-[var(--border)] pl-2">
               <AppUserMenu dense showSignInWhenGuest />
@@ -515,8 +574,10 @@ export default function PublicWikiPage() {
         </aside>
 
         <section
-          className={`min-h-0 overflow-auto px-4 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6 ${
-            isWhiteboard ? 'flex flex-col' : ''
+          className={`min-h-0 px-4 py-4 sm:px-5 sm:py-5 lg:px-8 lg:py-6 ${
+            centerMode === 'flashcards' || isWhiteboard
+              ? 'flex flex-col overflow-hidden'
+              : 'overflow-auto'
           }`}
         >
           {error && (
@@ -529,43 +590,64 @@ export default function PublicWikiPage() {
               )}
             </p>
           )}
-          {title ? (
-            <h2 className="mb-5 shrink-0 text-2xl font-semibold tracking-tight lg:text-3xl">
-              {noteLeafName(title)}
-              {title.includes('/') && (
-                <span className="mt-1 block text-sm font-normal text-[var(--muted)]">{title}</span>
-              )}
-            </h2>
-          ) : (
-            <div className="space-y-3">
-              <p className="text-[var(--muted)]">Select a public note</p>
-              <button
-                type="button"
-                className="btn-ghost lg:hidden"
-                onClick={() => setNotesOpen(true)}
-              >
-                Browse notes
-              </button>
-            </div>
-          )}
-          {isWhiteboard && activeId ? (
-            <WhiteboardPeekCanvas
-              noteId={activeId}
-              boardJson={boardJson}
-              className="synapse-whiteboard synapse-whiteboard-viewer w-full overflow-hidden rounded-xl border border-[var(--border)]"
+          {centerMode === 'flashcards' ? (
+            <FlashcardsStudy
+              cards={wikiFoldCards}
+              notes={noteIndex}
+              vaultId={vaultId ?? undefined}
+              loading={flashcardsLoading}
+              onClose={() => setCenterMode('note')}
               onOpenNote={(id) => void openNote(id)}
+              onPeekNote={(next) =>
+                setPeekTarget({
+                  ...next,
+                  vaultId: next.vaultId ?? vaultId ?? 0,
+                  wikiSlug: next.wikiSlug || slug,
+                })
+              }
+              emptyHint="No fold cards on visible wiki pages. Use :::fold- Question … ::: in a public (or authenticated) note."
             />
           ) : (
-            <div ref={articleRef} className="synapse-md-preview" />
+            <>
+              {title ? (
+                <h2 className="mb-5 shrink-0 text-2xl font-semibold tracking-tight lg:text-3xl">
+                  {noteLeafName(title)}
+                  {title.includes('/') && (
+                    <span className="mt-1 block text-sm font-normal text-[var(--muted)]">{title}</span>
+                  )}
+                </h2>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-[var(--muted)]">Select a public note</p>
+                  <button
+                    type="button"
+                    className="btn-ghost lg:hidden"
+                    onClick={() => setNotesOpen(true)}
+                  >
+                    Browse notes
+                  </button>
+                </div>
+              )}
+              {isWhiteboard && activeId ? (
+                <WhiteboardPeekCanvas
+                  noteId={activeId}
+                  boardJson={boardJson}
+                  className="synapse-whiteboard synapse-whiteboard-viewer w-full overflow-hidden rounded-xl border border-[var(--border)]"
+                  onOpenNote={(id) => void openNote(id)}
+                />
+              ) : (
+                <div ref={articleRef} className="synapse-md-preview" />
+              )}
+              <BoardEmbedPortals
+                mounts={embedMounts}
+                boardMap={embeddedBoards}
+                fetchBoard={fetchEmbedBoard}
+                onOpenNote={(id) => {
+                  void openNote(id);
+                }}
+              />
+            </>
           )}
-          <BoardEmbedPortals
-            mounts={embedMounts}
-            boardMap={embeddedBoards}
-            fetchBoard={fetchEmbedBoard}
-            onOpenNote={(id) => {
-              void openNote(id);
-            }}
-          />
         </section>
 
         <aside

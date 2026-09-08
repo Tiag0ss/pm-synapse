@@ -381,9 +381,19 @@ export default function VaultWorkspacePage() {
       setBacklinks(blData?.backlinks || []);
       setReferences(blData?.references || []);
     }
+    // Keep URL in sync so refresh reopens this note (same idea as public wiki `?n=`).
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('note') !== String(n.Id)) {
+      url.searchParams.set('note', String(n.Id));
+      window.history.replaceState({}, '', url.toString());
+    }
   };
 
-  // Deep-link from PM: /vaults/:id?note=:noteId
+  // Deep-link: /vaults/:id?note=:noteId (PM links + refresh after openNote URL sync)
+  useEffect(() => {
+    deepNoteOpenedRef.current = false;
+  }, [vaultId]);
+
   useEffect(() => {
     if (deepNoteOpenedRef.current) return;
     const noteParam = searchParams.get('note');
@@ -392,6 +402,7 @@ export default function VaultWorkspacePage() {
     if (!Number.isFinite(noteId) || noteId <= 0) return;
     deepNoteOpenedRef.current = true;
     void openNote(noteId, { force: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open once per vault / initial ?note=
   }, [searchParams, vaultId]);
 
   const saveNote = async (opts?: {

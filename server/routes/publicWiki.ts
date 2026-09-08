@@ -19,6 +19,7 @@ import {
 import { listLinkableVaultNotesForWikiViewer } from '../services/linkableNotes';
 import { getSettingBool, SETTING_KEYS } from '../services/appSettings';
 import { buildPmTaskOpenUrl } from '../services/pmClient';
+import { buildWikiFlashcards } from '../services/wikiFlashcards';
 
 const router = Router();
 
@@ -583,6 +584,51 @@ router.get('/:slug/graph', async (req: AuthRequest, res: Response) => {
         }
         return [...map.values()];
       })(),
+      robots: 'noindex,nofollow',
+    },
+  });
+});
+
+/** :::fold flashcards from notes the visitor can list on this wiki. */
+router.get('/:slug/flashcards', async (req: AuthRequest, res: Response) => {
+  const [vaults] = await pool.execute<RowDataPacket[]>(
+    'SELECT * FROM Vaults WHERE slug = ? AND AllowPublicPages = 1',
+    [req.params.slug]
+  );
+  if (!vaults.length) {
+    return res.status(404).json({ success: false, message: 'Public vault not found' });
+  }
+  const vault = vaults[0];
+  const ctx = await wikiContextFor(vault, req);
+  if (!ctx.wikiGate.ok) {
+    return denyWikiGate(res, ctx.wikiGate.reason);
+  }
+
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, Title, Path, BodyMarkdown, Visibility, Kind
+     FROM Notes
+     WHERE VaultId = ? AND DeletedAt IS NULL AND Kind <> 'whiteboard'
+     ORDER BY Path ASC`,
+    [vault.Id]
+  );
+  const cards = buildWikiFlashcards(
+    notes as Array<{
+      Id: number;
+      Title: string;
+      Path: string;
+      BodyMarkdown: string | null;
+      Visibility: string | null;
+      Kind: string | null;
+    }>,
+    vault.DefaultVisibility,
+    ctx.isAuthed,
+    ctx.canEditVault
+  );
+
+  res.json({
+    success: true,
+    data: {
+      cards,
       robots: 'noindex,nofollow',
     },
   });
