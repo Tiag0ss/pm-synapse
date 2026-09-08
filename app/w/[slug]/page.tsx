@@ -447,7 +447,7 @@ export default function PublicWikiPage() {
               onClick={() => toggleFlashcards()}
               title="Study :::fold blocks from visible wiki pages"
             >
-              {centerMode === 'flashcards' ? 'Notes' : 'Cards'}
+              {centerMode === 'flashcards' ? 'Notes' : 'Flashcards'}
             </button>
             <Link
               href="/w"
@@ -510,7 +510,7 @@ export default function PublicWikiPage() {
               onClick={() => toggleFlashcards()}
               title="Study :::fold blocks from visible wiki pages"
             >
-              {centerMode === 'flashcards' ? 'Back to notes' : 'Cards'}
+              {centerMode === 'flashcards' ? 'Back to notes' : 'Flashcards'}
             </button>
             <span>{notes.length} notes</span>
             <div className="border-l border-[var(--border)] pl-2">
