@@ -6,6 +6,13 @@ import { jwtSecret } from './secrets';
 import { markdownToSafeHtml, extractBoardEmbedTargets } from './markdown';
 import { resolveNoteId } from './notePaths';
 import { isPlannerOverviewNote } from './personalWorkVault';
+import {
+  listAskAnswersGroupedForShare,
+  softDeleteShareAskAnswer,
+  submitShareAskAnswer,
+  updateShareAskAnswer,
+  type AskAnswerRow,
+} from './noteAskAnswers';
 
 const BCRYPT_ROUNDS = 10;
 const SHARE_COOKIE = 'synapse_share';
@@ -291,10 +298,19 @@ export async function getShareContent(params: {
       title: string;
       kind: 'note' | 'whiteboard';
       noteId: number;
+      vaultId: number;
       html: string;
       boardJson: string | null;
       embeddedBoards: Record<string, string>;
+      askAnswers: Record<string, Array<{
+        id: number;
+        body: string;
+        authorName: string;
+        status: 'pending' | 'approved' | 'rejected';
+        createdAt: string;
+      }>>;
       expiresAt: string;
+      shareLinkId: number;
     }
 > {
   const found = await findActiveShareByToken(params.rawToken);
@@ -309,6 +325,7 @@ export async function getShareContent(params: {
   }
 
   const vaultId = Number(found.share.VaultId);
+  const shareLinkId = Number(found.share.Id);
   const [notes] = await pool.execute<RowDataPacket[]>(
     `SELECT Id, Title, Path, BodyMarkdown, Kind, BoardJson
      FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL LIMIT 1`,
@@ -326,10 +343,13 @@ export async function getShareContent(params: {
       title: String(note.Title || 'Whiteboard'),
       kind,
       noteId,
+      vaultId,
       html: '',
       boardJson: boardJsonToString(note.BoardJson),
       embeddedBoards: {},
+      askAnswers: {},
       expiresAt: toIso(found.share.ExpiresAt),
+      shareLinkId,
     };
   }
 
@@ -345,7 +365,7 @@ export async function getShareContent(params: {
   }));
 
   const body = String(note.BodyMarkdown || '');
-  const html = markdownToSafeHtml(body, noteIndex, [], noteId)
+  const html = markdownToSafeHtml(body, noteIndex, [], noteId, { wikilinks: false })
     .replace(
       new RegExp(`/api/vaults/${vaultId}/media/(\\d+)`, 'g'),
       `/api/shares/${encodeURIComponent(token)}/media/$1`
@@ -367,16 +387,201 @@ export async function getShareContent(params: {
     if (bj != null) embeddedBoards[String(id)] = bj;
   }
 
+  const askGrouped = await listAskAnswersGroupedForShare({ noteId, vaultId });
+  const askAnswers: Record<
+    string,
+    Array<{
+      id: number;
+      body: string;
+      authorName: string;
+      status: 'pending' | 'approved' | 'rejected';
+      createdAt: string;
+    }>
+  > = {};
+  for (const [askId, list] of Object.entries(askGrouped)) {
+    askAnswers[askId] = list.map((a) => ({
+      id: a.id,
+      body: a.body,
+      authorName: a.authorName,
+      status: a.status,
+      createdAt: a.createdAt,
+    }));
+  }
+
   return {
     ok: true,
     title: String(note.Title || 'Note'),
     kind,
     noteId,
+    vaultId,
     html,
     boardJson: null,
     embeddedBoards,
+    askAnswers,
     expiresAt: toIso(found.share.ExpiresAt),
+    shareLinkId,
   };
+}
+
+/** Submit a guest answer on an unlocked password share. */
+export async function submitShareAskAnswerForToken(params: {
+  rawToken: string;
+  shareCookie?: string;
+  askMarkerId: string;
+  body: string;
+  authorName?: string;
+}): Promise<
+  | { ok: true; answer: AskAnswerRow; guestEditToken: string }
+  | {
+      ok: false;
+      reason: 'not_found' | 'expired' | 'revoked' | 'locked' | 'invalid_ask' | 'empty_body' | 'whiteboard';
+    }
+> {
+  const found = await findActiveShareByToken(params.rawToken);
+  if (found.state === 'not_found' || !found.share) {
+    return { ok: false, reason: 'not_found' };
+  }
+  if (found.state === 'expired') return { ok: false, reason: 'expired' };
+  if (found.state === 'revoked') return { ok: false, reason: 'revoked' };
+  if (!readShareCookie(params.shareCookie, found.share)) {
+    return { ok: false, reason: 'locked' };
+  }
+
+  const vaultId = Number(found.share.VaultId);
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, BodyMarkdown, Kind FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL LIMIT 1`,
+    [found.share.NoteId, vaultId]
+  );
+  if (!notes.length) return { ok: false, reason: 'not_found' };
+  const note = notes[0];
+  if (String(note.Kind || 'note') === 'whiteboard') {
+    return { ok: false, reason: 'whiteboard' };
+  }
+
+  const result = await submitShareAskAnswer({
+    noteId: Number(note.Id),
+    vaultId,
+    askMarkerId: params.askMarkerId,
+    body: params.body,
+    authorName: params.authorName || '',
+    shareLinkId: Number(found.share.Id),
+    noteBodyMarkdown: String(note.BodyMarkdown || ''),
+  });
+  if (!result.ok) return { ok: false, reason: result.reason };
+  return { ok: true, answer: result.answer, guestEditToken: result.guestEditToken };
+}
+
+type ShareGateFail =
+  | 'not_found'
+  | 'expired'
+  | 'revoked'
+  | 'locked'
+  | 'whiteboard';
+
+async function gateShareNoteForAsk(params: {
+  rawToken: string;
+  shareCookie?: string;
+}): Promise<
+  | {
+      ok: true;
+      noteId: number;
+      vaultId: number;
+      shareLinkId: number;
+    }
+  | { ok: false; reason: ShareGateFail }
+> {
+  const found = await findActiveShareByToken(params.rawToken);
+  if (found.state === 'not_found' || !found.share) {
+    return { ok: false, reason: 'not_found' };
+  }
+  if (found.state === 'expired') return { ok: false, reason: 'expired' };
+  if (found.state === 'revoked') return { ok: false, reason: 'revoked' };
+  if (!readShareCookie(params.shareCookie, found.share)) {
+    return { ok: false, reason: 'locked' };
+  }
+
+  const vaultId = Number(found.share.VaultId);
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, Kind FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL LIMIT 1`,
+    [found.share.NoteId, vaultId]
+  );
+  if (!notes.length) return { ok: false, reason: 'not_found' };
+  if (String(notes[0].Kind || 'note') === 'whiteboard') {
+    return { ok: false, reason: 'whiteboard' };
+  }
+  return {
+    ok: true,
+    noteId: Number(notes[0].Id),
+    vaultId,
+    shareLinkId: Number(found.share.Id),
+  };
+}
+
+export async function updateShareAskAnswerForToken(params: {
+  rawToken: string;
+  shareCookie?: string;
+  askMarkerId: string;
+  answerId: number;
+  guestEditToken: string;
+  body: string;
+  authorName?: string;
+}): Promise<
+  | { ok: true; answer: AskAnswerRow }
+  | {
+      ok: false;
+      reason:
+        | ShareGateFail
+        | 'not_found'
+        | 'forbidden'
+        | 'not_pending'
+        | 'deleted'
+        | 'empty_body'
+        | 'unchanged';
+    }
+> {
+  const gate = await gateShareNoteForAsk(params);
+  if (!gate.ok) return gate;
+  return updateShareAskAnswer({
+    answerId: params.answerId,
+    askMarkerId: params.askMarkerId,
+    noteId: gate.noteId,
+    vaultId: gate.vaultId,
+    shareLinkId: gate.shareLinkId,
+    guestEditToken: params.guestEditToken,
+    body: params.body,
+    authorName: params.authorName,
+  });
+}
+
+export async function deleteShareAskAnswerForToken(params: {
+  rawToken: string;
+  shareCookie?: string;
+  askMarkerId: string;
+  answerId: number;
+  guestEditToken: string;
+}): Promise<
+  | { ok: true; answer: AskAnswerRow }
+  | {
+      ok: false;
+      reason:
+        | ShareGateFail
+        | 'not_found'
+        | 'forbidden'
+        | 'not_pending'
+        | 'deleted'
+        | 'already_deleted';
+    }
+> {
+  const gate = await gateShareNoteForAsk(params);
+  if (!gate.ok) return gate;
+  return softDeleteShareAskAnswer({
+    answerId: params.answerId,
+    askMarkerId: params.askMarkerId,
+    noteId: gate.noteId,
+    vaultId: gate.vaultId,
+    shareLinkId: gate.shareLinkId,
+    guestEditToken: params.guestEditToken,
+  });
 }
 
 /** Allow media only if referenced by the shared note body. */

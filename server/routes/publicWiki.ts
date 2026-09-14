@@ -20,6 +20,7 @@ import { listLinkableVaultNotesForWikiViewer } from '../services/linkableNotes';
 import { getSettingBool, SETTING_KEYS } from '../services/appSettings';
 import { buildPmTaskOpenUrl } from '../services/pmClient';
 import { buildWikiFlashcards } from '../services/wikiFlashcards';
+import { listAskAnswersGroupedForWiki } from '../services/noteAskAnswers';
 
 const router = Router();
 
@@ -435,6 +436,27 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     }));
   };
 
+  const askGrouped =
+    noteKind === 'whiteboard'
+      ? {}
+      : await listAskAnswersGroupedForWiki({
+          noteId: Number(note.Id),
+          vaultId: Number(vault.Id),
+        });
+  const askAnswers: Record<
+    string,
+    Array<{ id: number; body: string; authorName: string; status: string; createdAt: string }>
+  > = {};
+  for (const [askId, list] of Object.entries(askGrouped)) {
+    askAnswers[askId] = list.map((a) => ({
+      id: a.id,
+      body: a.body,
+      authorName: a.authorName,
+      status: a.status,
+      createdAt: a.createdAt,
+    }));
+  }
+
   res.json({
     success: true,
     data: {
@@ -444,6 +466,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       kind: noteKind,
       boardJson,
       embeddedBoards,
+      askAnswers,
       html,
       robots: access.robots,
       visibility,

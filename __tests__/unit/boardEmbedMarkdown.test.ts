@@ -43,4 +43,20 @@ describe('board embed markdown preprocess', () => {
     expect(out).toContain('is-missing');
     expect(out).toContain('data-note-title="Missing Note"');
   });
+
+  it('with wikilinks:false keeps [[…]] as plain text but still embeds boards', () => {
+    const out = preprocessSynapseMarkdown(
+      'See [[Plain Note]] and ![[Existing Board|Pretty]] then Risk note',
+      notes,
+      [],
+      null,
+      { wikilinks: false }
+    );
+    expect(out).not.toContain('synapse-wikilink');
+    expect(out).not.toContain('synapse-mention');
+    expect(out).toContain('Plain Note');
+    expect(out).toContain('synapse-board-embed');
+    expect(out).toContain('data-note-id="10"');
+    expect(out).toContain('data-display-title="Pretty"');
+  });
 });

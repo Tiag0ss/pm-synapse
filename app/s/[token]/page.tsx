@@ -7,6 +7,7 @@ import WhiteboardPeekCanvas from '@/components/WhiteboardPeekCanvas';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import BoardEmbedPortals from '@/components/BoardEmbedPortals';
+import AskBlockPortals, { type AskAnswerView } from '@/components/AskBlockPortals';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
@@ -30,6 +31,7 @@ export default function SharedNotePage() {
   const [html, setHtml] = useState('');
   const [boardJson, setBoardJson] = useState<string | null>(null);
   const [embeddedBoards, setEmbeddedBoards] = useState<Record<string, string | null>>({});
+  const [askAnswers, setAskAnswers] = useState<Record<string, AskAnswerView[]>>({});
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
 
@@ -60,6 +62,11 @@ export default function SharedNotePage() {
         ? (d.embeddedBoards as Record<string, string | null>)
         : {};
     setEmbeddedBoards(boards);
+    const asks =
+      d.askAnswers && typeof d.askAnswers === 'object'
+        ? (d.askAnswers as Record<string, AskAnswerView[]>)
+        : {};
+    setAskAnswers(asks);
     setPhase('content');
     setError('');
   }, [token]);
@@ -95,7 +102,7 @@ export default function SharedNotePage() {
     void renderMermaidInRoot(root);
   }, []);
 
-  const embedMounts = useBoardEmbedPreview(articleRef, {
+  const { embedMounts, askMounts } = useBoardEmbedPreview(articleRef, {
     html,
     enabled: phase === 'content' && kind !== 'whiteboard',
     afterWrite: afterShareWrite,
@@ -245,6 +252,13 @@ export default function SharedNotePage() {
             <div className="min-h-0 flex-1 overflow-auto px-4 py-6 sm:px-8 lg:px-12">
               <div ref={articleRef} className="synapse-md-preview w-full" />
               <BoardEmbedPortals mounts={embedMounts} boardMap={embeddedBoards} />
+              <AskBlockPortals
+                mounts={askMounts}
+                answersByAskId={askAnswers}
+                mode="share"
+                shareToken={token}
+                onAnswersChange={() => void loadContent()}
+              />
             </div>
           )}
         </div>

@@ -193,21 +193,16 @@ export function preprocessCallouts(md: string): string {
 }
 
 const FOLD_OPEN = /^:::fold([+-])?\s*(.*)$/;
-const FOLD_CLOSE = /^:::\s*$/;
+const ASK_OPEN = /^:::ask([+-])?\s*(.*)$/;
+const CONTAINER_OPEN = /^:::(?:ask|fold)([+-])?(?:\s|$)/;
+const CONTAINER_CLOSE = /^:::\s*$/;
+const ASK_MARKER_RE = /<!--\s*synapse:ask:([a-zA-Z0-9_-]+)\s*-->/;
 
 function isMdFenceLine(line: string): boolean {
   return /^```/.test(line);
 }
 
-/**
- * Neutral collapsible sections (Wikipedia-style, not callouts).
- * Keep in sync with lib/markdownEnhance.ts — do not use mapProtectedMd (breaks mermaid/code in folds).
- */
-export function preprocessFolds(md: string): string {
-  return preprocessFoldsUnprotected(md || '');
-}
-
-function findFoldClose(lines: string[], from: number): number {
+function findContainerClose(lines: string[], from: number): number {
   let depth = 1;
   let inFence = false;
   for (let j = from; j < lines.length; j += 1) {
@@ -216,13 +211,92 @@ function findFoldClose(lines: string[], from: number): number {
       continue;
     }
     if (inFence) continue;
-    if (FOLD_OPEN.test(lines[j])) depth += 1;
-    else if (FOLD_CLOSE.test(lines[j])) {
+    if (CONTAINER_OPEN.test(lines[j])) depth += 1;
+    else if (CONTAINER_CLOSE.test(lines[j])) {
       depth -= 1;
       if (depth === 0) return j;
     }
   }
   return -1;
+}
+
+/** Nested asks + folds inside a container body before marked.parse. */
+function prepareContainerBodyMd(chunk: string): string {
+  return preprocessFoldsUnprotected(preprocessAsksUnprotected(chunk || ''));
+}
+
+/**
+ * Q&A sections for password shares (`:::ask Question … :::`).
+ * Keep in sync with lib/markdownEnhance.ts.
+ */
+export function preprocessAsks(md: string): string {
+  return preprocessAsksUnprotected(md || '');
+}
+
+function preprocessAsksUnprotected(chunk: string): string {
+  const lines = chunk.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let i = 0;
+  let inFence = false;
+  while (i < lines.length) {
+    if (isMdFenceLine(lines[i])) {
+      inFence = !inFence;
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    if (inFence) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const m = lines[i].match(ASK_OPEN);
+    if (!m) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const close = findContainerClose(lines, i + 1);
+    if (close < 0) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const rest = String(m[2] || '');
+    const markerMatch = rest.match(ASK_MARKER_RE);
+    const askId = markerMatch?.[1] || '';
+    const question = rest.replace(ASK_MARKER_RE, '').trim() || 'Question';
+    const bodyMd = prepareContainerBodyMd(lines.slice(i + 1, close).join('\n')).trim();
+    let hintHtml = '';
+    if (bodyMd) {
+      try {
+        const raw = marked.parse(bodyMd, { async: false, gfm: true, breaks: true }) as string;
+        hintHtml = postprocessMarkdownHtml(raw);
+      } catch {
+        hintHtml = `<p>${escapeHtml(bodyMd)}</p>`;
+      }
+    }
+    out.push(
+      `\n\n<div class="synapse-ask" data-ask-id="${escapeAttr(askId)}"` +
+        ` data-ask-question="${escapeAttr(question)}"` +
+        ` aria-label="Question: ${escapeAttr(question)}">` +
+        (hintHtml ? `<div class="synapse-ask-hint">${hintHtml}</div>` : '') +
+        `</div>\n\n`
+    );
+    i = close + 1;
+  }
+  return out.join('\n');
+}
+
+/**
+ * Neutral collapsible sections (Wikipedia-style, not callouts).
+ * Keep in sync with lib/markdownEnhance.ts — do not use mapProtectedMd (breaks mermaid/code in folds).
+ */
+export function preprocessFolds(md: string): string {
+  return preprocessFoldsUnprotected(md || '');
 }
 
 function preprocessFoldsUnprotected(chunk: string): string {
@@ -250,7 +324,7 @@ function preprocessFoldsUnprotected(chunk: string): string {
       continue;
     }
 
-    const close = findFoldClose(lines, i + 1);
+    const close = findContainerClose(lines, i + 1);
     if (close < 0) {
       out.push(lines[i]);
       i += 1;
@@ -259,7 +333,7 @@ function preprocessFoldsUnprotected(chunk: string): string {
 
     const foldFlag = m[1] as '+' | '-' | undefined;
     const title = m[2].trim() || 'Section';
-    const bodyMd = preprocessFoldsUnprotected(lines.slice(i + 1, close).join('\n')).trim();
+    const bodyMd = prepareContainerBodyMd(lines.slice(i + 1, close).join('\n')).trim();
     let bodyHtml = '';
     if (bodyMd) {
       try {

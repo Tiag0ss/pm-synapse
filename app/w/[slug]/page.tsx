@@ -14,6 +14,7 @@ import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { fetchWikiBoardJson } from '@/lib/hydrateBoardEmbeds';
 import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
 import BoardEmbedPortals from '@/components/BoardEmbedPortals';
+import AskBlockPortals, { type AskAnswerView } from '@/components/AskBlockPortals';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
@@ -48,6 +49,7 @@ export default function PublicWikiPage() {
   const [itemKind, setItemKind] = useState<'note' | 'whiteboard'>('note');
   const [boardJson, setBoardJson] = useState<string | null>(null);
   const [embeddedBoards, setEmbeddedBoards] = useState<Record<string, string | null>>({});
+  const [askAnswers, setAskAnswers] = useState<Record<string, AskAnswerView[]>>({});
   const [activeId, setActiveId] = useState<number | null>(null);
   const [q, setQ] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
@@ -161,6 +163,11 @@ export default function PublicWikiPage() {
           ? (data.data.embeddedBoards as Record<string, string | null>)
           : {};
       setEmbeddedBoards(kind === 'whiteboard' ? {} : boards);
+      const asks =
+        data.data.askAnswers && typeof data.data.askAnswers === 'object'
+          ? (data.data.askAnswers as Record<string, AskAnswerView[]>)
+          : {};
+      setAskAnswers(kind === 'whiteboard' ? {} : asks);
       setHtml(kind === 'whiteboard' ? '' : data.data.html || '');
       setBacklinks(data.data.backlinks || []);
       setReferences(data.data.references || []);
@@ -318,7 +325,7 @@ export default function PublicWikiPage() {
     void renderMermaidInRoot(root);
   }, []);
 
-  const embedMounts = useBoardEmbedPreview(articleRef, {
+  const { embedMounts, askMounts } = useBoardEmbedPreview(articleRef, {
     html,
     enabled: !isWhiteboard && centerMode === 'note',
     afterWrite: afterWikiWrite,
@@ -645,6 +652,11 @@ export default function PublicWikiPage() {
                 onOpenNote={(id) => {
                   void openNote(id);
                 }}
+              />
+              <AskBlockPortals
+                mounts={askMounts}
+                answersByAskId={askAnswers}
+                mode="readonly"
               />
             </>
           )}

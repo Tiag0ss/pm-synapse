@@ -72,6 +72,8 @@ export function sanitizeSynapseHtml(html: string): string {
         'data-note-id',
         'data-note-title',
         'data-vault-id',
+        'data-ask-id',
+        'data-ask-question',
         'aria-label',
       ],
       p: ['class'],

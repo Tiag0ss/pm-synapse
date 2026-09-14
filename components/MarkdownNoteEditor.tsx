@@ -7,6 +7,10 @@ import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { fetchVaultBoardJson } from '@/lib/hydrateBoardEmbeds';
 import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
 import BoardEmbedPortals from '@/components/BoardEmbedPortals';
+import AskBlockPortals, {
+  type AskAnswerEventView,
+  type AskAnswerView,
+} from '@/components/AskBlockPortals';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import {
   caretCoordinates,
@@ -171,6 +175,7 @@ const LEGEND_SECTIONS: LegendSection[] = [
       { syntax: '> [!NOTE]- / +', meaning: 'Foldable callout (starts closed / open)' },
       { syntax: ':::fold Title … :::', meaning: 'Collapsible section (starts open); title/body also work as flashcard front/back (vault Flashcards mode)' },
       { syntax: ':::fold- Title … :::', meaning: 'Collapsible (starts closed) — preferred for flashcards' },
+      { syntax: ':::ask Question … :::', meaning: 'Q&A block — guests answer on password shares; approve answers in preview' },
       { syntax: '[[toc]]', meaning: 'Table of contents from #–######' },
       { syntax: '[^1] / [^1]:', meaning: 'Footnote reference + definition' },
     ],
@@ -413,6 +418,12 @@ export default function MarkdownNoteEditor({
   const [peekTarget, setPeekTarget] = useState<NotePeekTarget | null>(null);
   const [fetchedPlannerLinks, setFetchedPlannerLinks] = useState<PlannerLinkItem[]>([]);
   const [attachments, setAttachments] = useState<AttachSuggestSource[]>([]);
+  const [askAnswersById, setAskAnswersById] = useState<Record<string, AskAnswerView[]>>({});
+  const [askDeletedById, setAskDeletedById] = useState<Record<string, AskAnswerView[]>>({});
+  const [askEventsByAnswerId, setAskEventsByAnswerId] = useState<
+    Record<string, AskAnswerEventView[]>
+  >({});
+  const [askReloadToken, setAskReloadToken] = useState(0);
   const onOpenNoteRef = useRef(onOpenNote);
   const onOpenCrossVaultNoteRef = useRef(onOpenCrossVaultNote);
   onOpenNoteRef.current = onOpenNote;
@@ -432,6 +443,87 @@ export default function MarkdownNoteEditor({
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
+
+  useEffect(() => {
+    if (!vaultId || noteId == null) {
+      setAskAnswersById({});
+      setAskDeletedById({});
+      setAskEventsByAnswerId({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/ask-answers`, {
+          credentials: 'include',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || cancelled) return;
+        const payload = data.data || {};
+        const answers = Array.isArray(payload.answers) ? payload.answers : [];
+        const deleted = Array.isArray(payload.deletedAnswers) ? payload.deletedAnswers : [];
+        const eventsMap =
+          payload.eventsByAnswerId && typeof payload.eventsByAnswerId === 'object'
+            ? (payload.eventsByAnswerId as Record<string, AskAnswerEventView[]>)
+            : {};
+
+        const byAsk: Record<string, AskAnswerView[]> = {};
+        for (const raw of answers) {
+          const a = raw as AskAnswerView & { askMarkerId?: string };
+          const askId = String(a.askMarkerId || '');
+          if (!askId) continue;
+          if (!byAsk[askId]) byAsk[askId] = [];
+          byAsk[askId].push({
+            id: Number(a.id),
+            body: String(a.body || ''),
+            authorName: String(a.authorName || 'Anonymous'),
+            status:
+              a.status === 'approved'
+                ? 'approved'
+                : a.status === 'rejected'
+                  ? 'rejected'
+                  : 'pending',
+            createdAt: String(a.createdAt || ''),
+            deletedAt: a.deletedAt ?? null,
+          });
+        }
+        const deletedByAsk: Record<string, AskAnswerView[]> = {};
+        for (const raw of deleted) {
+          const a = raw as AskAnswerView & { askMarkerId?: string };
+          const askId = String(a.askMarkerId || '');
+          if (!askId) continue;
+          if (!deletedByAsk[askId]) deletedByAsk[askId] = [];
+          deletedByAsk[askId].push({
+            id: Number(a.id),
+            body: String(a.body || ''),
+            authorName: String(a.authorName || 'Anonymous'),
+            status:
+              a.status === 'approved'
+                ? 'approved'
+                : a.status === 'rejected'
+                  ? 'rejected'
+                  : 'pending',
+            createdAt: String(a.createdAt || ''),
+            deletedAt: a.deletedAt ?? null,
+          });
+        }
+        if (!cancelled) {
+          setAskAnswersById(byAsk);
+          setAskDeletedById(deletedByAsk);
+          setAskEventsByAnswerId(eventsMap);
+        }
+      } catch {
+        if (!cancelled) {
+          setAskAnswersById({});
+          setAskDeletedById({});
+          setAskEventsByAnswerId({});
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultId, noteId, askReloadToken]);
 
   const reloadAttachments = useCallback(async () => {
     if (!vaultId || noteId == null) {
@@ -723,7 +815,7 @@ export default function MarkdownNoteEditor({
     void renderMermaidInRoot(root);
   }, []);
 
-  const embedMounts = useBoardEmbedPreview(previewRef, {
+  const { embedMounts, askMounts } = useBoardEmbedPreview(previewRef, {
     html: previewHtml,
     enabled: mode !== 'edit',
     afterWrite: afterPreviewWrite,
@@ -1261,6 +1353,16 @@ export default function MarkdownNoteEditor({
               !readOnly && onCreateWhiteboardEmbed ? onEmbedCreateWhiteboard : undefined
             }
             onEditBoardEmbed={!readOnly && onEditBoardEmbed ? onEmbedEditBoard : undefined}
+          />
+          <AskBlockPortals
+            mounts={askMounts}
+            answersByAskId={askAnswersById}
+            deletedAnswersByAskId={askDeletedById}
+            eventsByAnswerId={askEventsByAnswerId}
+            mode={readOnly ? 'readonly' : 'editor'}
+            vaultId={vaultId}
+            noteId={noteId}
+            onAnswersChange={() => setAskReloadToken((n) => n + 1)}
           />
         </div>
 

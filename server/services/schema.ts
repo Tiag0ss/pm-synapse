@@ -222,6 +222,45 @@ const STATEMENTS = [
     CONSTRAINT fk_note_share_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE,
     CONSTRAINT fk_note_share_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS NoteAskAnswers (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    NoteId INT NOT NULL,
+    VaultId INT NOT NULL,
+    AskMarkerId VARCHAR(64) NOT NULL,
+    Body TEXT NOT NULL,
+    AuthorName VARCHAR(128) NULL,
+    Status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    ShareLinkId INT NULL,
+    GuestEditTokenHash VARCHAR(64) NULL,
+    DeletedAt DATETIME NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_ask_answer_note_marker (NoteId, AskMarkerId),
+    KEY idx_ask_answer_vault (VaultId),
+    KEY idx_ask_answer_deleted (DeletedAt),
+    CONSTRAINT fk_ask_answer_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_ask_answer_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_ask_answer_share FOREIGN KEY (ShareLinkId) REFERENCES NoteShareLinks(Id) ON DELETE SET NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS NoteAskAnswerEvents (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    AnswerId INT NOT NULL,
+    NoteId INT NOT NULL,
+    VaultId INT NOT NULL,
+    AskMarkerId VARCHAR(64) NOT NULL,
+    EventType VARCHAR(32) NOT NULL,
+    ActorKind VARCHAR(32) NOT NULL,
+    ActorLabel VARCHAR(255) NOT NULL,
+    ActorPmUserId INT NULL,
+    ShareLinkId INT NULL,
+    PayloadJson TEXT NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_ask_event_answer (AnswerId, CreatedAt),
+    KEY idx_ask_event_note_marker (NoteId, AskMarkerId, CreatedAt),
+    CONSTRAINT fk_ask_event_answer FOREIGN KEY (AnswerId) REFERENCES NoteAskAnswers(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_ask_event_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_ask_event_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
+  )`,
 ];
 
 const ALTERS = [
@@ -242,6 +281,7 @@ const ALTERS = [
   "ALTER TABLE Notes ADD COLUMN Kind VARCHAR(32) NOT NULL DEFAULT 'note'",
   'ALTER TABLE Notes ADD COLUMN BoardJson MEDIUMTEXT NULL',
   'ALTER TABLE Notes ADD KEY idx_note_kind (VaultId, Kind)',
+  'ALTER TABLE NoteAskAnswers ADD COLUMN GuestEditTokenHash VARCHAR(64) NULL',
 ];
 
 /** Legacy SsoTokens used PmUserId PK — migrate rows into UserId-keyed table after Users exist. */

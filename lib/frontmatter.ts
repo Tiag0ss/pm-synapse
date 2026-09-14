@@ -164,6 +164,10 @@ function renderNoteLinkHtml(
 ): string {
   const target = normalizeFrontmatterTodoNoteTarget(raw);
   if (!target) return '';
+  // No note index (e.g. password shares) — show plain text, not interactive wikilinks.
+  if (notes.length === 0 && linkableVaults.length === 0) {
+    return escapeHtml(target);
+  }
 
   if (target.startsWith('@')) {
     const r = resolveCrossVaultWikilink(target, linkableVaults);

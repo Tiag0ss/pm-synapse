@@ -4,11 +4,14 @@ import { z } from 'zod';
 import {
   SHARE_COOKIE,
   findActiveShareByToken,
+  deleteShareAskAnswerForToken,
   getShareContent,
   getShareMeta,
   readShareCookie,
   shareMediaAllowed,
   signShareCookie,
+  submitShareAskAnswerForToken,
+  updateShareAskAnswerForToken,
   verifySharePassword,
 } from '../services/noteShares';
 import { applySafeMediaHeaders, readVaultMedia } from '../services/vaultMedia';
@@ -30,6 +33,14 @@ const unlockLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, message: 'Too many unlock attempts. Try again shortly.' },
+});
+
+const askAnswerLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many answers. Try again shortly.' },
 });
 
 router.get('/:token', async (req, res: Response) => {
@@ -150,6 +161,7 @@ router.get('/:token/content', async (req, res: Response) => {
         html: content.html,
         boardJson: content.boardJson,
         embeddedBoards: content.embeddedBoards,
+        askAnswers: content.askAnswers,
         expiresAt: content.expiresAt,
       },
     });
@@ -158,6 +170,219 @@ router.get('/:token/content', async (req, res: Response) => {
     return res.status(500).json({ success: false, message: 'Failed to load share' });
   }
 });
+
+router.post('/:token/asks/:askId/answers', askAnswerLimiter, async (req, res: Response) => {
+  const token = String(req.params.token || '');
+  const askId = String(req.params.askId || '').trim();
+  if (!token || token.length > 128 || !askId || askId.length > 64) {
+    return res.status(404).json({ success: false, message: 'Not found' });
+  }
+
+  const parsed = z
+    .object({
+      body: z.string().min(1).max(8000),
+      authorName: z.string().max(128).optional(),
+    })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Answer body required' });
+  }
+
+  try {
+    const result = await submitShareAskAnswerForToken({
+      rawToken: token,
+      shareCookie: shareCookieFromReq(req),
+      askMarkerId: askId,
+      body: parsed.data.body,
+      authorName: parsed.data.authorName,
+    });
+    if (!result.ok) {
+      if (result.reason === 'locked') {
+        return res.status(401).json({
+          success: false,
+          message: 'Password required',
+          code: 'locked',
+        });
+      }
+      if (result.reason === 'invalid_ask') {
+        return res.status(400).json({ success: false, message: 'Unknown question' });
+      }
+      if (result.reason === 'empty_body') {
+        return res.status(400).json({ success: false, message: 'Answer body required' });
+      }
+      if (result.reason === 'whiteboard') {
+        return res.status(400).json({ success: false, message: 'Q&A is not available on whiteboards' });
+      }
+      const status = result.reason === 'not_found' ? 404 : 410;
+      return res.status(status).json({
+        success: false,
+        message:
+          result.reason === 'expired'
+            ? 'This share link has expired'
+            : result.reason === 'revoked'
+              ? 'This share link was revoked'
+              : 'Share not found',
+        code: result.reason,
+      });
+    }
+    res.status(201).json({
+      success: true,
+      data: {
+        ...result.answer,
+        guestEditToken: result.guestEditToken,
+      },
+    });
+  } catch (error) {
+    logger.error('Share ask answer failed', { error });
+    return res.status(500).json({ success: false, message: 'Failed to submit answer' });
+  }
+});
+
+function mapShareAskMutationError(
+  res: Response,
+  reason: string
+): Response | null {
+  if (reason === 'locked') {
+    return res.status(401).json({
+      success: false,
+      message: 'Password required',
+      code: 'locked',
+    });
+  }
+  if (reason === 'forbidden') {
+    return res.status(403).json({ success: false, message: 'Not allowed to change this answer' });
+  }
+  if (reason === 'not_pending') {
+    return res.status(409).json({
+      success: false,
+      message: 'Only pending answers can be edited or deleted',
+    });
+  }
+  if (reason === 'deleted' || reason === 'already_deleted') {
+    return res.status(409).json({ success: false, message: 'Answer was deleted' });
+  }
+  if (reason === 'empty_body') {
+    return res.status(400).json({ success: false, message: 'Answer body required' });
+  }
+  if (reason === 'unchanged') {
+    return res.json({ success: true, data: null, message: 'No change' });
+  }
+  if (reason === 'whiteboard') {
+    return res.status(400).json({ success: false, message: 'Q&A is not available on whiteboards' });
+  }
+  if (reason === 'not_found') {
+    return res.status(404).json({ success: false, message: 'Answer not found' });
+  }
+  if (reason === 'expired' || reason === 'revoked') {
+    return res.status(410).json({
+      success: false,
+      message:
+        reason === 'expired' ? 'This share link has expired' : 'This share link was revoked',
+      code: reason,
+    });
+  }
+  return null;
+}
+
+router.patch(
+  '/:token/asks/:askId/answers/:answerId',
+  askAnswerLimiter,
+  async (req, res: Response) => {
+    const token = String(req.params.token || '');
+    const askId = String(req.params.askId || '').trim();
+    const answerId = Number(req.params.answerId);
+    if (
+      !token ||
+      token.length > 128 ||
+      !askId ||
+      askId.length > 64 ||
+      !Number.isFinite(answerId) ||
+      answerId <= 0
+    ) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+
+    const parsed = z
+      .object({
+        body: z.string().min(1).max(8000),
+        authorName: z.string().max(128).optional(),
+        guestEditToken: z.string().min(8).max(200),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'Invalid edit payload' });
+    }
+
+    try {
+      const result = await updateShareAskAnswerForToken({
+        rawToken: token,
+        shareCookie: shareCookieFromReq(req),
+        askMarkerId: askId,
+        answerId,
+        guestEditToken: parsed.data.guestEditToken,
+        body: parsed.data.body,
+        authorName: parsed.data.authorName,
+      });
+      if (!result.ok) {
+        const mapped = mapShareAskMutationError(res, result.reason);
+        if (mapped) return mapped;
+        return res.status(400).json({ success: false, message: 'Failed to update answer' });
+      }
+      res.json({ success: true, data: result.answer });
+    } catch (error) {
+      logger.error('Share ask answer edit failed', { error });
+      return res.status(500).json({ success: false, message: 'Failed to update answer' });
+    }
+  }
+);
+
+router.delete(
+  '/:token/asks/:askId/answers/:answerId',
+  askAnswerLimiter,
+  async (req, res: Response) => {
+    const token = String(req.params.token || '');
+    const askId = String(req.params.askId || '').trim();
+    const answerId = Number(req.params.answerId);
+    if (
+      !token ||
+      token.length > 128 ||
+      !askId ||
+      askId.length > 64 ||
+      !Number.isFinite(answerId) ||
+      answerId <= 0
+    ) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+
+    const parsed = z
+      .object({
+        guestEditToken: z.string().min(8).max(200),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'Edit token required' });
+    }
+
+    try {
+      const result = await deleteShareAskAnswerForToken({
+        rawToken: token,
+        shareCookie: shareCookieFromReq(req),
+        askMarkerId: askId,
+        answerId,
+        guestEditToken: parsed.data.guestEditToken,
+      });
+      if (!result.ok) {
+        const mapped = mapShareAskMutationError(res, result.reason);
+        if (mapped) return mapped;
+        return res.status(400).json({ success: false, message: 'Failed to delete answer' });
+      }
+      res.json({ success: true, data: result.answer });
+    } catch (error) {
+      logger.error('Share ask answer delete failed', { error });
+      return res.status(500).json({ success: false, message: 'Failed to delete answer' });
+    }
+  }
+);
 
 router.get('/:token/media/:mediaId', async (req, res: Response) => {
   const token = String(req.params.token || '');

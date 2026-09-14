@@ -448,9 +448,18 @@ export default function VaultWorkspacePage() {
       setStatus(data.message || 'Save failed');
       return false;
     }
+    const savedBody =
+      itemKind !== 'whiteboard' &&
+      data.data &&
+      typeof data.data.bodyMarkdown === 'string'
+        ? String(data.data.bodyMarkdown)
+        : nextBody;
+    if (savedBody !== nextBody) {
+      setBody(savedBody);
+    }
     setSavedSnapshot({
       title: nextTitle,
-      body: nextBody,
+      body: savedBody,
       boardJson: nextBoard,
       visibility: nextVisibility,
       icon: noteIcon,

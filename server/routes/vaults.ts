@@ -89,6 +89,12 @@ import {
   MIN_EXPIRES_SEC,
   MAX_EXPIRES_SEC,
 } from '../services/noteShares';
+import { ensureAskMarkers } from '../services/askBlocks';
+import {
+  listAskAnswersWithHistory,
+  setAskAnswerStatus,
+  softDeleteAskAnswer,
+} from '../services/noteAskAnswers';
 import logger from '../utils/logger';
 
 const ACTIVE_NOTE = 'DeletedAt IS NULL';
@@ -828,7 +834,7 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   const bodyMarkdown =
     kind === 'whiteboard'
       ? parsed.data.bodyMarkdown || `# ${parsed.data.title}\n\n`
-      : parsed.data.bodyMarkdown;
+      : ensureAskMarkers(parsed.data.bodyMarkdown);
   const boardJson =
     kind === 'whiteboard'
       ? parseBoardJson(parsed.data.boardJson) || EMPTY_BOARD_JSON
@@ -1019,7 +1025,8 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
     return res.status(400).json({ success: false, message: 'Invalid note path' });
   }
   path = safePath;
-  const body = parsed.data.bodyMarkdown ?? String(existing.BodyMarkdown);
+  const bodyRaw = parsed.data.bodyMarkdown ?? String(existing.BodyMarkdown);
+  const body = existingKind === 'whiteboard' ? bodyRaw : ensureAskMarkers(bodyRaw);
   const boardJson =
     existingKind === 'whiteboard'
       ? parsed.data.boardJson !== undefined
@@ -1071,7 +1078,10 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
   } else if (existingKind === 'whiteboard') {
     await rebuildNoteGraph(Number(existing.Id), Number(vault.Id));
   }
-  res.json({ success: true });
+  res.json({
+    success: true,
+    data: existingKind === 'note' ? { bodyMarkdown: body } : undefined,
+  });
 });
 
 router.delete('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) => {
@@ -1357,6 +1367,92 @@ router.get('/:vaultId/notes/:noteId/shares', async (req: AuthRequest, res: Respo
   if (!list) return res.status(404).json({ success: false, message: 'Note not found' });
   res.json({ success: true, data: list });
 });
+
+router.get('/:vaultId/notes/:noteId/ask-answers', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const noteId = Number(req.params.noteId);
+  if (!Number.isFinite(noteId) || noteId <= 0) {
+    return res.status(404).json({ success: false, message: 'Note not found' });
+  }
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE} LIMIT 1`,
+    [noteId, vault.Id]
+  );
+  if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
+
+  const data = await listAskAnswersWithHistory({
+    noteId,
+    vaultId: Number(vault.Id),
+  });
+  res.json({ success: true, data });
+});
+
+router.patch(
+  '/:vaultId/notes/:noteId/ask-answers/:answerId',
+  async (req: AuthRequest, res: Response) => {
+    const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+    if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+    const noteId = Number(req.params.noteId);
+    const answerId = Number(req.params.answerId);
+    if (!Number.isFinite(noteId) || noteId <= 0 || !Number.isFinite(answerId) || answerId <= 0) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+    const parsed = z
+      .object({ status: z.enum(['approved', 'pending', 'rejected']) })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const result = await setAskAnswerStatus({
+      answerId,
+      noteId,
+      vaultId: Number(vault.Id),
+      status: parsed.data.status,
+      actorLabel: String(req.user!.username || 'owner'),
+      actorPmUserId: req.user!.userId,
+    });
+    if (!result.ok) {
+      if (result.reason === 'not_found') {
+        return res.status(404).json({ success: false, message: 'Answer not found' });
+      }
+      if (result.reason === 'deleted') {
+        return res.status(409).json({ success: false, message: 'Answer was deleted' });
+      }
+      return res.json({ success: true, data: null, message: 'No change' });
+    }
+    res.json({ success: true, data: result.answer });
+  }
+);
+
+router.delete(
+  '/:vaultId/notes/:noteId/ask-answers/:answerId',
+  async (req: AuthRequest, res: Response) => {
+    const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+    if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+    const noteId = Number(req.params.noteId);
+    const answerId = Number(req.params.answerId);
+    if (!Number.isFinite(noteId) || noteId <= 0 || !Number.isFinite(answerId) || answerId <= 0) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+
+    const result = await softDeleteAskAnswer({
+      answerId,
+      noteId,
+      vaultId: Number(vault.Id),
+      actorLabel: String(req.user!.username || 'owner'),
+      actorPmUserId: req.user!.userId,
+    });
+    if (!result.ok) {
+      if (result.reason === 'not_found') {
+        return res.status(404).json({ success: false, message: 'Answer not found' });
+      }
+      return res.json({ success: true, message: 'Already deleted' });
+    }
+    res.json({ success: true, data: result.answer });
+  }
+);
 
 router.post('/:vaultId/notes/:noteId/shares', async (req: AuthRequest, res: Response) => {
   const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);

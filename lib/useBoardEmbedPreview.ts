@@ -5,9 +5,10 @@ import {
   collectBoardEmbedMounts,
   type BoardEmbedMount,
 } from '@/components/BoardEmbedPortals';
+import { collectAskBlockMounts, type AskBlockMount } from '@/components/AskBlockPortals';
 
 /**
- * Two-phase board-embed mounting for markdown preview hosts that own `innerHTML`.
+ * Two-phase board-embed + ask-block mounting for markdown preview hosts that own `innerHTML`.
  * Avoids flushSync and nested createRoot unmount races:
  * 1) clear portal mounts when content changes
  * 2) after mounts are empty, write HTML and collect new placeholders
@@ -24,9 +25,10 @@ export function useBoardEmbedPreview(
     /** Run after `innerHTML` is set (mermaid, planner buttons, …) */
     afterWrite?: (root: HTMLElement) => void;
   }
-): BoardEmbedMount[] {
+): { embedMounts: BoardEmbedMount[]; askMounts: AskBlockMount[] } {
   const { html, enabled, rewriteToken = '', afterWrite } = options;
   const [embedMounts, setEmbedMounts] = useState<BoardEmbedMount[]>([]);
+  const [askMounts, setAskMounts] = useState<AskBlockMount[]>([]);
   const pendingKeyRef = useRef<string | null>(null);
   const afterWriteRef = useRef(afterWrite);
   afterWriteRef.current = afterWrite;
@@ -38,16 +40,18 @@ export function useBoardEmbedPreview(
     if (!enabled) {
       pendingKeyRef.current = null;
       setEmbedMounts([]);
+      setAskMounts([]);
       return;
     }
     pendingKeyRef.current = contentKey;
     setEmbedMounts([]);
+    setAskMounts([]);
   }, [contentKey, enabled]);
 
   // Phase 2 — portals gone: write HTML and attach new mounts.
   useLayoutEffect(() => {
     if (!enabled) return;
-    if (embedMounts.length > 0) return;
+    if (embedMounts.length > 0 || askMounts.length > 0) return;
     if (pendingKeyRef.current !== contentKey) return;
 
     const root = containerRef.current;
@@ -57,7 +61,8 @@ export function useBoardEmbedPreview(
     root.innerHTML = html || '';
     afterWriteRef.current?.(root);
     setEmbedMounts(collectBoardEmbedMounts(root));
-  }, [contentKey, enabled, embedMounts, html, containerRef]);
+    setAskMounts(collectAskBlockMounts(root));
+  }, [contentKey, enabled, embedMounts, askMounts, html, containerRef]);
 
-  return embedMounts;
+  return { embedMounts, askMounts };
 }

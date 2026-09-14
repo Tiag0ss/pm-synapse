@@ -12,7 +12,12 @@ import {
   parseFrontmatterTodos,
   renderFrontmatterHtml,
 } from './frontmatter';
-import { postprocessMarkdownHtml, preprocessFolds, preprocessMarkdownExtras } from './markdownEnhance';
+import {
+  postprocessMarkdownHtml,
+  preprocessAsks,
+  preprocessFolds,
+  preprocessMarkdownExtras,
+} from './markdownEnhance';
 import { sanitizeSynapseHtml } from './sanitizeSynapseHtml';
 
 const STOP = new Set([
@@ -360,12 +365,23 @@ function renderBoardEmbedHtml(params: {
 }
 
 /** Convert [[wikilinks]] / ![[board embeds]] and #tags before marked so public/PM HTML shows them. */
+export type SynapseMarkdownOptions = {
+  /**
+   * Interactive `[[wikilinks]]` and unlinked title mentions.
+   * When false (password shares), keep plain text labels; `![[board]]` embeds still resolve.
+   * Default true.
+   */
+  wikilinks?: boolean;
+};
+
 export function preprocessSynapseMarkdown(
   md: string,
   notes: MarkdownNoteRef[] = [],
   linkableVaults: LinkableVaultNotes[] = [],
-  excludeNoteId?: number | null
+  excludeNoteId?: number | null,
+  options?: SynapseMarkdownOptions
 ): string {
+  const enableWikilinks = options?.wikilinks !== false;
   return mapProtected(md || '', (chunk) => {
     const htmlSlots: string[] = [];
     const stashHtml = (raw: string) => {
@@ -437,6 +453,14 @@ export function preprocessSynapseMarkdown(
       const t = String(target).trim();
       const aliasLabel = alias != null ? String(alias).trim() : '';
 
+      if (!enableWikilinks) {
+        if (t.startsWith('@')) {
+          const r = resolveCrossVaultWikilink(t, linkableVaults, aliasLabel || undefined);
+          return escapeHtml(aliasLabel || r.label || t);
+        }
+        return escapeHtml(aliasLabel || t);
+      }
+
       if (t.startsWith('@')) {
         const r = resolveCrossVaultWikilink(t, linkableVaults, aliasLabel || undefined);
         if (r.status === 'locked') {
@@ -479,7 +503,9 @@ export function preprocessSynapseMarkdown(
       });
     });
 
-    next = linkifyUnlinkedMentions(next, notes, excludeNoteId);
+    if (enableWikilinks) {
+      next = linkifyUnlinkedMentions(next, notes, excludeNoteId);
+    }
     return next.replace(/\u0000HT(\d+)\u0000/g, (_, i) => htmlSlots[Number(i)] ?? '');
   });
 }
@@ -488,13 +514,28 @@ export function markdownToSafeHtml(
   md: string,
   notes: MarkdownNoteRef[] = [],
   linkableVaults: LinkableVaultNotes[] = [],
-  excludeNoteId?: number | null
+  excludeNoteId?: number | null,
+  options?: SynapseMarkdownOptions
 ): string {
+  const enableWikilinks = options?.wikilinks !== false;
   const fm = parseFrontmatter(md);
-  const props = fm.hasFrontmatter ? renderFrontmatterHtml(fm.data, notes, linkableVaults) : '';
+  const props = fm.hasFrontmatter
+    ? renderFrontmatterHtml(
+        fm.data,
+        enableWikilinks ? notes : [],
+        enableWikilinks ? linkableVaults : []
+      )
+    : '';
   const withExtras = preprocessMarkdownExtras(fm.body);
-  const prepared = preprocessSynapseMarkdown(withExtras, notes, linkableVaults, excludeNoteId);
-  const withFolds = preprocessFolds(prepared);
+  const prepared = preprocessSynapseMarkdown(
+    withExtras,
+    notes,
+    linkableVaults,
+    excludeNoteId,
+    options
+  );
+  const withAsks = preprocessAsks(prepared);
+  const withFolds = preprocessFolds(withAsks);
   const html = marked.parse(withFolds, {
     async: false,
     gfm: true,
@@ -516,7 +557,8 @@ export function markdownToPmDescriptionHtml(
   if (!body) return '';
   const withExtras = preprocessMarkdownExtras(body);
   const prepared = preprocessSynapseMarkdown(withExtras, notes, [], excludeNoteId);
-  const withFolds = preprocessFolds(prepared);
+  const withAsks = preprocessAsks(prepared);
+  const withFolds = preprocessFolds(withAsks);
   const html = marked.parse(withFolds, {
     async: false,
     gfm: true,
