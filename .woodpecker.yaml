@@ -1,5 +1,11 @@
 steps:
-  test:
-    image: alpine
-    commands:
-      - echo "Woodpecker a funcionar perfeitamente na VPS!"
+  build-and-push:
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      repo: tiag0ss/pm-synapse
+      tags: latest
+      dockerfile: Dockerfile
+      username:
+        from_secret: DOCKER_USERNAME
+      password:
+        from_secret: DOCKER_PASSWORD
