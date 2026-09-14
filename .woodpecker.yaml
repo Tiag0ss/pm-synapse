@@ -1,14 +1,33 @@
 steps:
+  check:
+    image: node:22-alpine
+    commands:
+      - corepack enable
+      - corepack prepare pnpm@10 --activate
+      - pnpm install --frozen-lockfile
+      - pnpm lint
+      - pnpm exec tsc --noEmit
+      - pnpm typecheck
+      - pnpm test:unit
+
+  get-version:
+    image: node:22-alpine
+    commands:
+      - VERSION=$(node -p "require('./package.json').version")
+      - echo "latest,$VERSION" > .tags
+
   build-and-push:
     image: woodpeckerci/plugin-docker-buildx
     settings:
       repo: tiag0ss/pm-synapse
-      tags: latest
       dockerfile: Dockerfile
       username:
         from_secret: DOCKER_USERNAME
       password:
         from_secret: DOCKER_PASSWORD
-    when:
-      - event: push
-        branch: main
+
+when:
+  - event: [push, pull_request]
+    branch:
+      - main
+      - master
