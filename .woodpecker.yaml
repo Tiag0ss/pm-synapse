@@ -9,3 +9,6 @@ steps:
         from_secret: DOCKER_USERNAME
       password:
         from_secret: DOCKER_PASSWORD
+    when:
+      - event: push
+        branch: main
