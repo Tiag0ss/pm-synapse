@@ -867,6 +867,7 @@ export default function MarkdownNoteEditor({
   }, [runToolbar]);
 
   useEffect(() => {
+    if (mode === 'edit') return;
     const root = previewRef.current;
     if (!root) return;
     const onClick = (e: MouseEvent) => {
@@ -991,6 +992,7 @@ export default function MarkdownNoteEditor({
     root.addEventListener('click', onClick);
     return () => root.removeEventListener('click', onClick);
   }, [
+    mode,
     onOpenNote,
     onOpenCrossVaultNote,
     onCreateNoteFromWikilink,
