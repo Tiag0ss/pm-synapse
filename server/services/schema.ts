@@ -261,6 +261,47 @@ const STATEMENTS = [
     CONSTRAINT fk_ask_event_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE,
     CONSTRAINT fk_ask_event_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
   )`,
+  `CREATE TABLE IF NOT EXISTS NoteDecisions (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    NoteId INT NOT NULL,
+    VaultId INT NOT NULL,
+    DecisionMarkerId VARCHAR(64) NOT NULL,
+    ChoiceKind VARCHAR(16) NULL,
+    OptionIndex INT NULL,
+    ChoiceLabel TEXT NULL,
+    Locked TINYINT(1) NOT NULL DEFAULT 0,
+    AuthorName VARCHAR(128) NULL,
+    ShareLinkId INT NULL,
+    ActorPmUserId INT NULL,
+    LockedAt DATETIME NULL,
+    LockedByPmUserId INT NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UpdatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_note_decision_marker (NoteId, DecisionMarkerId),
+    KEY idx_decision_vault (VaultId),
+    CONSTRAINT fk_decision_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_decision_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_decision_share FOREIGN KEY (ShareLinkId) REFERENCES NoteShareLinks(Id) ON DELETE SET NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS NoteDecisionEvents (
+    Id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    DecisionId INT NOT NULL,
+    NoteId INT NOT NULL,
+    VaultId INT NOT NULL,
+    DecisionMarkerId VARCHAR(64) NOT NULL,
+    EventType VARCHAR(32) NOT NULL,
+    ActorKind VARCHAR(32) NOT NULL,
+    ActorLabel VARCHAR(255) NOT NULL,
+    ActorPmUserId INT NULL,
+    ShareLinkId INT NULL,
+    PayloadJson TEXT NULL,
+    CreatedAt DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_decision_event_decision (DecisionId, CreatedAt),
+    KEY idx_decision_event_note_marker (NoteId, DecisionMarkerId, CreatedAt),
+    CONSTRAINT fk_decision_event_decision FOREIGN KEY (DecisionId) REFERENCES NoteDecisions(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_decision_event_note FOREIGN KEY (NoteId) REFERENCES Notes(Id) ON DELETE CASCADE,
+    CONSTRAINT fk_decision_event_vault FOREIGN KEY (VaultId) REFERENCES Vaults(Id) ON DELETE CASCADE
+  )`,
 ];
 
 const ALTERS = [

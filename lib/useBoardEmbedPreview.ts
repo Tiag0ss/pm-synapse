@@ -6,9 +6,13 @@ import {
   type BoardEmbedMount,
 } from '@/components/BoardEmbedPortals';
 import { collectAskBlockMounts, type AskBlockMount } from '@/components/AskBlockPortals';
+import {
+  collectDecisionBlockMounts,
+  type DecisionBlockMount,
+} from '@/components/DecisionBlockPortals';
 
 /**
- * Two-phase board-embed + ask-block mounting for markdown preview hosts that own `innerHTML`.
+ * Two-phase board-embed + ask/decision-block mounting for markdown preview hosts that own `innerHTML`.
  * Avoids flushSync and nested createRoot unmount races:
  * 1) clear portal mounts when content changes
  * 2) after mounts are empty, write HTML and collect new placeholders
@@ -25,10 +29,15 @@ export function useBoardEmbedPreview(
     /** Run after `innerHTML` is set (mermaid, planner buttons, …) */
     afterWrite?: (root: HTMLElement) => void;
   }
-): { embedMounts: BoardEmbedMount[]; askMounts: AskBlockMount[] } {
+): {
+  embedMounts: BoardEmbedMount[];
+  askMounts: AskBlockMount[];
+  decisionMounts: DecisionBlockMount[];
+} {
   const { html, enabled, rewriteToken = '', afterWrite } = options;
   const [embedMounts, setEmbedMounts] = useState<BoardEmbedMount[]>([]);
   const [askMounts, setAskMounts] = useState<AskBlockMount[]>([]);
+  const [decisionMounts, setDecisionMounts] = useState<DecisionBlockMount[]>([]);
   const pendingKeyRef = useRef<string | null>(null);
   const afterWriteRef = useRef(afterWrite);
   afterWriteRef.current = afterWrite;
@@ -41,17 +50,19 @@ export function useBoardEmbedPreview(
       pendingKeyRef.current = null;
       setEmbedMounts([]);
       setAskMounts([]);
+      setDecisionMounts([]);
       return;
     }
     pendingKeyRef.current = contentKey;
     setEmbedMounts([]);
     setAskMounts([]);
+    setDecisionMounts([]);
   }, [contentKey, enabled]);
 
   // Phase 2 — portals gone: write HTML and attach new mounts.
   useLayoutEffect(() => {
     if (!enabled) return;
-    if (embedMounts.length > 0 || askMounts.length > 0) return;
+    if (embedMounts.length > 0 || askMounts.length > 0 || decisionMounts.length > 0) return;
     if (pendingKeyRef.current !== contentKey) return;
 
     const root = containerRef.current;
@@ -62,7 +73,8 @@ export function useBoardEmbedPreview(
     afterWriteRef.current?.(root);
     setEmbedMounts(collectBoardEmbedMounts(root));
     setAskMounts(collectAskBlockMounts(root));
-  }, [contentKey, enabled, embedMounts, askMounts, html, containerRef]);
+    setDecisionMounts(collectDecisionBlockMounts(root));
+  }, [contentKey, enabled, embedMounts, askMounts, decisionMounts, html, containerRef]);
 
-  return { embedMounts, askMounts };
+  return { embedMounts, askMounts, decisionMounts };
 }

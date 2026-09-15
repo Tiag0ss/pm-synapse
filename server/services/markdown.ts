@@ -15,10 +15,12 @@ import {
 import {
   postprocessMarkdownHtml,
   preprocessAsks,
+  preprocessDecisions,
   preprocessFolds,
   preprocessMarkdownExtras,
 } from './markdownEnhance';
 import { sanitizeSynapseHtml } from './sanitizeSynapseHtml';
+import { mapOverDecisionBlocks } from './decisionBlocks';
 
 const STOP = new Set([
   'the', 'and', 'for', 'with', 'from', 'this', 'that', 'user', 'api', 'note', 'task', 'project',
@@ -328,6 +330,8 @@ function mapProtected(md: string, transform: (chunk: string) => string): string 
     return `\u0000MD${slots.length - 1}\u0000`;
   };
   let out = md.replace(/```[\s\S]*?```/g, stash).replace(/`[^`\n]+`/g, stash);
+  // Decision option labels must stay plain text (no mention/wikilink chrome).
+  out = mapOverDecisionBlocks(out, stash);
   out = transform(out);
   return out.replace(/\u0000MD(\d+)\u0000/g, (_, i) => slots[Number(i)] ?? '');
 }
@@ -535,7 +539,8 @@ export function markdownToSafeHtml(
     options
   );
   const withAsks = preprocessAsks(prepared);
-  const withFolds = preprocessFolds(withAsks);
+  const withDecisions = preprocessDecisions(withAsks);
+  const withFolds = preprocessFolds(withDecisions);
   const html = marked.parse(withFolds, {
     async: false,
     gfm: true,
@@ -558,7 +563,8 @@ export function markdownToPmDescriptionHtml(
   const withExtras = preprocessMarkdownExtras(body);
   const prepared = preprocessSynapseMarkdown(withExtras, notes, [], excludeNoteId);
   const withAsks = preprocessAsks(prepared);
-  const withFolds = preprocessFolds(withAsks);
+  const withDecisions = preprocessDecisions(withAsks);
+  const withFolds = preprocessFolds(withDecisions);
   const html = marked.parse(withFolds, {
     async: false,
     gfm: true,

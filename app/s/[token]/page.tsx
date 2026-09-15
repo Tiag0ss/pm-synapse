@@ -8,6 +8,7 @@ import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import BoardEmbedPortals from '@/components/BoardEmbedPortals';
 import AskBlockPortals, { type AskAnswerView } from '@/components/AskBlockPortals';
+import DecisionBlockPortals, { type DecisionView } from '@/components/DecisionBlockPortals';
 import { handleMarkdownCodeCopyClick } from '@/lib/codeCopy';
 import { renderMermaidInRoot } from '@/lib/mermaidRender';
 import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
@@ -32,6 +33,7 @@ export default function SharedNotePage() {
   const [boardJson, setBoardJson] = useState<string | null>(null);
   const [embeddedBoards, setEmbeddedBoards] = useState<Record<string, string | null>>({});
   const [askAnswers, setAskAnswers] = useState<Record<string, AskAnswerView[]>>({});
+  const [decisions, setDecisions] = useState<Record<string, DecisionView>>({});
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [mermaidLightbox, setMermaidLightbox] = useState<string | null>(null);
 
@@ -67,6 +69,11 @@ export default function SharedNotePage() {
         ? (d.askAnswers as Record<string, AskAnswerView[]>)
         : {};
     setAskAnswers(asks);
+    const decisionsPayload =
+      d.decisions && typeof d.decisions === 'object'
+        ? (d.decisions as Record<string, DecisionView>)
+        : {};
+    setDecisions(decisionsPayload);
     setPhase('content');
     setError('');
   }, [token]);
@@ -102,7 +109,7 @@ export default function SharedNotePage() {
     void renderMermaidInRoot(root);
   }, []);
 
-  const { embedMounts, askMounts } = useBoardEmbedPreview(articleRef, {
+  const { embedMounts, askMounts, decisionMounts } = useBoardEmbedPreview(articleRef, {
     html,
     enabled: phase === 'content' && kind !== 'whiteboard',
     afterWrite: afterShareWrite,
@@ -258,6 +265,13 @@ export default function SharedNotePage() {
                 mode="share"
                 shareToken={token}
                 onAnswersChange={() => void loadContent()}
+              />
+              <DecisionBlockPortals
+                mounts={decisionMounts}
+                decisionsById={decisions}
+                mode="share"
+                shareToken={token}
+                onDecisionsChange={() => void loadContent()}
               />
             </div>
           )}

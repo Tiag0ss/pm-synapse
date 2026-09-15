@@ -12,6 +12,7 @@ import { fetchVaultBoardJson, fetchWikiBoardJson } from '@/lib/hydrateBoardEmbed
 import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
 import BoardEmbedPortals from '@/components/BoardEmbedPortals';
 import AskBlockPortals from '@/components/AskBlockPortals';
+import DecisionBlockPortals from '@/components/DecisionBlockPortals';
 import {
   applyPeekHits,
   clearPeekHits,
@@ -145,7 +146,7 @@ export default function NotePeekModal({
     void renderMermaidInRoot(root);
   }, []);
 
-  const { embedMounts, askMounts } = useBoardEmbedPreview(bodyRef, {
+  const { embedMounts, askMounts, decisionMounts } = useBoardEmbedPreview(bodyRef, {
     html,
     enabled: open && !isWhiteboard,
     afterWrite: afterPeekWrite,
@@ -389,6 +390,7 @@ export default function NotePeekModal({
             onOpenNote={onEmbedOpenNote}
           />
           <AskBlockPortals mounts={askMounts} mode="readonly" />
+          <DecisionBlockPortals mounts={decisionMounts} mode="readonly" />
         </div>
       </div>
     </div>

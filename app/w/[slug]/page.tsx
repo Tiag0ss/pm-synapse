@@ -15,6 +15,7 @@ import { fetchWikiBoardJson } from '@/lib/hydrateBoardEmbeds';
 import { useBoardEmbedPreview } from '@/lib/useBoardEmbedPreview';
 import BoardEmbedPortals from '@/components/BoardEmbedPortals';
 import AskBlockPortals, { type AskAnswerView } from '@/components/AskBlockPortals';
+import DecisionBlockPortals, { type DecisionView } from '@/components/DecisionBlockPortals';
 import ImageLightbox from '@/components/ImageLightbox';
 import MermaidLightbox from '@/components/MermaidLightbox';
 import NotePeekModal, { type NotePeekTarget } from '@/components/NotePeekModal';
@@ -50,6 +51,7 @@ export default function PublicWikiPage() {
   const [boardJson, setBoardJson] = useState<string | null>(null);
   const [embeddedBoards, setEmbeddedBoards] = useState<Record<string, string | null>>({});
   const [askAnswers, setAskAnswers] = useState<Record<string, AskAnswerView[]>>({});
+  const [decisions, setDecisions] = useState<Record<string, DecisionView>>({});
   const [activeId, setActiveId] = useState<number | null>(null);
   const [q, setQ] = useState('');
   const [quickOpen, setQuickOpen] = useState(false);
@@ -168,6 +170,11 @@ export default function PublicWikiPage() {
           ? (data.data.askAnswers as Record<string, AskAnswerView[]>)
           : {};
       setAskAnswers(kind === 'whiteboard' ? {} : asks);
+      const decisionsPayload =
+        data.data.decisions && typeof data.data.decisions === 'object'
+          ? (data.data.decisions as Record<string, DecisionView>)
+          : {};
+      setDecisions(kind === 'whiteboard' ? {} : decisionsPayload);
       setHtml(kind === 'whiteboard' ? '' : data.data.html || '');
       setBacklinks(data.data.backlinks || []);
       setReferences(data.data.references || []);
@@ -325,7 +332,7 @@ export default function PublicWikiPage() {
     void renderMermaidInRoot(root);
   }, []);
 
-  const { embedMounts, askMounts } = useBoardEmbedPreview(articleRef, {
+  const { embedMounts, askMounts, decisionMounts } = useBoardEmbedPreview(articleRef, {
     html,
     enabled: !isWhiteboard && centerMode === 'note',
     afterWrite: afterWikiWrite,
@@ -656,6 +663,11 @@ export default function PublicWikiPage() {
               <AskBlockPortals
                 mounts={askMounts}
                 answersByAskId={askAnswers}
+                mode="readonly"
+              />
+              <DecisionBlockPortals
+                mounts={decisionMounts}
+                decisionsById={decisions}
                 mode="readonly"
               />
             </>

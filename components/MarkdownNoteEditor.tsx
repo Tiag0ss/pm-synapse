@@ -11,6 +11,10 @@ import AskBlockPortals, {
   type AskAnswerEventView,
   type AskAnswerView,
 } from '@/components/AskBlockPortals';
+import DecisionBlockPortals, {
+  type DecisionEventView,
+  type DecisionView,
+} from '@/components/DecisionBlockPortals';
 import { applyPlannerButtons, type PlannerLinkItem } from '@/lib/plannerLinks';
 import {
   caretCoordinates,
@@ -424,6 +428,11 @@ export default function MarkdownNoteEditor({
     Record<string, AskAnswerEventView[]>
   >({});
   const [askReloadToken, setAskReloadToken] = useState(0);
+  const [decisionsById, setDecisionsById] = useState<Record<string, DecisionView>>({});
+  const [decisionEventsByMarkerId, setDecisionEventsByMarkerId] = useState<
+    Record<string, DecisionEventView[]>
+  >({});
+  const [decisionReloadToken, setDecisionReloadToken] = useState(0);
   const onOpenNoteRef = useRef(onOpenNote);
   const onOpenCrossVaultNoteRef = useRef(onOpenCrossVaultNote);
   onOpenNoteRef.current = onOpenNote;
@@ -524,6 +533,57 @@ export default function MarkdownNoteEditor({
       cancelled = true;
     };
   }, [vaultId, noteId, askReloadToken]);
+
+  useEffect(() => {
+    if (!vaultId || noteId == null) {
+      setDecisionsById({});
+      setDecisionEventsByMarkerId({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/vaults/${vaultId}/notes/${noteId}/decisions`, {
+          credentials: 'include',
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || cancelled) return;
+        const payload = data.data || {};
+        const rows = Array.isArray(payload.decisions) ? payload.decisions : [];
+        const eventsMap =
+          payload.eventsByMarkerId && typeof payload.eventsByMarkerId === 'object'
+            ? (payload.eventsByMarkerId as Record<string, DecisionEventView[]>)
+            : {};
+        const byId: Record<string, DecisionView> = {};
+        for (const raw of rows) {
+          const d = raw as DecisionView & { decisionMarkerId?: string };
+          const markerId = String(d.decisionMarkerId || '');
+          if (!markerId) continue;
+          byId[markerId] = {
+            choiceKind:
+              d.choiceKind === 'option' || d.choiceKind === 'custom' ? d.choiceKind : null,
+            optionIndex: d.optionIndex != null ? Number(d.optionIndex) : null,
+            choiceLabel: d.choiceLabel != null ? String(d.choiceLabel) : null,
+            locked: Boolean(d.locked),
+            authorName: d.authorName != null ? String(d.authorName) : null,
+            updatedAt: String(d.updatedAt || ''),
+          };
+        }
+        if (!cancelled) {
+          setDecisionsById(byId);
+          setDecisionEventsByMarkerId(eventsMap);
+        }
+      } catch {
+        if (!cancelled) {
+          setDecisionsById({});
+          setDecisionEventsByMarkerId({});
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [vaultId, noteId, decisionReloadToken]);
 
   const reloadAttachments = useCallback(async () => {
     if (!vaultId || noteId == null) {
@@ -815,7 +875,7 @@ export default function MarkdownNoteEditor({
     void renderMermaidInRoot(root);
   }, []);
 
-  const { embedMounts, askMounts } = useBoardEmbedPreview(previewRef, {
+  const { embedMounts, askMounts, decisionMounts } = useBoardEmbedPreview(previewRef, {
     html: previewHtml,
     enabled: mode !== 'edit',
     afterWrite: afterPreviewWrite,
@@ -1363,6 +1423,15 @@ export default function MarkdownNoteEditor({
             vaultId={vaultId}
             noteId={noteId}
             onAnswersChange={() => setAskReloadToken((n) => n + 1)}
+          />
+          <DecisionBlockPortals
+            mounts={decisionMounts}
+            decisionsById={decisionsById}
+            eventsByMarkerId={decisionEventsByMarkerId}
+            mode={readOnly ? 'readonly' : 'editor'}
+            vaultId={vaultId}
+            noteId={noteId}
+            onDecisionsChange={() => setDecisionReloadToken((n) => n + 1)}
           />
         </div>
 

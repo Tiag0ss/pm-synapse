@@ -90,11 +90,17 @@ import {
   MAX_EXPIRES_SEC,
 } from '../services/noteShares';
 import { ensureAskMarkers } from '../services/askBlocks';
+import { ensureDecisionMarkers } from '../services/decisionBlocks';
 import {
   listAskAnswersWithHistory,
   setAskAnswerStatus,
   softDeleteAskAnswer,
 } from '../services/noteAskAnswers';
+import {
+  listDecisionsWithHistory,
+  setDecisionLocked,
+  setOwnerDecision,
+} from '../services/noteDecisions';
 import logger from '../utils/logger';
 
 const ACTIVE_NOTE = 'DeletedAt IS NULL';
@@ -834,7 +840,7 @@ router.post('/:vaultId/notes', async (req: AuthRequest, res: Response) => {
   const bodyMarkdown =
     kind === 'whiteboard'
       ? parsed.data.bodyMarkdown || `# ${parsed.data.title}\n\n`
-      : ensureAskMarkers(parsed.data.bodyMarkdown);
+      : ensureAskMarkers(ensureDecisionMarkers(parsed.data.bodyMarkdown));
   const boardJson =
     kind === 'whiteboard'
       ? parseBoardJson(parsed.data.boardJson) || EMPTY_BOARD_JSON
@@ -1026,7 +1032,7 @@ router.put('/:vaultId/notes/:noteId', async (req: AuthRequest, res: Response) =>
   }
   path = safePath;
   const bodyRaw = parsed.data.bodyMarkdown ?? String(existing.BodyMarkdown);
-  const body = existingKind === 'whiteboard' ? bodyRaw : ensureAskMarkers(bodyRaw);
+  const body = existingKind === 'whiteboard' ? bodyRaw : ensureAskMarkers(ensureDecisionMarkers(bodyRaw));
   const boardJson =
     existingKind === 'whiteboard'
       ? parsed.data.boardJson !== undefined
@@ -1451,6 +1457,146 @@ router.delete(
       return res.json({ success: true, message: 'Already deleted' });
     }
     res.json({ success: true, data: result.answer });
+  }
+);
+
+router.get('/:vaultId/notes/:noteId/decisions', async (req: AuthRequest, res: Response) => {
+  const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+  if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+  const noteId = Number(req.params.noteId);
+  if (!Number.isFinite(noteId) || noteId <= 0) {
+    return res.status(404).json({ success: false, message: 'Note not found' });
+  }
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE} LIMIT 1`,
+    [noteId, vault.Id]
+  );
+  if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
+
+  const data = await listDecisionsWithHistory({
+    noteId,
+    vaultId: Number(vault.Id),
+  });
+  res.json({ success: true, data });
+});
+
+router.put(
+  '/:vaultId/notes/:noteId/decisions/:decisionId',
+  async (req: AuthRequest, res: Response) => {
+    const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+    if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+    const noteId = Number(req.params.noteId);
+    const decisionId = String(req.params.decisionId || '').trim();
+    if (!Number.isFinite(noteId) || noteId <= 0 || !decisionId || decisionId.length > 64) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+    const parsed = z
+      .object({
+        optionIndex: z.number().int().min(0).optional(),
+        customText: z.string().max(8000).optional(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'Invalid decision payload' });
+    }
+    const hasIndex = parsed.data.optionIndex != null;
+    const hasCustom = String(parsed.data.customText || '').trim().length > 0;
+    if (hasIndex === hasCustom) {
+      return res.status(400).json({
+        success: false,
+        message: 'Choose exactly one option or provide custom text',
+      });
+    }
+
+    const [notes] = await pool.execute<RowDataPacket[]>(
+      `SELECT Id, BodyMarkdown, Kind FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE} LIMIT 1`,
+      [noteId, vault.Id]
+    );
+    if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
+    if (String(notes[0].Kind || 'note') === 'whiteboard') {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Decisions are not available on whiteboards' });
+    }
+
+    const result = await setOwnerDecision({
+      noteId,
+      vaultId: Number(vault.Id),
+      decisionMarkerId: decisionId,
+      noteBodyMarkdown: String(notes[0].BodyMarkdown || ''),
+      optionIndex: parsed.data.optionIndex,
+      customText: parsed.data.customText,
+      actorLabel: String(req.user!.username || 'owner'),
+      actorPmUserId: req.user!.userId,
+    });
+    if (!result.ok) {
+      if (result.reason === 'invalid_decision') {
+        return res.status(400).json({ success: false, message: 'Unknown decision' });
+      }
+      if (result.reason === 'locked') {
+        return res.status(409).json({
+          success: false,
+          message: 'This decision is locked',
+          code: 'decision_locked',
+        });
+      }
+      if (result.reason === 'invalid_option') {
+        return res.status(400).json({ success: false, message: 'Invalid option' });
+      }
+      return res.status(400).json({
+        success: false,
+        message: 'Choose an option or provide custom text',
+      });
+    }
+    res.json({ success: true, data: result.decision });
+  }
+);
+
+router.patch(
+  '/:vaultId/notes/:noteId/decisions/:decisionId',
+  async (req: AuthRequest, res: Response) => {
+    const vault = await editableVault(Number(req.params.vaultId), req.user!.userId);
+    if (!vault) return res.status(404).json({ success: false, message: 'Vault not found' });
+    const noteId = Number(req.params.noteId);
+    const decisionId = String(req.params.decisionId || '').trim();
+    if (!Number.isFinite(noteId) || noteId <= 0 || !decisionId || decisionId.length > 64) {
+      return res.status(404).json({ success: false, message: 'Not found' });
+    }
+    const parsed = z.object({ locked: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: 'Invalid lock payload' });
+    }
+
+    const [notes] = await pool.execute<RowDataPacket[]>(
+      `SELECT Id, BodyMarkdown, Kind FROM Notes WHERE Id = ? AND VaultId = ? AND ${ACTIVE_NOTE} LIMIT 1`,
+      [noteId, vault.Id]
+    );
+    if (!notes.length) return res.status(404).json({ success: false, message: 'Note not found' });
+    if (String(notes[0].Kind || 'note') === 'whiteboard') {
+      return res
+        .status(400)
+        .json({ success: false, message: 'Decisions are not available on whiteboards' });
+    }
+
+    const result = await setDecisionLocked({
+      noteId,
+      vaultId: Number(vault.Id),
+      decisionMarkerId: decisionId,
+      noteBodyMarkdown: String(notes[0].BodyMarkdown || ''),
+      locked: parsed.data.locked,
+      actorLabel: String(req.user!.username || 'owner'),
+      actorPmUserId: req.user!.userId,
+    });
+    if (!result.ok) {
+      if (result.reason === 'invalid_decision') {
+        return res.status(400).json({ success: false, message: 'Unknown decision' });
+      }
+      if (result.reason === 'not_found') {
+        return res.status(404).json({ success: false, message: 'Decision not found' });
+      }
+      return res.json({ success: true, data: null, message: 'No change' });
+    }
+    res.json({ success: true, data: result.decision });
   }
 );
 

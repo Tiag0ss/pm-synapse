@@ -18,6 +18,7 @@ import ruby from 'highlight.js/lib/languages/ruby';
 import plaintext from 'highlight.js/lib/languages/plaintext';
 import type KatexApi from 'katex';
 import { marked } from 'marked';
+import { parseDecisionOptions, stripDecisionPlainText } from '@/lib/decisionBlocks';
 
 /** Lazy-load KaTeX so Next/webpack does not eagerly emit a fragile vendor chunk. */
 let katexApi: typeof KatexApi | null = null;
@@ -193,9 +194,11 @@ export function preprocessCallouts(md: string): string {
 
 const FOLD_OPEN = /^:::fold([+-])?\s*(.*)$/;
 const ASK_OPEN = /^:::ask([+-])?\s*(.*)$/;
-const CONTAINER_OPEN = /^:::(?:ask|fold)([+-])?(?:\s|$)/;
+const DECISION_OPEN = /^:::decision([+-])?\s*(.*)$/;
+const CONTAINER_OPEN = /^:::(?:ask|decision|fold)([+-])?(?:\s|$)/;
 const CONTAINER_CLOSE = /^:::\s*$/;
 const ASK_MARKER_RE = /<!--\s*synapse:ask:([a-zA-Z0-9_-]+)\s*-->/;
+const DECISION_MARKER_RE = /<!--\s*synapse:decision:([a-zA-Z0-9_-]+)\s*-->/;
 
 function isMdFenceLine(line: string): boolean {
   return /^```/.test(line);
@@ -219,9 +222,11 @@ function findContainerClose(lines: string[], from: number): number {
   return -1;
 }
 
-/** Nested asks + folds inside a container body before marked.parse. */
+/** Nested asks + decisions + folds inside a container body before marked.parse. */
 function prepareContainerBodyMd(chunk: string): string {
-  return preprocessFoldsUnprotected(preprocessAsksUnprotected(chunk || ''));
+  return preprocessFoldsUnprotected(
+    preprocessDecisionsUnprotected(preprocessAsksUnprotected(chunk || ''))
+  );
 }
 
 /**
@@ -284,6 +289,65 @@ function preprocessAsksUnprotected(chunk: string): string {
         ` aria-label="Question: ${escapeAttr(question)}">` +
         (hintHtml ? `<div class="synapse-ask-hint">${hintHtml}</div>` : '') +
         `</div>\n\n`
+    );
+    i = close + 1;
+  }
+  return out.join('\n');
+}
+
+/**
+ * Shared decision blocks (`:::decision Title` + list options `:::`).
+ * Keep in sync with server/services/markdownEnhance.ts.
+ */
+export function preprocessDecisions(md: string): string {
+  return preprocessDecisionsUnprotected(md || '');
+}
+
+function preprocessDecisionsUnprotected(chunk: string): string {
+  const lines = chunk.replace(/\r\n/g, '\n').split('\n');
+  const out: string[] = [];
+  let i = 0;
+  let inFence = false;
+  while (i < lines.length) {
+    if (isMdFenceLine(lines[i])) {
+      inFence = !inFence;
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+    if (inFence) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const m = lines[i].match(DECISION_OPEN);
+    if (!m) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const close = findContainerClose(lines, i + 1);
+    if (close < 0) {
+      out.push(lines[i]);
+      i += 1;
+      continue;
+    }
+
+    const rest = String(m[2] || '');
+    const markerMatch = rest.match(DECISION_MARKER_RE);
+    const decisionId = markerMatch?.[1] || '';
+    const title =
+      stripDecisionPlainText(rest.replace(DECISION_MARKER_RE, '')) || 'Decision';
+    const bodyMd = lines.slice(i + 1, close).join('\n');
+    const options = parseDecisionOptions(bodyMd);
+    const optionsJson = escapeAttr(JSON.stringify(options));
+    out.push(
+      `\n\n<div class="synapse-decision" data-decision-id="${escapeAttr(decisionId)}"` +
+        ` data-decision-title="${escapeAttr(title)}"` +
+        ` data-decision-options="${optionsJson}"` +
+        ` aria-label="Decision: ${escapeAttr(title)}"></div>\n\n`
     );
     i = close + 1;
   }

@@ -969,6 +969,144 @@ a:hover { text-decoration: underline; }
   color: var(--text);
 }
 
+/* —— Decision blocks —— */
+.synapse-md-preview .synapse-decision {
+  margin: 0.85rem 0;
+  padding: 0;
+}
+.synapse-md-preview .synapse-decision-ui {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}
+.synapse-md-preview .synapse-decision-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.synapse-md-preview .synapse-decision-title {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+}
+.synapse-md-preview .synapse-decision-locked-badge {
+  flex: 0 0 auto;
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--accent-soft);
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-soft) 40%, transparent);
+}
+.synapse-md-preview .synapse-decision-current {
+  margin: 0;
+  font-size: 0.95em;
+}
+.synapse-md-preview .synapse-decision-current-label {
+  color: var(--muted);
+}
+.synapse-md-preview .synapse-decision-current-meta {
+  color: var(--muted);
+  font-size: 0.92em;
+}
+.synapse-md-preview .synapse-decision-empty,
+.synapse-md-preview .synapse-decision-hint-text {
+  margin: 0;
+  font-size: 0.92em;
+  color: var(--muted);
+}
+.synapse-md-preview .synapse-decision-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.synapse-md-preview .synapse-decision-options {
+  margin: 0;
+  padding: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.synapse-md-preview .synapse-decision-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  cursor: pointer;
+  font-size: 0.95em;
+}
+.synapse-md-preview .synapse-decision-option input {
+  margin-top: 0.2rem;
+}
+.synapse-md-preview .synapse-decision-custom,
+.synapse-md-preview .synapse-decision-name {
+  max-width: 100%;
+  padding: 0.25rem 0.45rem;
+  font-size: inherit;
+  border-radius: 0.35rem;
+}
+.synapse-md-preview .synapse-decision-form .btn-primary {
+  align-self: flex-start;
+  font-size: 0.88em;
+  padding: 0.25rem 0.65rem;
+}
+.synapse-md-preview .synapse-decision-form-error {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--danger);
+}
+.synapse-md-preview .synapse-decision-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+.synapse-md-preview .synapse-decision-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--accent-soft);
+  font-size: 0.88em;
+  cursor: pointer;
+}
+.synapse-md-preview .synapse-decision-btn:hover {
+  text-decoration: underline;
+}
+.synapse-decision-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.synapse-decision-history-item {
+  font-size: 0.88em;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--surface-2) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+}
+.synapse-decision-history-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.92em;
+}
+.synapse-decision-history-body {
+  margin: 0.25rem 0 0;
+  font-size: inherit;
+  color: var(--text);
+}
+
 /* —— Footnotes —— */
 .synapse-md-preview .synapse-fn-ref a {
   color: var(--accent-soft);

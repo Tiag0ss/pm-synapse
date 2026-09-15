@@ -13,6 +13,7 @@ import {
   submitShareAskAnswerForToken,
   updateShareAskAnswerForToken,
   verifySharePassword,
+  setShareDecisionForToken,
 } from '../services/noteShares';
 import { applySafeMediaHeaders, readVaultMedia } from '../services/vaultMedia';
 import logger from '../utils/logger';
@@ -162,6 +163,7 @@ router.get('/:token/content', async (req, res: Response) => {
         boardJson: content.boardJson,
         embeddedBoards: content.embeddedBoards,
         askAnswers: content.askAnswers,
+        decisions: content.decisions,
         expiresAt: content.expiresAt,
       },
     });
@@ -383,6 +385,102 @@ router.delete(
     }
   }
 );
+
+router.put('/:token/decisions/:decisionId', askAnswerLimiter, async (req, res: Response) => {
+  const token = String(req.params.token || '');
+  const decisionId = String(req.params.decisionId || '').trim();
+  if (!token || token.length > 128 || !decisionId || decisionId.length > 64) {
+    return res.status(404).json({ success: false, message: 'Not found' });
+  }
+
+  const parsed = z
+    .object({
+      optionIndex: z.number().int().min(0).optional(),
+      customText: z.string().max(8000).optional(),
+      authorName: z.string().max(128).optional(),
+    })
+    .safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ success: false, message: 'Invalid decision payload' });
+  }
+  const hasIndex = parsed.data.optionIndex != null;
+  const hasCustom = String(parsed.data.customText || '').trim().length > 0;
+  if (hasIndex === hasCustom) {
+    return res.status(400).json({
+      success: false,
+      message: 'Choose exactly one option or provide custom text',
+    });
+  }
+
+  try {
+    const result = await setShareDecisionForToken({
+      rawToken: token,
+      shareCookie: shareCookieFromReq(req),
+      decisionMarkerId: decisionId,
+      optionIndex: parsed.data.optionIndex,
+      customText: parsed.data.customText,
+      authorName: parsed.data.authorName,
+    });
+    if (!result.ok) {
+      if (result.reason === 'locked') {
+        return res.status(401).json({
+          success: false,
+          message: 'Password required',
+          code: 'locked',
+        });
+      }
+      if (result.reason === 'decision_locked') {
+        return res.status(409).json({
+          success: false,
+          message: 'This decision is locked',
+          code: 'decision_locked',
+        });
+      }
+      if (result.reason === 'invalid_decision') {
+        return res.status(400).json({ success: false, message: 'Unknown decision' });
+      }
+      if (result.reason === 'invalid_option') {
+        return res.status(400).json({ success: false, message: 'Invalid option' });
+      }
+      if (result.reason === 'empty_custom' || result.reason === 'missing_choice') {
+        return res.status(400).json({
+          success: false,
+          message: 'Choose an option or provide custom text',
+        });
+      }
+      if (result.reason === 'whiteboard') {
+        return res
+          .status(400)
+          .json({ success: false, message: 'Decisions are not available on whiteboards' });
+      }
+      const status = result.reason === 'not_found' ? 404 : 410;
+      return res.status(status).json({
+        success: false,
+        message:
+          result.reason === 'expired'
+            ? 'This share link has expired'
+            : result.reason === 'revoked'
+              ? 'This share link was revoked'
+              : 'Share not found',
+        code: result.reason,
+      });
+    }
+    res.json({
+      success: true,
+      data: {
+        choiceKind: result.decision.choiceKind,
+        optionIndex: result.decision.optionIndex,
+        choiceLabel: result.decision.choiceLabel,
+        locked: result.decision.locked,
+        authorName: result.decision.authorName,
+        updatedAt: result.decision.updatedAt,
+      },
+    });
+  } catch (error) {
+    logger.error('Share decision failed', { error });
+    return res.status(500).json({ success: false, message: 'Failed to save decision' });
+  }
+});
 
 router.get('/:token/media/:mediaId', async (req, res: Response) => {
   const token = String(req.params.token || '');

@@ -21,6 +21,7 @@ import { getSettingBool, SETTING_KEYS } from '../services/appSettings';
 import { buildPmTaskOpenUrl } from '../services/pmClient';
 import { buildWikiFlashcards } from '../services/wikiFlashcards';
 import { listAskAnswersGroupedForWiki } from '../services/noteAskAnswers';
+import { listDecisionsGroupedForWiki } from '../services/noteDecisions';
 
 const router = Router();
 
@@ -457,6 +458,14 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
     }));
   }
 
+  const decisions =
+    noteKind === 'whiteboard'
+      ? {}
+      : await listDecisionsGroupedForWiki({
+          noteId: Number(note.Id),
+          vaultId: Number(vault.Id),
+        });
+
   res.json({
     success: true,
     data: {
@@ -467,6 +476,7 @@ router.get('/:slug/notes/:noteId', async (req: AuthRequest, res: Response) => {
       boardJson,
       embeddedBoards,
       askAnswers,
+      decisions,
       html,
       robots: access.robots,
       visibility,

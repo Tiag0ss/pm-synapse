@@ -13,6 +13,12 @@ import {
   updateShareAskAnswer,
   type AskAnswerRow,
 } from './noteAskAnswers';
+import {
+  listDecisionsGroupedForShare,
+  setShareDecision,
+  type DecisionPublicView,
+  type DecisionRow,
+} from './noteDecisions';
 
 const BCRYPT_ROUNDS = 10;
 const SHARE_COOKIE = 'synapse_share';
@@ -309,6 +315,7 @@ export async function getShareContent(params: {
         status: 'pending' | 'approved' | 'rejected';
         createdAt: string;
       }>>;
+      decisions: Record<string, DecisionPublicView>;
       expiresAt: string;
       shareLinkId: number;
     }
@@ -348,6 +355,7 @@ export async function getShareContent(params: {
       boardJson: boardJsonToString(note.BoardJson),
       embeddedBoards: {},
       askAnswers: {},
+      decisions: {},
       expiresAt: toIso(found.share.ExpiresAt),
       shareLinkId,
     };
@@ -408,6 +416,8 @@ export async function getShareContent(params: {
     }));
   }
 
+  const decisions = await listDecisionsGroupedForShare({ noteId, vaultId });
+
   return {
     ok: true,
     title: String(note.Title || 'Note'),
@@ -418,6 +428,7 @@ export async function getShareContent(params: {
     boardJson: null,
     embeddedBoards,
     askAnswers,
+    decisions,
     expiresAt: toIso(found.share.ExpiresAt),
     shareLinkId,
   };
@@ -582,6 +593,65 @@ export async function deleteShareAskAnswerForToken(params: {
     shareLinkId: gate.shareLinkId,
     guestEditToken: params.guestEditToken,
   });
+}
+
+/** Set the shared decision on an unlocked password share. */
+export async function setShareDecisionForToken(params: {
+  rawToken: string;
+  shareCookie?: string;
+  decisionMarkerId: string;
+  optionIndex?: number | null;
+  customText?: string | null;
+  authorName?: string;
+}): Promise<
+  | { ok: true; decision: DecisionRow }
+  | {
+      ok: false;
+      reason:
+        | ShareGateFail
+        | 'invalid_decision'
+        | 'decision_locked'
+        | 'invalid_option'
+        | 'empty_custom'
+        | 'missing_choice';
+    }
+> {
+  const found = await findActiveShareByToken(params.rawToken);
+  if (found.state === 'not_found' || !found.share) {
+    return { ok: false, reason: 'not_found' };
+  }
+  if (found.state === 'expired') return { ok: false, reason: 'expired' };
+  if (found.state === 'revoked') return { ok: false, reason: 'revoked' };
+  if (!readShareCookie(params.shareCookie, found.share)) {
+    return { ok: false, reason: 'locked' };
+  }
+
+  const vaultId = Number(found.share.VaultId);
+  const [notes] = await pool.execute<RowDataPacket[]>(
+    `SELECT Id, BodyMarkdown, Kind FROM Notes WHERE Id = ? AND VaultId = ? AND DeletedAt IS NULL LIMIT 1`,
+    [found.share.NoteId, vaultId]
+  );
+  if (!notes.length) return { ok: false, reason: 'not_found' };
+  const note = notes[0];
+  if (String(note.Kind || 'note') === 'whiteboard') {
+    return { ok: false, reason: 'whiteboard' };
+  }
+
+  const result = await setShareDecision({
+    noteId: Number(note.Id),
+    vaultId,
+    decisionMarkerId: params.decisionMarkerId,
+    noteBodyMarkdown: String(note.BodyMarkdown || ''),
+    optionIndex: params.optionIndex,
+    customText: params.customText,
+    authorName: params.authorName || '',
+    shareLinkId: Number(found.share.Id),
+  });
+  if (!result.ok) {
+    if (result.reason === 'locked') return { ok: false, reason: 'decision_locked' };
+    return result;
+  }
+  return result;
 }
 
 /** Allow media only if referenced by the shared note body. */

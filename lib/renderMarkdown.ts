@@ -11,9 +11,11 @@ import { enhanceCodeCopyHtml } from '@/lib/codeCopy';
 import {
   postprocessMarkdownHtml,
   preprocessAsks,
+  preprocessDecisions,
   preprocessFolds,
   preprocessMarkdownExtras,
 } from '@/lib/markdownEnhance';
+import { mapOverDecisionBlocks } from '@/lib/decisionBlocks';
 
 export type NoteIndexEntry = NoteResolveEntry;
 
@@ -114,6 +116,8 @@ function mapProtected(md: string, transform: (chunk: string) => string): string 
     return `\u0000MD${slots.length - 1}\u0000`;
   };
   let out = md.replace(/```[\s\S]*?```/g, stash).replace(/`[^`\n]+`/g, stash);
+  // Decision option labels must stay plain text (no mention/wikilink chrome).
+  out = mapOverDecisionBlocks(out, stash);
   out = transform(out);
   return out.replace(/\u0000MD(\d+)\u0000/g, (_, i) => slots[Number(i)] ?? '');
 }
@@ -401,7 +405,8 @@ export function renderSynapseMarkdown(
       options
     );
     const withAsks = preprocessAsks(prepared);
-    const withFolds = preprocessFolds(withAsks);
+    const withDecisions = preprocessDecisions(withAsks);
+    const withFolds = preprocessFolds(withDecisions);
     const html = marked.parse(withFolds, { async: false, gfm: true, breaks: true }) as string;
     return sanitizeSynapseHtml(props + enhanceCodeCopyHtml(postprocessMarkdownHtml(html)));
   } catch {
